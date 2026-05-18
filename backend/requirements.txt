@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+redis
+python-jose
+passlib[bcrypt]
+python-multipart
+alembic
+pydantic
+pydantic-settings
