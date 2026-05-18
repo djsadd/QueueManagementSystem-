@@ -1,9 +1,12 @@
 from fastapi import FastAPI
-
 from sqlalchemy import text
-from app.db.base import engine
+from app.db.session import engine
+
+# Routers
+from app.api.auth.auth import auth_router
 
 app = FastAPI()
+app.include_router(auth_router)
 
 @app.get("/")
 def root():
@@ -11,10 +14,10 @@ def root():
 
 
 @app.get("/health")
-def healthcheck():
+async def healthcheck():
     try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
 
         return {
             "status": "ok",
