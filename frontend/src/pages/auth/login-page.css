@@ -1,0 +1,90 @@
+.auth-loader {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background: var(--color-bg);
+}
+
+.auth-loader img {
+  width: 168px;
+  height: auto;
+}
+
+.login-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(15, 118, 110, 0.12), transparent 34%),
+    var(--color-bg);
+  padding: 24px;
+}
+
+.login-card {
+  width: min(100%, 430px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+  padding: 28px;
+}
+
+.login-logo {
+  display: block;
+  width: 132px;
+  height: auto;
+  margin: 0 auto 20px;
+}
+
+.login-card-header {
+  text-align: center;
+}
+
+.login-card-header h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+}
+
+.auth-switcher {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.auth-switcher .button {
+  min-height: 40px;
+}
+
+.auth-switcher .button.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+}
+
+.login-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.form-alert {
+  border: 1px solid rgba(180, 35, 24, 0.28);
+  border-radius: var(--radius-sm);
+  background: #fff4f2;
+  color: var(--color-danger);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+@media (max-width: 520px) {
+  .login-page {
+    padding: 16px;
+  }
+
+  .login-card {
+    padding: 22px;
+  }
+}
