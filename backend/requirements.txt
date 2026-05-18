@@ -5,6 +5,7 @@ psycopg2-binary
 redis
 python-jose
 passlib[bcrypt]
+bcrypt>=3.2,<4
 python-multipart
 alembic
 pydantic
