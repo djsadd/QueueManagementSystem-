@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import DateTime, Enum, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -19,7 +19,7 @@ class Operator(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    window_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    window_id: Mapped[int | None] = mapped_column(ForeignKey("windows.id"), nullable=True)
     status: Mapped[OperatorStatus] = mapped_column(
         Enum(OperatorStatus),
         nullable=False,

@@ -8,7 +8,7 @@ from app.models.operator import OperatorStatus
 
 class OperatorBase(BaseModel):
     user_id: uuid.UUID
-    window_id: uuid.UUID | None = None
+    window_id: int | None = None
     status: OperatorStatus = OperatorStatus.OFFLINE
 
 
@@ -18,7 +18,7 @@ class OperatorCreate(OperatorBase):
 
 class OperatorUpdate(BaseModel):
     user_id: uuid.UUID | None = None
-    window_id: uuid.UUID | None = None
+    window_id: int | None = None
     status: OperatorStatus | None = None
 
 
