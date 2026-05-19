@@ -1,8 +1,15 @@
 .auth-loader {
+  --color-primary: #7a1228;
+  --color-primary-strong: #55091a;
+  --color-primary-soft: #f7e6ea;
+  --color-bg: #2a0712;
+
   display: grid;
   min-height: 100vh;
   place-items: center;
-  background: var(--color-bg);
+  background:
+    linear-gradient(135deg, rgba(122, 18, 40, 0.92), rgba(42, 7, 18, 0.98)),
+    var(--color-bg);
 }
 
 .auth-loader img {
@@ -11,12 +18,27 @@
 }
 
 .login-page {
+  --color-bg: #2a0712;
+  --color-surface: #fffafb;
+  --color-surface-soft: #f7e6ea;
+  --color-text: #281019;
+  --color-muted: #7a6570;
+  --color-border: #ead0d8;
+  --color-primary: #7a1228;
+  --color-primary-strong: #55091a;
+  --color-primary-soft: #f7e6ea;
+  --color-danger: #b42318;
+  --shadow-panel: 0 24px 70px rgba(42, 7, 18, 0.3);
+
   display: grid;
   min-height: 100vh;
   place-items: center;
   background:
-    radial-gradient(circle at 50% 0%, rgba(15, 118, 110, 0.12), transparent 34%),
+    linear-gradient(135deg, rgba(122, 18, 40, 0.94), rgba(42, 7, 18, 0.98)),
+    linear-gradient(90deg, rgba(211, 161, 73, 0.14) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(211, 161, 73, 0.1) 1px, transparent 1px),
     var(--color-bg);
+  background-size: auto, 42px 42px, 42px 42px, auto;
   padding: 24px;
 }
 
@@ -27,6 +49,18 @@
   background: var(--color-surface);
   box-shadow: var(--shadow-panel);
   padding: 28px;
+  position: relative;
+  overflow: hidden;
+}
+
+.login-card::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 5px;
+  background: linear-gradient(90deg, #7a1228, #d3a149, #7a1228);
+  content: '';
 }
 
 .login-logo {
@@ -34,6 +68,7 @@
   width: 132px;
   height: auto;
   margin: 0 auto 20px;
+  filter: drop-shadow(0 8px 16px rgba(42, 7, 18, 0.12));
 }
 
 .login-card-header {
@@ -42,6 +77,7 @@
 
 .login-card-header h1 {
   margin: 0;
+  color: var(--color-primary-strong);
   font-size: 30px;
   line-height: 1.15;
 }
@@ -61,6 +97,7 @@
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
   color: var(--color-primary-strong);
+  box-shadow: inset 0 0 0 1px rgba(122, 18, 40, 0.1);
 }
 
 .login-form {
@@ -72,7 +109,7 @@
 .form-alert {
   border: 1px solid rgba(180, 35, 24, 0.28);
   border-radius: var(--radius-sm);
-  background: #fff4f2;
+  background: #fff2f1;
   color: var(--color-danger);
   padding: 10px 12px;
   font-size: 14px;
