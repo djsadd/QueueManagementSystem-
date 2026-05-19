@@ -12,6 +12,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.models.service import Service  # noqa: F401
+from app.models.window import Window  # noqa: F401
 
 
 class Ticket(Base):

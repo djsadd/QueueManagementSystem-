@@ -27,3 +27,46 @@ class TicketRepository:
         await db.refresh(ticket)
 
         return ticket
+    
+    @staticmethod
+    async def get_all(
+        db: AsyncSession
+    ):
+
+        result = await db.execute(
+            select(Ticket)
+        )
+
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_by_id(
+        db: AsyncSession,
+        ticket_id: int
+    ) -> Ticket | None:
+
+        result = await db.execute(
+            select(Ticket).where(Ticket.id == ticket_id)
+        )
+
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def update(
+        db: AsyncSession,
+        ticket: Ticket
+    ) -> Ticket:
+
+        await db.commit()
+        await db.refresh(ticket)
+
+        return ticket
+
+    @staticmethod
+    async def delete(
+        db: AsyncSession,
+        ticket: Ticket
+    ) -> None:
+
+        await db.delete(ticket)
+        await db.commit()
