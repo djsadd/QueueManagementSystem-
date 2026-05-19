@@ -4,9 +4,11 @@ from app.db.session import engine
 
 # Routers
 from app.api.auth.auth import auth_router
+from app.api.tickets.routes import tickets_router
 
 app = FastAPI()
 app.include_router(auth_router)
+app.include_router(tickets_router)
 
 @app.get("/")
 def root():
