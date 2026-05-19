@@ -9,6 +9,7 @@ from app.api.auth.auth import auth_router
 from app.api.education.routes import academic_degrees_router, educational_programs_router, operator_programs_router
 from app.api.operators.routes import operators_router
 from app.api.services.routes import services_router
+from app.api.ticket_events.routes import ticket_events_router
 from app.api.tickets.routes import tickets_router
 from app.api.users.routes import users_router
 from app.api.windows.routes import windows_router
@@ -21,6 +22,7 @@ app.include_router(educational_programs_router)
 app.include_router(operators_router)
 app.include_router(operator_programs_router)
 app.include_router(services_router)
+app.include_router(ticket_events_router)
 app.include_router(tickets_router)
 app.include_router(users_router)
 app.include_router(windows_router)
