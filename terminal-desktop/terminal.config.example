@@ -1,0 +1,12 @@
+# Address of the FastAPI backend. On another computer use the server IP address.
+ApiBaseUrl=http://localhost:8000
+
+# Leave empty to print to the Windows default printer, or enter its exact name.
+PrinterName=
+
+# Terminal screen mode.
+FullScreen=true
+
+# Thermal receipt paper size in millimeters.
+ReceiptWidthMm=80
+ReceiptHeightMm=150
