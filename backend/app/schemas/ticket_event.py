@@ -6,7 +6,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class TicketEventBase(BaseModel):
-    ticket_id: int | None = Field(default=None, gt=0)
+    ticket_id: uuid.UUID | None = None
     event_type: str | None = Field(default=None, max_length=100)
     old_status: str | None = Field(default=None, max_length=50)
     new_status: str | None = Field(default=None, max_length=50)
@@ -22,7 +22,7 @@ class TicketEventCreate(TicketEventBase):
 
 
 class TicketEventUpdate(BaseModel):
-    ticket_id: int | None = Field(default=None, gt=0)
+    ticket_id: uuid.UUID | None = None
     event_type: str | None = Field(default=None, min_length=1, max_length=100)
     old_status: str | None = Field(default=None, min_length=1, max_length=50)
     new_status: str | None = Field(default=None, min_length=1, max_length=50)
@@ -32,6 +32,8 @@ class TicketEventUpdate(BaseModel):
 
 class TicketEventResponse(TicketEventBase):
     id: uuid.UUID
+    operator_name: str | None = None
+    operator_email: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

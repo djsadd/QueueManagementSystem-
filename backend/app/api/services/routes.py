@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.dependencies.auth import require_admin
 from app.dependencies.db import get_db
 from app.schemas.service import ServiceCreate, ServiceResponse, ServiceUpdate
 from app.services.service_service import ServiceService
 
 
-services_router = APIRouter(prefix="/services", tags=["services"])
+services_router = APIRouter(prefix="/services", tags=["services"], dependencies=[Depends(require_admin)])
 
 
 @services_router.post("/", response_model=ServiceResponse)

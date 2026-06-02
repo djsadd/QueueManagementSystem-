@@ -3,12 +3,13 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.dependencies.auth import require_admin
 from app.dependencies.db import get_db
 from app.schemas.applicant import ApplicantCreate, ApplicantResponse, ApplicantUpdate
 from app.services.applicant_service import ApplicantService
 
 
-applicants_router = APIRouter(prefix="/applicants", tags=["applicants"])
+applicants_router = APIRouter(prefix="/applicants", tags=["applicants"], dependencies=[Depends(require_admin)])
 
 
 @applicants_router.post("/", response_model=ApplicantResponse)

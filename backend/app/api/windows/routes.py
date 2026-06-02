@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.dependencies.auth import require_admin
 from app.dependencies.db import get_db
 from app.schemas.window import WindowCreate, WindowResponse, WindowUpdate
 from app.services.windows_service import WindowService
 
 
-windows_router = APIRouter(prefix="/windows", tags=["windows"])
+windows_router = APIRouter(prefix="/windows", tags=["windows"], dependencies=[Depends(require_admin)])
 
 
 @windows_router.post("/", response_model=WindowResponse)

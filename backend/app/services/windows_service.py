@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.window import Window
+from app.realtime import realtime_manager
 from app.schemas.window import (
     WindowCreate,
     WindowUpdate,
@@ -69,6 +70,12 @@ class WindowService:
         await db.commit()
         await db.refresh(window)
 
+        await realtime_manager.broadcast_my_window_update(
+            window.id,
+            "window_updated",
+            {"window_id": window.id},
+        )
+
         return window
 
     @staticmethod
@@ -77,5 +84,11 @@ class WindowService:
         window: Window
     ) -> None:
 
+        window_id = window.id
         await db.delete(window)
         await db.commit()
+        await realtime_manager.broadcast_my_window_update(
+            window_id,
+            "window_deleted",
+            {"window_id": window_id},
+        )

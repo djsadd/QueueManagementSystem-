@@ -1,5 +1,7 @@
 # app/schemas/window.py
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -17,6 +19,10 @@ class WindowUpdate(BaseModel):
     name: str | None = None
     status: str | None = None
     current_operator_id: int | None = None
+
+
+class WindowStatusUpdate(BaseModel):
+    status: Literal["OPEN", "BUSY", "CLOSED"]
 
 
 class WindowResponse(WindowBase):

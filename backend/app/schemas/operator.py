@@ -22,6 +22,14 @@ class OperatorUpdate(BaseModel):
     status: OperatorStatus | None = None
 
 
+class OperatorStatusUpdate(BaseModel):
+    status: OperatorStatus
+
+
+class OperatorServicesUpdate(BaseModel):
+    service_ids: list[int]
+
+
 class OperatorResponse(OperatorBase):
     id: uuid.UUID
     created_at: datetime

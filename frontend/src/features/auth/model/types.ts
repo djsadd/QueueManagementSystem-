@@ -14,7 +14,12 @@ export type AuthTokens = {
 }
 
 export type RegisteredUser = {
-  id: number
+  id: string
   email: string
   full_name: string
+}
+
+export type AuthUser = RegisteredUser & {
+  role: 'ADMIN' | 'OPERATOR' | 'MANAGER'
+  is_active: boolean
 }

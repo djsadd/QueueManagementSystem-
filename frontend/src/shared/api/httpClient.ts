@@ -1,4 +1,5 @@
 import { env } from '../config/env'
+import { tokenStorage } from '../lib/tokenStorage'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -6,6 +7,12 @@ type RequestOptions = {
   method?: HttpMethod
   body?: unknown
   headers?: HeadersInit
+  skipAuthRefresh?: boolean
+}
+
+type AuthTokens = {
+  access_token: string
+  refresh_token: string
 }
 
 export class ApiError extends Error {
@@ -20,31 +27,103 @@ export class ApiError extends Error {
   }
 }
 
+let refreshPromise: Promise<AuthTokens> | null = null
+
+async function readResponsePayload(response: Response) {
+  const contentType = response.headers.get('content-type')
+  return contentType?.includes('application/json') ? await response.json() : null
+}
+
+function getErrorFromResponse(response: Response, payload: unknown) {
+  const detail = payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : null
+  const message = typeof detail === 'string' ? detail : 'Не удалось выполнить запрос'
+
+  return new ApiError(message, response.status, payload)
+}
+
+function canRefreshAuth(path: string, skipAuthRefresh?: boolean) {
+  return !skipAuthRefresh && path !== '/auth/login' && path !== '/auth/refresh'
+}
+
+export async function refreshAuthTokens(): Promise<AuthTokens | null> {
+  const refreshToken = tokenStorage.getRefreshToken()
+
+  if (!refreshToken) {
+    return null
+  }
+
+  if (!refreshPromise) {
+    refreshPromise = fetch(`${env.apiBaseUrl}/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+      .then(async (response) => {
+        const payload = await readResponsePayload(response)
+
+        if (!response.ok) {
+          throw getErrorFromResponse(response, payload)
+        }
+
+        const tokens = payload as AuthTokens
+        tokenStorage.setTokens(tokens.access_token, tokens.refresh_token)
+        return tokens
+      })
+      .catch((error) => {
+        tokenStorage.clear()
+        throw error
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
+  }
+
+  return refreshPromise
+}
+
 export async function request<T>(
   path: string,
-  { method = 'GET', body, headers }: RequestOptions = {},
+  { method = 'GET', body, headers, skipAuthRefresh }: RequestOptions = {},
 ): Promise<T> {
-  const response = await fetch(`${env.apiBaseUrl}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  async function send(accessToken: string | null) {
+    const requestHeaders = new Headers(headers)
+    requestHeaders.set('Content-Type', 'application/json')
 
-  const contentType = response.headers.get('content-type')
-  const payload = contentType?.includes('application/json')
-    ? await response.json()
-    : null
+    if (accessToken) {
+      requestHeaders.set('Authorization', `Bearer ${accessToken}`)
+    }
+
+    return fetch(`${env.apiBaseUrl}${path}`, {
+      method,
+      headers: requestHeaders,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  }
+
+  const response = await send(tokenStorage.getAccessToken())
+  const payload = await readResponsePayload(response)
 
   if (!response.ok) {
-    const message =
-      typeof payload?.detail === 'string'
-        ? payload.detail
-        : 'Не удалось выполнить запрос'
+    const error = getErrorFromResponse(response, payload)
 
-    throw new ApiError(message, response.status, payload)
+    if (response.status === 401 && canRefreshAuth(path, skipAuthRefresh)) {
+      const tokens = await refreshAuthTokens().catch(() => null)
+
+      if (tokens) {
+        const retryResponse = await send(tokens.access_token)
+        const retryPayload = await readResponsePayload(retryResponse)
+
+        if (retryResponse.ok) {
+          return retryPayload as T
+        }
+
+        throw getErrorFromResponse(retryResponse, retryPayload)
+      }
+    }
+
+    throw error
   }
 
   return payload as T

@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,9 +42,22 @@ class TicketRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def get_for_window(
+        db: AsyncSession,
+        window_id: int,
+    ) -> list[Ticket]:
+        result = await db.execute(
+            select(Ticket)
+            .where(Ticket.window_id == window_id)
+            .order_by(Ticket.created_at.desc())
+        )
+
+        return list(result.scalars().all())
+
+    @staticmethod
     async def get_by_id(
         db: AsyncSession,
-        ticket_id: int
+        ticket_id: uuid.UUID,
     ) -> Ticket | None:
 
         result = await db.execute(

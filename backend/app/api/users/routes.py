@@ -3,12 +3,13 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.dependencies.auth import require_admin
 from app.dependencies.db import get_db
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.services.user_service import UserService
 
 
-users_router = APIRouter(prefix="/users", tags=["users"])
+users_router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_admin)])
 
 
 @users_router.post("/", response_model=UserResponse)

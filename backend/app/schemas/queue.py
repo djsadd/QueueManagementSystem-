@@ -1,14 +1,13 @@
-# app/schemas/queue_log.py
-
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
 
 class QueueLogBase(BaseModel):
-    ticket_id: int
+    ticket_id: uuid.UUID
     action: str
-    operator_id: int | None = None
+    operator_id: uuid.UUID | None = None
 
 
 class QueueLogCreate(QueueLogBase):

@@ -36,11 +36,13 @@ ApiBaseUrl=http://192.168.1.20:8000
 PrinterName=Custom VKP 80
 FullScreen=true
 ReceiptWidthMm=80
-ReceiptHeightMm=150
+ReceiptBottomFeedMm=5
 ```
 
 `ApiBaseUrl` must point to the backend rather than the React frontend. Leave
-`PrinterName` empty to use the default Windows printer.
+`PrinterName` empty to use the default Windows printer. The receipt height is
+calculated from its content; `ReceiptBottomFeedMm` leaves only the small tail
+needed before the printer cutter.
 
 ## Run
 
@@ -53,6 +55,9 @@ The application loads active services, registers a ticket through
 printer. If printing fails after registration, the issued number remains on
 screen and can be printed again with `Повторить печать`; it does not create a
 second ticket.
+
+The desktop header includes the university logo, current local time, and a
+`Қазақша` / `Русский` / `English` interface switch.
 
 For initial setup set `FullScreen=false`, verify the server address and print
 one ticket. Switch it back to `true` for kiosk operation. Use `Alt+F4` to close

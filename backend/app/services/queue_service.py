@@ -1,4 +1,4 @@
-# app/services/queue_log_service.py
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ class QueueLogService:
     @staticmethod
     async def get_by_ticket(
         db: AsyncSession,
-        ticket_id: int
+        ticket_id: uuid.UUID,
     ) -> list[QueueLog]:
 
         result = await db.execute(

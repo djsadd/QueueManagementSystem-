@@ -7,6 +7,9 @@ PrinterName=
 # Terminal screen mode.
 FullScreen=true
 
-# Thermal receipt paper size in millimeters.
+# Thermal receipt paper width and additional feed after the final printed line.
 ReceiptWidthMm=80
-ReceiptHeightMm=150
+ReceiptBottomFeedMm=5
+
+# PNG image displayed on the right side for online booking.
+OnlineQrImage=online-qr.png

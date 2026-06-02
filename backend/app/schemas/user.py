@@ -36,6 +36,9 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: PasswordStr
 
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: EmailStr

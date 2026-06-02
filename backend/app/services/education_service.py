@@ -5,7 +5,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.education import AcademicDegree, EducationalProgram, OperatorEducationalProgram
+from app.models.education import (
+    AcademicDegree,
+    EducationalProgram,
+    OperatorAcademicDegree,
+    OperatorEducationalProgram,
+)
 from app.models.operator import Operator
 from app.schemas.education import (
     AcademicDegreeCreate,
@@ -196,4 +201,63 @@ class OperatorEducationalProgramService:
             raise HTTPException(
                 status_code=404,
                 detail=f"Educational programs not found: {missing_ids}",
+            )
+
+
+class OperatorAcademicDegreeService:
+    @staticmethod
+    async def get_for_operator(db: AsyncSession, operator_id: uuid.UUID) -> list[AcademicDegree]:
+        await OperatorEducationalProgramService.ensure_operator_exists(db, operator_id)
+
+        result = await db.execute(
+            select(AcademicDegree)
+            .join(
+                OperatorAcademicDegree,
+                OperatorAcademicDegree.academic_degree_id == AcademicDegree.id,
+            )
+            .where(OperatorAcademicDegree.operator_id == operator_id)
+            .order_by(AcademicDegree.id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def replace_for_operator(
+        db: AsyncSession,
+        operator_id: uuid.UUID,
+        academic_degree_ids: list[int],
+    ) -> list[AcademicDegree]:
+        await OperatorEducationalProgramService.ensure_operator_exists(db, operator_id)
+        unique_degree_ids = list(dict.fromkeys(academic_degree_ids))
+        await OperatorAcademicDegreeService.ensure_degrees_exist(db, unique_degree_ids)
+
+        await db.execute(
+            delete(OperatorAcademicDegree).where(
+                OperatorAcademicDegree.operator_id == operator_id
+            )
+        )
+
+        for degree_id in unique_degree_ids:
+            db.add(
+                OperatorAcademicDegree(
+                    operator_id=operator_id,
+                    academic_degree_id=degree_id,
+                )
+            )
+
+        await db.commit()
+        return await OperatorAcademicDegreeService.get_for_operator(db, operator_id)
+
+    @staticmethod
+    async def ensure_degrees_exist(db: AsyncSession, degree_ids: list[int]) -> None:
+        if not degree_ids:
+            return
+
+        result = await db.execute(select(AcademicDegree.id).where(AcademicDegree.id.in_(degree_ids)))
+        existing_ids = set(result.scalars().all())
+        missing_ids = sorted(set(degree_ids) - existing_ids)
+
+        if missing_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Academic degrees not found: {missing_ids}",
             )

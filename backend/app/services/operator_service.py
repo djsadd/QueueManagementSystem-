@@ -1,11 +1,13 @@
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.operator import Operator
+from app.realtime import realtime_manager
+from app.models.service import OperatorService as OperatorServiceLink, Service
 from app.models.user import User
 from app.schemas.operator import OperatorCreate, OperatorUpdate
 
@@ -38,8 +40,14 @@ class OperatorService:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_user_id(db: AsyncSession, user_id: uuid.UUID) -> Operator | None:
+        result = await db.execute(select(Operator).where(Operator.user_id == user_id))
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def update(db: AsyncSession, operator: Operator, data: OperatorUpdate) -> Operator:
         update_data = data.model_dump(exclude_unset=True)
+        previous_window_id = operator.window_id
 
         if "user_id" in update_data:
             await OperatorService.ensure_user_exists(db, update_data["user_id"])
@@ -54,12 +62,30 @@ class OperatorService:
             raise HTTPException(status_code=409, detail="Operator update conflicts with existing data")
 
         await db.refresh(operator)
+        await realtime_manager.broadcast_my_window_update(
+            previous_window_id,
+            "operator_updated",
+            {"operator_id": str(operator.id)},
+        )
+        if operator.window_id != previous_window_id:
+            await realtime_manager.broadcast_my_window_update(
+                operator.window_id,
+                "operator_updated",
+                {"operator_id": str(operator.id)},
+            )
+
         return operator
 
     @staticmethod
     async def delete(db: AsyncSession, operator: Operator) -> None:
+        window_id = operator.window_id
         await db.delete(operator)
         await db.commit()
+        await realtime_manager.broadcast_my_window_update(
+            window_id,
+            "operator_deleted",
+            {"operator_id": str(operator.id)},
+        )
 
     @staticmethod
     async def ensure_user_exists(db: AsyncSession, user_id: uuid.UUID) -> None:
@@ -67,3 +93,59 @@ class OperatorService:
 
         if result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="User not found")
+
+
+class OperatorServiceTypeService:
+    @staticmethod
+    async def get_for_operator(db: AsyncSession, operator_id: uuid.UUID) -> list[Service]:
+        await OperatorServiceTypeService.ensure_operator_exists(db, operator_id)
+
+        result = await db.execute(
+            select(Service)
+            .join(OperatorServiceLink, OperatorServiceLink.service_id == Service.id)
+            .where(OperatorServiceLink.operator_id == operator_id)
+            .order_by(Service.id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def replace_for_operator(
+        db: AsyncSession,
+        operator_id: uuid.UUID,
+        service_ids: list[int],
+    ) -> list[Service]:
+        await OperatorServiceTypeService.ensure_operator_exists(db, operator_id)
+        unique_service_ids = list(dict.fromkeys(service_ids))
+        await OperatorServiceTypeService.ensure_services_exist(db, unique_service_ids)
+
+        await db.execute(
+            delete(OperatorServiceLink).where(OperatorServiceLink.operator_id == operator_id)
+        )
+
+        for service_id in unique_service_ids:
+            db.add(OperatorServiceLink(operator_id=operator_id, service_id=service_id))
+
+        await db.commit()
+        return await OperatorServiceTypeService.get_for_operator(db, operator_id)
+
+    @staticmethod
+    async def ensure_operator_exists(db: AsyncSession, operator_id: uuid.UUID) -> None:
+        result = await db.execute(select(Operator.id).where(Operator.id == operator_id))
+
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Operator not found")
+
+    @staticmethod
+    async def ensure_services_exist(db: AsyncSession, service_ids: list[int]) -> None:
+        if not service_ids:
+            return
+
+        result = await db.execute(select(Service.id).where(Service.id.in_(service_ids)))
+        existing_ids = set(result.scalars().all())
+        missing_ids = sorted(set(service_ids) - existing_ids)
+
+        if missing_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Services not found: {missing_ids}",
+            )

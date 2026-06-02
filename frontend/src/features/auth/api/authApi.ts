@@ -1,6 +1,7 @@
 import { request } from '../../../shared/api/httpClient'
 import type {
   AuthTokens,
+  AuthUser,
   LoginCredentials,
   RegisteredUser,
   RegisterCredentials,
@@ -11,6 +12,7 @@ export const authApi = {
     return request<AuthTokens>('/auth/login', {
       method: 'POST',
       body: credentials,
+      skipAuthRefresh: true,
     })
   },
 
@@ -19,5 +21,9 @@ export const authApi = {
       method: 'POST',
       body: credentials,
     })
+  },
+
+  me() {
+    return request<AuthUser>('/auth/me')
   },
 }
