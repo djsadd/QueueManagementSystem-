@@ -9,6 +9,7 @@ export type PublicServiceItem = {
   priority: number
   is_active: boolean
   requires_educational_program: boolean
+  requires_reception_desk: boolean
 }
 
 export type TicketCreatePayload = {

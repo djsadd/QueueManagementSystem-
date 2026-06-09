@@ -64,7 +64,6 @@ async def get_public_queue_display(
         select(Ticket)
         .where(Ticket.status == TicketStatus.WAITING.value)
         .order_by(Ticket.priority.desc(), Ticket.created_at.asc())
-        .limit(12)
     )
 
     if selected_service_ids:

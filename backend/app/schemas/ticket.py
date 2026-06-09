@@ -112,6 +112,16 @@ class MyWindowTicketsResponse(BaseModel):
     tickets: list[TicketResponse]
 
 
+class ReceptionTicketsResponse(BaseModel):
+    waiting_count: int
+    called_count: int
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    tickets: list[TicketResponse]
+
+
 class QueueDisplayResponse(BaseModel):
     serving: list[TicketResponse]
     next: list[TicketResponse]

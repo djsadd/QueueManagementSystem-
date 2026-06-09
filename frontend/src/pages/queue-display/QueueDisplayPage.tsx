@@ -320,23 +320,15 @@ export function QueueDisplayPage() {
         {animatedNext.length === 0 ? (
           <p className="display-empty">{t.emptyNext}</p>
         ) : (
-          <div className="display-table-wrap">
-            <table className="display-ticket-table display-next-table">
-              <thead>
-                <tr>
-                  <th>{ticketLabels[lang]}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {animatedNext.map((ticket) => (
-                  <tr className={getAnimationClass(ticket.animationState)} key={ticket.id}>
-                    <td>
-                      <strong>{ticket.ticket_number}</strong>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="display-next-wrap">
+            <div className="display-next-heading">{ticketLabels[lang]}</div>
+            <div className="display-next-list" role="list">
+              {animatedNext.map((ticket) => (
+                <div className={`display-next-item ${getAnimationClass(ticket.animationState)}`} key={ticket.id} role="listitem">
+                  <strong>{ticket.ticket_number}</strong>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </section>

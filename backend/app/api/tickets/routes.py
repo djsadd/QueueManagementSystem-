@@ -9,6 +9,7 @@ from app.models.user import User
 
 from app.schemas.ticket import (
     MyWindowTicketsResponse,
+    ReceptionTicketsResponse,
     TicketAccept,
     TicketCreate,
     TicketResponse,
@@ -77,6 +78,18 @@ async def update_my_window_status(
     current_user: User = Depends(get_current_user),
 ):
     return await TicketService.update_my_window_status(db, current_user.id, data.status)
+
+
+@tickets_router.patch(
+    "/my-window/next",
+    response_model=TicketResponse,
+    dependencies=[],
+)
+async def call_next_my_window_ticket(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await TicketService.call_next_my_ticket(db, current_user.id)
 
 
 @tickets_router.patch(
@@ -163,6 +176,90 @@ async def update_my_window_ticket_study_language(
         ticket_id,
         data.study_language,
     )
+
+
+@tickets_router.get(
+    "/reception",
+    response_model=ReceptionTicketsResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def get_reception_tickets(
+    search: str | None = Query(default=None),
+    service_id: int | None = Query(default=None, gt=0),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    return await TicketService.get_reception_tickets(
+        db,
+        search=search,
+        service_id=service_id,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@tickets_router.patch(
+    "/reception/{ticket_id}/accept",
+    response_model=TicketResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def accept_reception_ticket(
+    ticket_id: uuid.UUID,
+    data: TicketAccept,
+    db: AsyncSession = Depends(get_db),
+):
+    return await TicketService.accept_reception_ticket(db, ticket_id, data.iin)
+
+
+@tickets_router.patch(
+    "/reception/{ticket_id}/complete",
+    response_model=TicketResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def complete_reception_ticket(
+    ticket_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    return await TicketService.complete_reception_ticket(db, ticket_id)
+
+
+@tickets_router.patch(
+    "/reception/{ticket_id}/skip",
+    response_model=TicketResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def skip_reception_ticket(
+    ticket_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    return await TicketService.skip_reception_ticket(db, ticket_id)
+
+
+@tickets_router.patch(
+    "/reception/{ticket_id}/study-language",
+    response_model=TicketResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def update_reception_ticket_study_language(
+    ticket_id: uuid.UUID,
+    data: TicketStudyLanguageUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    return await TicketService.update_reception_ticket_study_language(db, ticket_id, data.study_language)
+
+
+@tickets_router.patch(
+    "/reception/{ticket_id}/service",
+    response_model=TicketResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def reassign_reception_ticket_service(
+    ticket_id: uuid.UUID,
+    data: TicketServiceReassign,
+    db: AsyncSession = Depends(get_db),
+):
+    return await TicketService.reassign_reception_ticket_service(db, ticket_id, data)
 
 
 @tickets_router.post(

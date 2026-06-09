@@ -8,7 +8,12 @@ from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.db import get_db
 from app.models.operator import Operator
 from app.models.user import User
-from app.schemas.ticket_event import TicketEventCreate, TicketEventResponse, TicketEventUpdate
+from app.schemas.ticket_event import (
+    OperatorTicketAnalyticsResponse,
+    TicketEventCreate,
+    TicketEventResponse,
+    TicketEventUpdate,
+)
 from app.services.operator_service import OperatorService
 from app.services.ticket_event_service import TicketEventService
 
@@ -70,6 +75,33 @@ async def get_my_ticket_events(
 
     ticket_events = await TicketEventService.get_by_operator_id(db, operator.id)
     return [await serialize_ticket_event(db, ticket_event) for ticket_event in ticket_events]
+
+
+@ticket_events_router.get(
+    "/analytics",
+    response_model=list[OperatorTicketAnalyticsResponse],
+    dependencies=[Depends(require_admin)],
+)
+async def get_ticket_event_analytics(db: AsyncSession = Depends(get_db)):
+    return await TicketEventService.get_operator_analytics(db)
+
+
+@ticket_events_router.get("/me/analytics", response_model=OperatorTicketAnalyticsResponse)
+async def get_my_ticket_event_analytics(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    operator = await OperatorService.get_by_user_id(db, current_user.id)
+
+    if operator is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+
+    rows = await TicketEventService.get_operator_analytics(db, operator.id)
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Operator not found")
+
+    return rows[0]
 
 
 @ticket_events_router.get(

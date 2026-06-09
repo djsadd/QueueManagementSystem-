@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent, MouseEvent, ReactNode } from 'react'
 import {
   adminApi,
   type AcademicDegreeItem,
@@ -15,6 +15,9 @@ import {
   type ServiceItem,
   type ServicePayload,
   type MyWindowTickets,
+  type OperatorDailyAnalyticsItem,
+  type OperatorTicketAnalyticsItem,
+  type ReceptionTickets,
   type TicketItem,
   type TicketEventItem,
   type TicketEventPayload,
@@ -42,18 +45,25 @@ type CrudSection =
   | 'educationalPrograms'
   | 'applicants'
   | 'ticketEvents'
-type DashboardSection = CrudSection | 'profile' | 'myWindow' | 'analytics'
-type OperatorAnalytics = {
-  accepted: number
-  completed: number
-  skipped: number
-  declined: number
-  totalActions: number
-  completionRate: number
-  lastActivity: string | null
-}
+type DashboardSection = CrudSection | 'profile' | 'myWindow' | 'analytics' | 'reception'
 type MyWindowRealtimeStatus = 'connecting' | 'connected' | 'disconnected'
 type MyWindowTicketHighlight = 'new' | 'updated'
+type AnalyticsTimeGrouping = 'day' | 'month'
+type AnalyticsPieSegment = {
+  color: string
+  detail: string
+  label: string
+  value: number
+}
+type OperatorPerformancePoint = {
+  averageProcessingMinutes: number
+  clientsPerHour: number
+  effectiveWorkSeconds: number
+  label: string
+  operatorId: string
+  processed: number
+  utilizationPercent: number
+}
 type DeleteTarget = {
   section: CrudSection
   id: number | string
@@ -62,6 +72,22 @@ type DeleteTarget = {
 
 const LANG_STORAGE_KEY = 'queueflow-language'
 const MY_WINDOW_PAGE_SIZE = 10
+const ACTIVE_MY_WINDOW_TICKET_STATUSES = new Set(['WAITING', 'CALLED'])
+const ANALYTICS_SERVICE_COLORS = [
+  '#9a002d',
+  '#0f766e',
+  '#2563eb',
+  '#b45309',
+  '#7c3aed',
+  '#be123c',
+  '#047857',
+  '#4f46e5',
+]
+const ANALYTICS_STATUS_COLORS = {
+  completed: '#0f766e',
+  skipped: '#b45309',
+  active: '#2563eb',
+}
 const languages = ['ru', 'kk', 'en'] as const
 const emptyService: ServicePayload = {
   name: '',
@@ -71,6 +97,7 @@ const emptyService: ServicePayload = {
   priority: 0,
   is_active: true,
   requires_educational_program: false,
+  requires_reception_desk: false,
 }
 const emptyWindow: WindowPayload = { name: '', status: 'OPEN', current_operator_id: null }
 const emptyUser: UserPayload = {
@@ -157,6 +184,7 @@ const myWindowStatusActions: Array<{ status: WindowStatus; label: string }> = [
 
 const sectionLabels: Record<DashboardSection, string> = {
   myWindow: 'Мое окно',
+  reception: 'Регистратура',
   profile: 'Профиль',
   services: 'Услуги',
   windows: 'Окна',
@@ -171,6 +199,7 @@ const sectionLabels: Record<DashboardSection, string> = {
 
 const sectionPaths: Record<DashboardSection, string> = {
   myWindow: 'my-window',
+  reception: 'reception',
   profile: 'profile',
   services: 'services',
   windows: 'windows',
@@ -186,6 +215,7 @@ const sectionPaths: Record<DashboardSection, string> = {
 function isDashboardSection(value: string | undefined): value is DashboardSection {
   return (
     value === 'profile' ||
+    value === 'reception' ||
     value === 'services' ||
     value === 'windows' ||
     value === 'users' ||
@@ -221,6 +251,10 @@ function getSectionFromPath(): DashboardSection {
   const pathParts = window.location.pathname.split('/').filter(Boolean)
   const sectionCandidate = pathParts[pathParts.length - 1]
 
+  if (pathParts.includes('analytics')) {
+    return 'analytics'
+  }
+
   if (sectionCandidate === 'academic-degrees') {
     return 'academicDegrees'
   }
@@ -241,15 +275,34 @@ function getSectionFromPath(): DashboardSection {
     return 'myWindow'
   }
 
+  if (sectionCandidate === 'reception') {
+    return 'reception'
+  }
+
   return isDashboardSection(sectionCandidate) ? sectionCandidate : 'services'
+}
+
+function getAnalyticsOperatorIdFromPath() {
+  const pathParts = window.location.pathname.split('/').filter(Boolean)
+  const analyticsIndex = pathParts.indexOf('analytics')
+
+  if (analyticsIndex === -1) {
+    return null
+  }
+
+  const operatorId = pathParts[analyticsIndex + 1]
+  return operatorId ? decodeURIComponent(operatorId) : null
 }
 
 function canUseOperatorSection(section: DashboardSection) {
   return section === 'myWindow' || section === 'profile' || section === 'analytics'
 }
 
-function buildSectionPath(lang: Lang, section: DashboardSection) {
-  return `/${lang}/admin/${sectionPaths[section]}${window.location.search}${window.location.hash}`
+function buildSectionPath(lang: Lang, section: DashboardSection, analyticsOperatorId: string | null = null) {
+  const analyticsOperatorPath =
+    section === 'analytics' && analyticsOperatorId ? `/${encodeURIComponent(analyticsOperatorId)}` : ''
+
+  return `/${lang}/admin/${sectionPaths[section]}${analyticsOperatorPath}${window.location.search}${window.location.hash}`
 }
 
 function Icon({ name }: { name: string }) {
@@ -272,8 +325,320 @@ function Icon({ name }: { name: string }) {
   )
 }
 
+function AnalyticsDonutChart({
+  centerLabel,
+  centerValue,
+  segments,
+  total,
+}: {
+  centerLabel: string
+  centerValue: string | number
+  segments: AnalyticsPieSegment[]
+  total: number
+}) {
+  const [hoveredSegment, setHoveredSegment] = useState<{
+    detail: string
+    label: string
+    percent: number
+    value: number
+    x: number
+    y: number
+  } | null>(null)
+  let offset = 0
+  const visibleSegments = segments.filter((segment) => segment.value > 0)
+
+  function moveTooltip(event: MouseEvent<SVGCircleElement>, segment: AnalyticsPieSegment, percent: number) {
+    const svg = event.currentTarget.ownerSVGElement
+    const rect = svg?.getBoundingClientRect()
+
+    setHoveredSegment({
+      detail: segment.detail,
+      label: segment.label,
+      percent: Math.round(percent),
+      value: segment.value,
+      x: rect ? ((event.clientX - rect.left) / rect.width) * 100 : 50,
+      y: rect ? ((event.clientY - rect.top) / rect.height) * 100 : 50,
+    })
+  }
+
+  return (
+    <div className="analytics-donut">
+      <svg viewBox="0 0 100 100" role="img" aria-label={centerLabel}>
+        <circle className="analytics-donut-track" cx="50" cy="50" r="38" pathLength="100" />
+        {visibleSegments.map((segment) => {
+          const percent = total > 0 ? (segment.value / total) * 100 : 0
+          const currentOffset = offset
+          const midpoint = currentOffset + percent / 2
+          const midpointRadians = (midpoint / 100) * Math.PI * 2 - Math.PI / 2
+          offset += percent
+
+          return (
+            <circle
+              className="analytics-donut-segment"
+              cx="50"
+              cy="50"
+              key={segment.label}
+              pathLength="100"
+              r="38"
+              stroke={segment.color}
+              strokeDasharray={`${percent} ${100 - percent}`}
+              strokeDashoffset={-currentOffset}
+              tabIndex={0}
+              onBlur={() => setHoveredSegment(null)}
+              onFocus={() =>
+                setHoveredSegment({
+                  detail: segment.detail,
+                  label: segment.label,
+                  percent: Math.round(percent),
+                  value: segment.value,
+                  x: 50 + Math.cos(midpointRadians) * 32,
+                  y: 50 + Math.sin(midpointRadians) * 32,
+                })
+              }
+              onMouseEnter={(event) => moveTooltip(event, segment, percent)}
+              onMouseLeave={() => setHoveredSegment(null)}
+              onMouseMove={(event) => moveTooltip(event, segment, percent)}
+            />
+          )
+        })}
+      </svg>
+      <div className="analytics-donut-center">
+        <strong>{centerValue}</strong>
+        <span>{centerLabel}</span>
+      </div>
+      {hoveredSegment && (
+        <div
+          className="analytics-donut-tooltip"
+          style={{
+            left: `${hoveredSegment.x}%`,
+            top: `${hoveredSegment.y}%`,
+          }}
+        >
+          <strong>{hoveredSegment.percent}%</strong>
+          <span>{hoveredSegment.label}</span>
+          <small>
+            {hoveredSegment.value} · {hoveredSegment.detail}
+          </small>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function boolLabel(value: boolean) {
   return value ? 'Активно' : 'Выключено'
+}
+
+function AnalyticsDailyLineChart({
+  grouping,
+  rows,
+}: {
+  grouping: AnalyticsTimeGrouping
+  rows: OperatorDailyAnalyticsItem[]
+}) {
+  if (rows.length === 0) {
+    return null
+  }
+
+  const servedTotal = rows.reduce((total, rowStats) => total + rowStats.completed, 0)
+  const averageServed = rows.length > 0 ? Math.round(servedTotal / rows.length) : 0
+  const maxServed = Math.max(1, ...rows.map((rowStats) => rowStats.completed))
+  const chartWidth = 640
+  const chartHeight = 190
+  const padding = { bottom: 34, left: 34, right: 16, top: 16 }
+  const innerWidth = chartWidth - padding.left - padding.right
+  const innerHeight = chartHeight - padding.top - padding.bottom
+  const points = rows.map((rowStats, index) => {
+    const x =
+      rows.length === 1
+        ? padding.left + innerWidth / 2
+        : padding.left + (index / (rows.length - 1)) * innerWidth
+    const y = padding.top + ((maxServed - rowStats.completed) / maxServed) * innerHeight
+
+    return {
+      ...rowStats,
+      label: grouping === 'month' ? formatAnalyticsMonth(rowStats.date) : formatAnalyticsDate(rowStats.date),
+      x,
+      y,
+    }
+  })
+  const pointPath = points.map((point) => `${point.x},${point.y}`).join(' ')
+  const labelStep = grouping === 'month' ? 1 : Math.max(1, Math.ceil(rows.length / 7))
+  const yTicks = [0, Math.ceil(maxServed / 2), maxServed]
+
+  return (
+    <div className="analytics-line-chart">
+      <div className="analytics-line-summary">
+        <div>
+          <span>Обслужено</span>
+          <strong>{servedTotal}</strong>
+        </div>
+        <div>
+          <span>Среднее в день</span>
+          <strong>{averageServed}</strong>
+        </div>
+      </div>
+      <svg
+        className="analytics-line-plot"
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        role="img"
+        aria-label="Линейная диаграмма обслуженных талонов по дням"
+      >
+        {yTicks.map((tick) => {
+          const y = padding.top + ((maxServed - tick) / maxServed) * innerHeight
+
+          return (
+            <g className="analytics-line-grid" key={tick}>
+              <line x1={padding.left} x2={chartWidth - padding.right} y1={y} y2={y} />
+              <text x={padding.left - 10} y={y + 4}>
+                {tick}
+              </text>
+            </g>
+          )
+        })}
+        <line
+          className="analytics-line-axis"
+          x1={padding.left}
+          x2={chartWidth - padding.right}
+          y1={chartHeight - padding.bottom}
+          y2={chartHeight - padding.bottom}
+        />
+        <line
+          className="analytics-line-axis"
+          x1={padding.left}
+          x2={padding.left}
+          y1={padding.top}
+          y2={chartHeight - padding.bottom}
+        />
+        {points.length > 1 ? (
+          <polyline className="analytics-line-path" points={pointPath} />
+        ) : (
+          <line
+            className="analytics-line-path"
+            x1={padding.left}
+            x2={chartWidth - padding.right}
+            y1={points[0].y}
+            y2={points[0].y}
+          />
+        )}
+        {points.map((point, index) => {
+          const showDateLabel = index === 0 || index === points.length - 1 || index % labelStep === 0
+
+          return (
+            <g className="analytics-line-point" key={point.date}>
+              <circle cx={point.x} cy={point.y} r="3.5" />
+              {point.completed > 0 && (
+                <text className="analytics-line-value" x={point.x} y={point.y - 10}>
+                  {point.completed}
+                </text>
+              )}
+              {showDateLabel && (
+                <text className="analytics-line-date" x={point.x} y={chartHeight - 14}>
+                  {point.label}
+                </text>
+              )}
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+function AnalyticsOperatorPerformanceChart({
+  points,
+  type,
+}: {
+  points: OperatorPerformancePoint[]
+  type: 'bubble' | 'scatter'
+}) {
+  if (points.length === 0) {
+    return <div className="analytics-empty">Данных по производительности пока нет</div>
+  }
+
+  const chartWidth = 520
+  const chartHeight = 260
+  const padding = { bottom: 42, left: 46, right: 26, top: 20 }
+  const innerWidth = chartWidth - padding.left - padding.right
+  const innerHeight = chartHeight - padding.top - padding.bottom
+  const maxProcessed = Math.max(1, ...points.map((point) => point.processed))
+  const maxAverageMinutes = Math.max(1, ...points.map((point) => point.averageProcessingMinutes))
+  const maxClientsPerHour = Math.max(1, ...points.map((point) => point.clientsPerHour))
+  const maxUtilization = Math.max(100, ...points.map((point) => point.utilizationPercent))
+  const xMax = type === 'scatter' ? maxProcessed : maxClientsPerHour
+  const yMax = type === 'scatter' ? maxAverageMinutes : maxUtilization
+  const xLabel = type === 'scatter' ? 'Клиентов' : 'Клиентов/час'
+  const yLabel = type === 'scatter' ? 'Минут' : 'Загрузка %'
+
+  function getX(point: OperatorPerformancePoint) {
+    const value = type === 'scatter' ? point.processed : point.clientsPerHour
+    return padding.left + (value / xMax) * innerWidth
+  }
+
+  function getY(point: OperatorPerformancePoint) {
+    const value = type === 'scatter' ? point.averageProcessingMinutes : point.utilizationPercent
+    return padding.top + ((yMax - value) / yMax) * innerHeight
+  }
+
+  function getRadius(point: OperatorPerformancePoint) {
+    if (type === 'scatter') {
+      return 4
+    }
+
+    return 5 + (point.processed / maxProcessed) * 11
+  }
+
+  const yTicks = [0, Math.round(yMax / 2), Math.round(yMax)]
+
+  return (
+    <svg
+      className={`analytics-performance-plot ${type}`}
+      viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+      role="img"
+      aria-label={type === 'scatter' ? 'Количество клиентов и среднее время обслуживания' : 'Производительность операторов'}
+    >
+      {yTicks.map((tick) => {
+        const y = padding.top + ((yMax - tick) / yMax) * innerHeight
+
+        return (
+          <g className="analytics-line-grid" key={tick}>
+            <line x1={padding.left} x2={chartWidth - padding.right} y1={y} y2={y} />
+            <text x={padding.left - 10} y={y + 4}>
+              {tick}
+            </text>
+          </g>
+        )
+      })}
+      <line
+        className="analytics-line-axis"
+        x1={padding.left}
+        x2={chartWidth - padding.right}
+        y1={chartHeight - padding.bottom}
+        y2={chartHeight - padding.bottom}
+      />
+      <line
+        className="analytics-line-axis"
+        x1={padding.left}
+        x2={padding.left}
+        y1={padding.top}
+        y2={chartHeight - padding.bottom}
+      />
+      <text className="analytics-performance-axis-label" x={chartWidth - padding.right} y={chartHeight - 10}>
+        {xLabel}
+      </text>
+      <text className="analytics-performance-axis-label y" x={padding.left - 34} y={padding.top + 6}>
+        {yLabel}
+      </text>
+      {points.map((point) => (
+        <g className="analytics-performance-point" key={`${type}-${point.operatorId}`}>
+          <circle cx={getX(point)} cy={getY(point)} r={getRadius(point)} />
+          <text x={getX(point)} y={getY(point) - getRadius(point) - 5}>
+            {point.label.split(' ')[0]}
+          </text>
+        </g>
+      ))}
+    </svg>
+  )
 }
 
 function getEducationalProgramDisplayLabel(ticket: Pick<TicketItem, 'educational_program_name'>) {
@@ -321,6 +686,22 @@ function getTicketStatusLabel(status: string) {
   return ticketStatusLabels[status] ?? status
 }
 
+function getMyWindowTicketStatusClassName(status: string) {
+  if (status === 'WAITING') {
+    return 'pill status-waiting'
+  }
+
+  if (status === 'CALLED') {
+    return 'pill status-working'
+  }
+
+  return 'pill status-neutral'
+}
+
+function isActiveMyWindowTicket(ticket: TicketItem) {
+  return ACTIVE_MY_WINDOW_TICKET_STATUSES.has(ticket.status)
+}
+
 function sortMyWindowTickets(tickets: TicketItem[]) {
   return [...tickets].sort((firstTicket, secondTicket) => {
     if (firstTicket.status === secondTicket.status) {
@@ -337,33 +718,6 @@ function sortMyWindowTickets(tickets: TicketItem[]) {
 
     return 0
   })
-}
-
-function eventMatches(ticketEvent: TicketEventItem, eventType: string, newStatus: string) {
-  return ticketEvent.event_type === eventType || ticketEvent.new_status === newStatus
-}
-
-function getOperatorAnalytics(operatorId: string, ticketEvents: TicketEventItem[]): OperatorAnalytics {
-  const operatorEvents = ticketEvents.filter((ticketEvent) => ticketEvent.operator_id === operatorId)
-  const accepted = operatorEvents.filter((ticketEvent) => eventMatches(ticketEvent, 'TICKET_CALLED', 'CALLED')).length
-  const completed = operatorEvents.filter((ticketEvent) =>
-    eventMatches(ticketEvent, 'TICKET_COMPLETED', 'COMPLETED'),
-  ).length
-  const skipped = operatorEvents.filter((ticketEvent) => eventMatches(ticketEvent, 'TICKET_SKIPPED', 'SKIPPED')).length
-  const declined = operatorEvents.filter((ticketEvent) => ticketEvent.event_type === 'TICKET_DECLINED').length
-  const lastActivity = operatorEvents
-    .map((ticketEvent) => ticketEvent.created_at)
-    .sort((firstDate, secondDate) => parseApiDate(secondDate).getTime() - parseApiDate(firstDate).getTime())[0] ?? null
-
-  return {
-    accepted,
-    completed,
-    skipped,
-    declined,
-    totalActions: accepted + completed + skipped + declined,
-    completionRate: accepted > 0 ? Math.round((completed / accepted) * 100) : 0,
-    lastActivity,
-  }
 }
 
 function getStudyLanguageLabel(studyLanguage: StudyLanguage | null) {
@@ -397,9 +751,204 @@ function getOperatorLabel(operators: OperatorItem[], users: UserItem[], operator
   return operator ? getUserLabel(users, operator.user_id) : operatorId
 }
 
+function getAnalyticsOperatorLabel(
+  stats: OperatorTicketAnalyticsItem,
+  operator: OperatorItem | undefined,
+  users: UserItem[],
+) {
+  if (operator) {
+    return getUserLabel(users, operator.user_id)
+  }
+
+  return stats.operator_name ?? stats.operator_email ?? stats.operator_id
+}
+
+function formatDuration(totalSeconds: number) {
+  if (totalSeconds <= 0) {
+    return '0 мин'
+  }
+
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.round((totalSeconds % 3600) / 60)
+
+  if (hours === 0) {
+    return `${Math.max(1, minutes)} мин`
+  }
+
+  if (minutes === 0) {
+    return `${hours} ч`
+  }
+
+  return `${hours} ч ${minutes} мин`
+}
+
+function getAnalyticsServiceColor(index: number) {
+  return ANALYTICS_SERVICE_COLORS[index % ANALYTICS_SERVICE_COLORS.length]
+}
+
+function formatDecimal(value: number, fractionDigits = 1) {
+  return value.toLocaleString('ru-RU', {
+    maximumFractionDigits: fractionDigits,
+    minimumFractionDigits: fractionDigits,
+  })
+}
+
+function getPresenceSeconds(stats: OperatorTicketAnalyticsItem) {
+  return Math.max(stats.worked_seconds + stats.break_seconds, stats.worked_seconds, stats.total_processing_seconds)
+}
+
+function getOperatorUtilizationPercent(stats: OperatorTicketAnalyticsItem) {
+  const presenceSeconds = getPresenceSeconds(stats)
+
+  if (presenceSeconds <= 0) {
+    return 0
+  }
+
+  return Math.round((stats.total_processing_seconds / presenceSeconds) * 100)
+}
+
+function getOperatorClientsPerHour(stats: OperatorTicketAnalyticsItem) {
+  const presenceHours = getPresenceSeconds(stats) / 3600
+
+  if (presenceHours <= 0) {
+    return 0
+  }
+
+  return stats.processed / presenceHours
+}
+
+function formatAnalyticsDate(value: string) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+  })
+}
+
+function formatAnalyticsMonth(value: string) {
+  return new Date(`${value}-01T00:00:00`).toLocaleDateString('ru-RU', {
+    month: 'short',
+    year: '2-digit',
+  })
+}
+
+function formatDateInputValue(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseDateInputValue(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+
+  if (!year || !month || !day) {
+    return null
+  }
+
+  const date = new Date(year, month - 1, day)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function getDefaultSummerDateRange() {
+  const year = new Date().getFullYear()
+
+  return {
+    from: `${year}-06-01`,
+    to: `${year}-08-31`,
+  }
+}
+
+function buildDailyAnalyticsRange(days: OperatorDailyAnalyticsItem[], from: string, to: string) {
+  const fromDate = parseDateInputValue(from)
+  const toDate = parseDateInputValue(to)
+
+  if (fromDate === null || toDate === null || fromDate > toDate) {
+    return []
+  }
+
+  const daysByDate = new Map(days.map((dayStats) => [dayStats.date, dayStats]))
+  const rows: OperatorDailyAnalyticsItem[] = []
+  const currentDate = new Date(fromDate)
+
+  while (currentDate <= toDate) {
+    const dateKey = formatDateInputValue(currentDate)
+    const dayStats = daysByDate.get(dateKey)
+
+    rows.push(
+      dayStats ?? {
+        active: 0,
+        completed: 0,
+        date: dateKey,
+        skipped: 0,
+        tickets_count: 0,
+      },
+    )
+    currentDate.setDate(currentDate.getDate() + 1)
+  }
+
+  return rows
+}
+
+function buildMonthlyAnalyticsRange(days: OperatorDailyAnalyticsItem[], from: string, to: string) {
+  const fromDate = parseDateInputValue(from)
+  const toDate = parseDateInputValue(to)
+
+  if (fromDate === null || toDate === null || fromDate > toDate) {
+    return []
+  }
+
+  const monthsByDate = new Map<string, OperatorDailyAnalyticsItem>()
+  days.forEach((dayStats) => {
+    const monthKey = dayStats.date.slice(0, 7)
+    const monthStats = monthsByDate.get(monthKey)
+
+    if (monthStats) {
+      monthStats.active += dayStats.active
+      monthStats.completed += dayStats.completed
+      monthStats.skipped += dayStats.skipped
+      monthStats.tickets_count += dayStats.tickets_count
+      return
+    }
+
+    monthsByDate.set(monthKey, {
+      active: dayStats.active,
+      completed: dayStats.completed,
+      date: monthKey,
+      skipped: dayStats.skipped,
+      tickets_count: dayStats.tickets_count,
+    })
+  })
+
+  const rows: OperatorDailyAnalyticsItem[] = []
+  const currentDate = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1)
+  const endDate = new Date(toDate.getFullYear(), toDate.getMonth(), 1)
+
+  while (currentDate <= endDate) {
+    const monthKey = formatDateInputValue(currentDate).slice(0, 7)
+    const monthStats = monthsByDate.get(monthKey)
+
+    rows.push(
+      monthStats ?? {
+        active: 0,
+        completed: 0,
+        date: monthKey,
+        skipped: 0,
+        tickets_count: 0,
+      },
+    )
+    currentDate.setMonth(currentDate.getMonth() + 1)
+  }
+
+  return rows
+}
+
 function getDegreeLabel(degrees: AcademicDegreeItem[], degreeId: number) {
   const degree = degrees.find((item) => item.id === degreeId)
   return degree ? `${degree.name} (${degree.code})` : String(degreeId)
+}
+
+function normalizeChoiceSearch(value: string) {
+  return value.trim().toLowerCase()
 }
 
 function getProgramLabels(programs: EducationalProgramItem[], programIds: number[]) {
@@ -457,10 +1006,6 @@ function getMyWindowWebSocketUrl(token: string) {
   return url.toString()
 }
 
-function getMyWindowStatusOptions() {
-  return Object.entries(ticketStatusLabels).map(([value, label]) => ({ value, label }))
-}
-
 export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const currentUserId = getCurrentUserIdFromToken()
   const isAdminUser = authUser.role === 'ADMIN'
@@ -480,6 +1025,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [educationalPrograms, setEducationalPrograms] = useState<EducationalProgramItem[]>([])
   const [applicants, setApplicants] = useState<ApplicantItem[]>([])
   const [ticketEvents, setTicketEvents] = useState<TicketEventItem[]>([])
+  const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
+  const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => getDefaultSummerDateRange().from)
+  const [analyticsDateTo, setAnalyticsDateTo] = useState(() => getDefaultSummerDateRange().to)
+  const [analyticsTimeGrouping, setAnalyticsTimeGrouping] = useState<AnalyticsTimeGrouping>('day')
+  const [selectedAnalyticsOperatorId, setSelectedAnalyticsOperatorId] = useState<string | null>(() =>
+    isAdminUser ? getAnalyticsOperatorIdFromPath() : null,
+  )
   const [myWindowTickets, setMyWindowTickets] = useState<MyWindowTickets | null>(null)
   const [myWindowRealtimeStatus, setMyWindowRealtimeStatus] =
     useState<MyWindowRealtimeStatus>('disconnected')
@@ -489,18 +1041,24 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   >({})
   const myWindowTicketsRef = useRef<MyWindowTickets | null>(null)
   const [myWindowError, setMyWindowError] = useState('')
-  const [myWindowSearch, setMyWindowSearch] = useState('')
-  const [myWindowStatusFilter, setMyWindowStatusFilter] = useState('')
-  const [myWindowServiceFilter, setMyWindowServiceFilter] = useState('')
-  const [myWindowProgramFilter, setMyWindowProgramFilter] = useState('')
   const [myWindowPage, setMyWindowPage] = useState(1)
   const [selectedMyWindowTicket, setSelectedMyWindowTicket] = useState<TicketItem | null>(null)
-  const [acceptTicketTarget, setAcceptTicketTarget] = useState<TicketItem | null>(null)
+  const [receptionTickets, setReceptionTickets] = useState<ReceptionTickets | null>(null)
+  const [receptionPage, setReceptionPage] = useState(1)
+  const [receptionServiceId, setReceptionServiceId] = useState('')
+  const [receptionSearch, setReceptionSearch] = useState('')
+  const [receptionRefreshing, setReceptionRefreshing] = useState(false)
+  const [receptionError, setReceptionError] = useState('')
+  const [selectedReceptionTicket, setSelectedReceptionTicket] = useState<TicketItem | null>(null)
   const [acceptIin, setAcceptIin] = useState('')
   const [acceptStudyLanguage, setAcceptStudyLanguage] = useState<StudyLanguage | ''>('')
   const [ticketActionSaving, setTicketActionSaving] = useState(false)
   const [reassignServiceId, setReassignServiceId] = useState('')
   const [reassignProgramId, setReassignProgramId] = useState('')
+  const [reassignServiceQuery, setReassignServiceQuery] = useState('')
+  const [reassignProgramQuery, setReassignProgramQuery] = useState('')
+  const [reassignServiceListOpen, setReassignServiceListOpen] = useState(false)
+  const [reassignProgramListOpen, setReassignProgramListOpen] = useState(false)
   const [operatorProgramIds, setOperatorProgramIds] = useState<Record<string, number[]>>({})
   const [operatorServiceIds, setOperatorServiceIds] = useState<Record<string, number[]>>({})
   const [serviceForm, setServiceForm] = useState<ServicePayload>(emptyService)
@@ -549,23 +1107,30 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   useEffect(() => {
     localStorage.setItem(LANG_STORAGE_KEY, lang)
 
-    const localizedPath = buildSectionPath(lang, activeSection)
+    const localizedPath = buildSectionPath(
+      lang,
+      activeSection,
+      isAdminUser && activeSection === 'analytics' ? selectedAnalyticsOperatorId : null,
+    )
     const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
 
     if (localizedPath !== currentPath) {
       window.history.replaceState(null, '', localizedPath)
     }
-  }, [activeSection, lang])
+  }, [activeSection, isAdminUser, lang, selectedAnalyticsOperatorId])
 
   useEffect(() => {
     function syncSectionFromPath() {
       if (!isAdminUser) {
         const requestedSection = getSectionFromPath()
         setActiveSection(canUseOperatorSection(requestedSection) ? requestedSection : 'myWindow')
+        setSelectedAnalyticsOperatorId(null)
         return
       }
 
-      setActiveSection(getSectionFromPath())
+      const nextSection = getSectionFromPath()
+      setActiveSection(nextSection)
+      setSelectedAnalyticsOperatorId(nextSection === 'analytics' ? getAnalyticsOperatorIdFromPath() : null)
     }
 
     window.addEventListener('popstate', syncSectionFromPath)
@@ -573,17 +1138,22 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     return () => window.removeEventListener('popstate', syncSectionFromPath)
   }, [isAdminUser])
 
-  function navigateToSection(section: DashboardSection) {
+  function navigateToSection(section: DashboardSection, analyticsOperatorId: string | null = null) {
     if (!isAdminUser && !canUseOperatorSection(section)) {
       section = 'myWindow'
     }
 
     setActiveSection(section)
+    setSelectedAnalyticsOperatorId(section === 'analytics' && isAdminUser ? analyticsOperatorId : null)
     closeFormModal()
     setDeleteTarget(null)
     setProfileMenuOpen(false)
 
-    const sectionPath = buildSectionPath(lang, section)
+    const sectionPath = buildSectionPath(
+      lang,
+      section,
+      section === 'analytics' && isAdminUser ? analyticsOperatorId : null,
+    )
     const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
 
     if (sectionPath !== currentPath) {
@@ -643,15 +1213,18 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     )
   }
 
+  function applyReceptionData(nextRows: ReceptionTickets) {
+    setReceptionTickets(nextRows)
+    setSelectedReceptionTicket((current) =>
+      current ? nextRows.tickets.find((ticket) => ticket.id === current.id) ?? current : current,
+    )
+  }
+
   async function refreshMyWindowFromRealtime() {
     setMyWindowRefreshing(true)
 
     try {
       const myWindowRows = await adminApi.tickets.myWindow({
-        search: myWindowSearch.trim(),
-        status: myWindowStatusFilter,
-        service_id: myWindowServiceFilter ? Number(myWindowServiceFilter) : undefined,
-        educational_program_id: myWindowProgramFilter,
         page: myWindowPage,
         page_size: MY_WINDOW_PAGE_SIZE,
       })
@@ -680,6 +1253,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         programRows,
         applicantRows,
         ticketEventRows,
+        analyticsRows,
       ] = await Promise.all([
         adminApi.services.list(),
         adminApi.windows.list(),
@@ -689,6 +1263,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         adminApi.educationalPrograms.list(),
         adminApi.applicants.list(),
         adminApi.ticketEvents.list(),
+        adminApi.ticketEvents.analytics(),
       ])
       const operatorProgramsRows = await Promise.all(
         operatorRows.map(async (operator) => ({
@@ -711,6 +1286,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       setEducationalPrograms(programRows)
       setApplicants(applicantRows)
       setTicketEvents(ticketEventRows)
+      setOperatorAnalytics(analyticsRows)
       setOperatorProgramIds(
         Object.fromEntries(
           operatorProgramsRows.map((row) => [
@@ -758,10 +1334,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     try {
       const [myWindowRows, serviceRows, programRows] = await Promise.all([
         adminApi.tickets.myWindow({
-          search: myWindowSearch.trim(),
-          status: myWindowStatusFilter,
-          service_id: myWindowServiceFilter ? Number(myWindowServiceFilter) : undefined,
-          educational_program_id: myWindowProgramFilter,
           page: myWindowPage,
           page_size: MY_WINDOW_PAGE_SIZE,
         }),
@@ -782,6 +1354,40 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     } finally {
       if (silent) {
         setMyWindowRefreshing(false)
+      } else {
+        setLoading(false)
+      }
+    }
+  }
+
+  async function loadReceptionData({ silent = false } = {}) {
+    if (silent) {
+      setReceptionRefreshing(true)
+    } else {
+      setLoading(true)
+    }
+    setError('')
+    setReceptionError('')
+
+    try {
+      const [receptionRows, serviceRows] = await Promise.all([
+        adminApi.tickets.reception({
+          search: receptionSearch,
+          service_id: receptionServiceId ? Number(receptionServiceId) : undefined,
+          page: receptionPage,
+          page_size: MY_WINDOW_PAGE_SIZE,
+        }),
+        adminApi.services.list(),
+      ])
+
+      applyReceptionData(receptionRows)
+      setReceptionPage(receptionRows.page)
+      setServices(serviceRows)
+    } catch (requestError) {
+      setReceptionError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить регистратуру')
+    } finally {
+      if (silent) {
+        setReceptionRefreshing(false)
       } else {
         setLoading(false)
       }
@@ -823,14 +1429,14 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setError('')
 
     try {
-      const [operator, ticketEventRows] = await Promise.all([
+      const [operator, analyticsRow] = await Promise.all([
         adminApi.operators.me(),
-        adminApi.ticketEvents.me(),
+        adminApi.ticketEvents.myAnalytics(),
       ])
 
       setOperators([operator])
       setUsers([authUser])
-      setTicketEvents(ticketEventRows)
+      setOperatorAnalytics([analyticsRow])
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить аналитику оператора')
     } finally {
@@ -872,17 +1478,22 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         animate: Boolean(myWindowTicketsRef.current),
         silent: Boolean(myWindowTicketsRef.current),
       })
-    }, myWindowSearch.trim() ? 300 : 0)
+    }, 0)
 
     return () => window.clearTimeout(timerId)
-  }, [
-    activeSection,
-    myWindowPage,
-    myWindowProgramFilter,
-    myWindowSearch,
-    myWindowServiceFilter,
-    myWindowStatusFilter,
-  ])
+  }, [activeSection, myWindowPage])
+
+  useEffect(() => {
+    if (!isAdminUser || activeSection !== 'reception') {
+      return
+    }
+
+    const timerId = window.setTimeout(() => {
+      void loadReceptionData({ silent: Boolean(receptionTickets) })
+    }, 250)
+
+    return () => window.clearTimeout(timerId)
+  }, [activeSection, isAdminUser, receptionPage, receptionSearch, receptionServiceId])
 
   useEffect(() => {
     if (activeSection !== 'myWindow' || !myWindowTickets) {
@@ -1297,18 +1908,81 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   function updateMyWindowTicketInState(updatedTicket: TicketItem) {
     const currentRows = myWindowTicketsRef.current
     if (currentRows) {
+      const nextTickets = isActiveMyWindowTicket(updatedTicket)
+        ? currentRows.tickets.map((item) => (item.id === updatedTicket.id ? updatedTicket : item))
+        : currentRows.tickets.filter((item) => item.id !== updatedTicket.id)
+
       applyMyWindowData({
         ...currentRows,
-        tickets: currentRows.tickets.map((item) => (item.id === updatedTicket.id ? updatedTicket : item)),
+        tickets: nextTickets,
       })
     }
-    setSelectedMyWindowTicket((current) => (current?.id === updatedTicket.id ? updatedTicket : current))
+    setSelectedMyWindowTicket((current) => {
+      if (current?.id !== updatedTicket.id) {
+        return current
+      }
+
+      return isActiveMyWindowTicket(updatedTicket) ? updatedTicket : null
+    })
   }
 
-  function closeAcceptTicketModal() {
-    setAcceptTicketTarget(null)
+  function openMyWindowTicketDetails(ticket: TicketItem) {
+    setSelectedMyWindowTicket(ticket)
+    setAcceptIin(ticket.iin ?? '')
+    setAcceptStudyLanguage(ticket.study_language ?? '')
+    setReassignServiceId(String(ticket.service_id))
+    setReassignProgramId(ticket.educational_program_id === null ? '' : String(ticket.educational_program_id))
+    setReassignServiceQuery('')
+    setReassignProgramQuery('')
+    setReassignServiceListOpen(false)
+    setReassignProgramListOpen(false)
+  }
+
+  function closeMyWindowTicketDetails() {
+    setSelectedMyWindowTicket(null)
     setAcceptIin('')
     setAcceptStudyLanguage('')
+    setReassignServiceId('')
+    setReassignProgramId('')
+    setReassignServiceQuery('')
+    setReassignProgramQuery('')
+    setReassignServiceListOpen(false)
+    setReassignProgramListOpen(false)
+  }
+
+  async function persistMyWindowTicketApplicantData(ticket: TicketItem) {
+    const normalizedIin = acceptIin.trim()
+
+    if (!/^\d{12}$/.test(normalizedIin)) {
+      throw new Error('ИИН должен состоять из 12 цифр')
+    }
+
+    if (!acceptStudyLanguage) {
+      throw new Error('Выберите язык обучения')
+    }
+
+    let acceptedTicket = await adminApi.tickets.acceptMyTicket(ticket.id, { iin: normalizedIin })
+    acceptedTicket = await adminApi.tickets.updateMyTicketStudyLanguage(acceptedTicket.id, {
+      study_language: acceptStudyLanguage,
+    })
+    updateMyWindowTicketInState(acceptedTicket)
+    return acceptedTicket
+  }
+
+  async function callNextMyWindowTicket() {
+    setError('')
+    setMyWindowError('')
+    setTicketActionSaving(true)
+
+    try {
+      const nextTicket = await adminApi.tickets.callNextMyTicket()
+      await loadMyWindowData({ animate: true, silent: true })
+      openMyWindowTicketDetails(nextTicket)
+    } catch (requestError) {
+      setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось вызвать следующий талон')
+    } finally {
+      setTicketActionSaving(false)
+    }
   }
 
   async function openAcceptMyWindowTicket(ticket: TicketItem) {
@@ -1318,9 +1992,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     try {
       const acceptedTicket = await adminApi.tickets.acceptMyTicket(ticket.id, {})
       updateMyWindowTicketInState(acceptedTicket)
-      setAcceptTicketTarget(acceptedTicket)
-      setAcceptIin(acceptedTicket.iin ?? '')
-      setAcceptStudyLanguage(acceptedTicket.study_language ?? '')
+      openMyWindowTicketDetails(acceptedTicket)
     } catch (requestError) {
       setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось принять талон')
     } finally {
@@ -1328,10 +2000,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
-  async function acceptMyWindowTicket(event: FormEvent<HTMLFormElement>) {
+  async function saveMyWindowTicketApplicantData(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (acceptTicketTarget === null) {
+    if (selectedMyWindowTicket === null) {
       return
     }
 
@@ -1340,29 +2012,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setTicketActionSaving(true)
 
     try {
-      let acceptedTicket = await adminApi.tickets.acceptMyTicket(acceptTicketTarget.id, { iin: acceptIin })
-      acceptedTicket = await adminApi.tickets.updateMyTicketStudyLanguage(acceptedTicket.id, {
-        study_language: acceptStudyLanguage || null,
-      })
-      updateMyWindowTicketInState(acceptedTicket)
-      closeAcceptTicketModal()
+      await persistMyWindowTicketApplicantData(selectedMyWindowTicket)
     } catch (requestError) {
       setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось принять талон')
-    } finally {
-      setTicketActionSaving(false)
-    }
-  }
-
-  async function updateMyWindowTicketStudyLanguage(ticket: TicketItem, studyLanguage: StudyLanguage | null) {
-    setError('')
-    setMyWindowError('')
-    setTicketActionSaving(true)
-
-    try {
-      const updatedTicket = await adminApi.tickets.updateMyTicketStudyLanguage(ticket.id, { study_language: studyLanguage })
-      updateMyWindowTicketInState(updatedTicket)
-    } catch (requestError) {
-      setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось изменить язык обучения')
     } finally {
       setTicketActionSaving(false)
     }
@@ -1374,8 +2026,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setTicketActionSaving(true)
 
     try {
-      const completedTicket = await adminApi.tickets.completeMyTicket(ticket.id)
+      const ticketToComplete =
+        selectedMyWindowTicket?.id === ticket.id ? await persistMyWindowTicketApplicantData(ticket) : ticket
+      const completedTicket = await adminApi.tickets.completeMyTicket(ticketToComplete.id)
       updateMyWindowTicketInState(completedTicket)
+      closeMyWindowTicketDetails()
       await loadMyWindowData({ animate: true, silent: true })
     } catch (requestError) {
       setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось завершить талон')
@@ -1398,6 +2053,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     try {
       const skippedTicket = await adminApi.tickets.skipMyTicket(ticket.id)
       updateMyWindowTicketInState(skippedTicket)
+      closeMyWindowTicketDetails()
       await loadMyWindowData({ animate: true, silent: true })
     } catch (requestError) {
       setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось пропустить талон')
@@ -1428,16 +2084,17 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
-  function openMyWindowTicketDetails(ticket: TicketItem) {
-    setSelectedMyWindowTicket(ticket)
-    setReassignServiceId(String(ticket.service_id))
-    setReassignProgramId(ticket.educational_program_id === null ? '' : String(ticket.educational_program_id))
-  }
-
   async function reassignMyWindowTicket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
     if (selectedMyWindowTicket === null || !reassignServiceId) {
+      return
+    }
+
+    const serviceToReassign = services.find((service) => String(service.id) === reassignServiceId)
+
+    if (serviceToReassign?.requires_educational_program && !reassignProgramId) {
+      setMyWindowError('Выберите ОП')
       return
     }
 
@@ -1446,14 +2103,172 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setTicketActionSaving(true)
 
     try {
-      await adminApi.tickets.reassignMyTicketService(selectedMyWindowTicket.id, {
+      const ticketToReassign = await persistMyWindowTicketApplicantData(selectedMyWindowTicket)
+      await adminApi.tickets.reassignMyTicketService(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
       })
-      setSelectedMyWindowTicket(null)
+      closeMyWindowTicketDetails()
       await loadMyWindowData({ animate: true, silent: true })
     } catch (requestError) {
       setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось переназначить услугу')
+    } finally {
+      setTicketActionSaving(false)
+    }
+  }
+
+  function updateReceptionTicketInState(updatedTicket: TicketItem) {
+    if (receptionTickets) {
+      const nextTickets = isActiveMyWindowTicket(updatedTicket)
+        ? receptionTickets.tickets.map((item) => (item.id === updatedTicket.id ? updatedTicket : item))
+        : receptionTickets.tickets.filter((item) => item.id !== updatedTicket.id)
+
+      applyReceptionData({
+        ...receptionTickets,
+        tickets: nextTickets,
+      })
+    }
+    setSelectedReceptionTicket((current) => {
+      if (current?.id !== updatedTicket.id) {
+        return current
+      }
+
+      return isActiveMyWindowTicket(updatedTicket) ? updatedTicket : null
+    })
+  }
+
+  function openReceptionTicketDetails(ticket: TicketItem) {
+    setSelectedReceptionTicket(ticket)
+    setAcceptIin(ticket.iin ?? '')
+    setAcceptStudyLanguage(ticket.study_language ?? '')
+    setReassignServiceId(String(ticket.service_id))
+    setReassignProgramId(ticket.educational_program_id === null ? '' : String(ticket.educational_program_id))
+    setReassignServiceQuery('')
+    setReassignProgramQuery('')
+    setReassignServiceListOpen(false)
+    setReassignProgramListOpen(false)
+  }
+
+  function closeReceptionTicketDetails() {
+    setSelectedReceptionTicket(null)
+    setAcceptIin('')
+    setAcceptStudyLanguage('')
+    setReassignServiceId('')
+    setReassignProgramId('')
+    setReassignServiceQuery('')
+    setReassignProgramQuery('')
+    setReassignServiceListOpen(false)
+    setReassignProgramListOpen(false)
+  }
+
+  async function persistReceptionTicketApplicantData(ticket: TicketItem) {
+    const normalizedIin = acceptIin.trim()
+
+    if (!/^\d{12}$/.test(normalizedIin)) {
+      throw new Error('ИИН должен состоять из 12 цифр')
+    }
+
+    if (!acceptStudyLanguage) {
+      throw new Error('Выберите язык обучения')
+    }
+
+    let acceptedTicket = await adminApi.tickets.acceptReceptionTicket(ticket.id, { iin: normalizedIin })
+    acceptedTicket = await adminApi.tickets.updateReceptionTicketStudyLanguage(acceptedTicket.id, {
+      study_language: acceptStudyLanguage,
+    })
+    updateReceptionTicketInState(acceptedTicket)
+    return acceptedTicket
+  }
+
+  async function saveReceptionTicketApplicantData(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (selectedReceptionTicket === null) {
+      return
+    }
+
+    setError('')
+    setReceptionError('')
+    setTicketActionSaving(true)
+
+    try {
+      await persistReceptionTicketApplicantData(selectedReceptionTicket)
+    } catch (requestError) {
+      setReceptionError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить данные талона')
+    } finally {
+      setTicketActionSaving(false)
+    }
+  }
+
+  async function completeReceptionTicket(ticket: TicketItem) {
+    setError('')
+    setReceptionError('')
+    setTicketActionSaving(true)
+
+    try {
+      const ticketToComplete =
+        selectedReceptionTicket?.id === ticket.id ? await persistReceptionTicketApplicantData(ticket) : ticket
+      const completedTicket = await adminApi.tickets.completeReceptionTicket(ticketToComplete.id)
+      updateReceptionTicketInState(completedTicket)
+      closeReceptionTicketDetails()
+      await loadReceptionData({ silent: true })
+    } catch (requestError) {
+      setReceptionError(requestError instanceof Error ? requestError.message : 'Не удалось завершить талон')
+    } finally {
+      setTicketActionSaving(false)
+    }
+  }
+
+  async function skipReceptionTicket(ticket: TicketItem) {
+    const confirmed = window.confirm(`Отметить талон ${ticket.ticket_number} как "Не явился"?`)
+
+    if (!confirmed) {
+      return
+    }
+
+    setError('')
+    setReceptionError('')
+    setTicketActionSaving(true)
+
+    try {
+      const skippedTicket = await adminApi.tickets.skipReceptionTicket(ticket.id)
+      updateReceptionTicketInState(skippedTicket)
+      closeReceptionTicketDetails()
+      await loadReceptionData({ silent: true })
+    } catch (requestError) {
+      setReceptionError(requestError instanceof Error ? requestError.message : 'Не удалось пропустить талон')
+    } finally {
+      setTicketActionSaving(false)
+    }
+  }
+
+  async function reassignReceptionTicket(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (selectedReceptionTicket === null || !reassignServiceId) {
+      return
+    }
+
+    const serviceToReassign = services.find((service) => String(service.id) === reassignServiceId)
+
+    if (serviceToReassign?.requires_educational_program && !reassignProgramId) {
+      setReceptionError('Выберите ОП')
+      return
+    }
+
+    setError('')
+    setReceptionError('')
+    setTicketActionSaving(true)
+
+    try {
+      await adminApi.tickets.reassignReceptionTicketService(selectedReceptionTicket.id, {
+        service_id: Number(reassignServiceId),
+        educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
+      })
+      closeReceptionTicketDetails()
+      await loadReceptionData({ silent: true })
+    } catch (requestError) {
+      setReceptionError(requestError instanceof Error ? requestError.message : 'Не удалось переназначить услугу')
     } finally {
       setTicketActionSaving(false)
     }
@@ -1521,26 +2336,119 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const myWindowTotalPages = myWindowTickets?.total_pages ?? 1
   const myWindowCurrentPage = myWindowTickets?.page ?? myWindowPage
   const myWindowWaitingCount = myWindowTickets?.global_waiting_count ?? 0
-  const operatorAnalyticsRows = operators.map((operator) => ({
-    operator,
-    stats: getOperatorAnalytics(operator.id, ticketEvents),
+  const receptionTicketList = receptionTickets?.tickets ?? []
+  const receptionTotal = receptionTickets?.total ?? 0
+  const receptionTotalPages = receptionTickets?.total_pages ?? 1
+  const receptionCurrentPage = receptionTickets?.page ?? receptionPage
+  const receptionWaitingCount = receptionTickets?.waiting_count ?? 0
+  const receptionCalledCount = receptionTickets?.called_count ?? 0
+  const operatorAnalyticsRows = operatorAnalytics.map((stats) => ({
+    operator: operators.find((operator) => operator.id === stats.operator_id),
+    stats,
   }))
-  const operatorAnalyticsTotals = operatorAnalyticsRows.reduce(
-    (totals, row) => ({
-      accepted: totals.accepted + row.stats.accepted,
-      completed: totals.completed + row.stats.completed,
-      skipped: totals.skipped + row.stats.skipped,
-      declined: totals.declined + row.stats.declined,
-      totalActions: totals.totalActions + row.stats.totalActions,
-    }),
-    { accepted: 0, completed: 0, skipped: 0, declined: 0, totalActions: 0 },
+  const operatorPerformancePoints = operatorAnalyticsRows.map<OperatorPerformancePoint>(({ operator, stats }) => ({
+    averageProcessingMinutes: Math.round((stats.average_processing_seconds / 60) * 10) / 10,
+    clientsPerHour: getOperatorClientsPerHour(stats),
+    effectiveWorkSeconds: stats.total_processing_seconds,
+    label: getAnalyticsOperatorLabel(stats, operator, users),
+    operatorId: stats.operator_id,
+    processed: stats.processed,
+    utilizationPercent: getOperatorUtilizationPercent(stats),
+  }))
+  const operatorPerformanceTotalPresenceSeconds = operatorAnalyticsRows.reduce(
+    (total, row) => total + getPresenceSeconds(row.stats),
+    0,
   )
-  const operatorAnalyticsMaxActions = Math.max(
-    1,
-    ...operatorAnalyticsRows.map((row) => row.stats.totalActions),
+  const operatorPerformanceTotalEffectiveSeconds = operatorPerformancePoints.reduce(
+    (total, point) => total + point.effectiveWorkSeconds,
+    0,
+  )
+  const operatorPerformanceClientsPerHour =
+    operatorPerformanceTotalPresenceSeconds > 0
+      ? operatorPerformancePoints.reduce((total, point) => total + point.processed, 0) /
+        (operatorPerformanceTotalPresenceSeconds / 3600)
+      : 0
+  const operatorPerformanceUtilization =
+    operatorPerformanceTotalPresenceSeconds > 0
+      ? Math.round((operatorPerformanceTotalEffectiveSeconds / operatorPerformanceTotalPresenceSeconds) * 100)
+      : 0
+  const selectedOperatorAnalyticsRow = selectedAnalyticsOperatorId
+    ? selectedAnalyticsOperatorId === 'general'
+      ? null
+      : operatorAnalyticsRows.find((row) => row.stats.operator_id === selectedAnalyticsOperatorId) ?? null
+    : isAdminUser
+      ? null
+      : operatorAnalyticsRows[0] ?? null
+  const selectedGeneralAnalytics = isAdminUser && selectedAnalyticsOperatorId === 'general'
+  const selectedServiceAnalyticsRows = selectedOperatorAnalyticsRow?.stats.service_analytics ?? []
+  const selectedRawDailyAnalyticsRows = selectedOperatorAnalyticsRow?.stats.daily_analytics ?? []
+  const selectedDailyAnalyticsRows =
+    analyticsTimeGrouping === 'month'
+      ? buildMonthlyAnalyticsRange(selectedRawDailyAnalyticsRows, analyticsDateFrom, analyticsDateTo)
+      : buildDailyAnalyticsRange(selectedRawDailyAnalyticsRows, analyticsDateFrom, analyticsDateTo)
+  const selectedDailyAnalyticsUnitLabel =
+    analyticsTimeGrouping === 'month' ? 'месяцев' : 'дней'
+  const selectedDailyAnalyticsEmptyLabel =
+    analyticsTimeGrouping === 'month'
+      ? 'По этому сотруднику пока нет талонов по месяцам'
+      : 'По этому сотруднику пока нет талонов по дням'
+  const selectedServiceAnalyticsTotalTickets = selectedServiceAnalyticsRows.reduce(
+    (total, serviceStats) => total + serviceStats.tickets_count,
+    0,
+  )
+  const selectedServiceAnalyticsTotalTime = selectedServiceAnalyticsRows.reduce(
+    (total, serviceStats) => total + serviceStats.total_processing_seconds,
+    0,
+  )
+  const selectedServiceAnalyticsBestCompletion = selectedServiceAnalyticsRows
+    .filter((serviceStats) => serviceStats.processed > 0)
+    .sort((firstStats, secondStats) => secondStats.completion_rate - firstStats.completion_rate)[0]
+  const selectedServicePieSegments = selectedServiceAnalyticsRows.map((serviceStats, index) => ({
+    color: getAnalyticsServiceColor(index),
+    detail: `${serviceStats.share_percent}% от всех талонов`,
+    label: serviceStats.service_name ?? `Услуга ${serviceStats.service_id}`,
+    value: serviceStats.tickets_count,
+  }))
+  const selectedStatusCompleted = selectedServiceAnalyticsRows.reduce(
+    (total, serviceStats) => total + serviceStats.completed,
+    0,
+  )
+  const selectedStatusSkipped = selectedServiceAnalyticsRows.reduce(
+    (total, serviceStats) => total + serviceStats.skipped,
+    0,
+  )
+  const selectedStatusActive = selectedServiceAnalyticsRows.reduce(
+    (total, serviceStats) => total + serviceStats.active,
+    0,
+  )
+  const selectedStatusTotal = selectedStatusCompleted + selectedStatusSkipped + selectedStatusActive
+  const selectedStatusPieSegments: AnalyticsPieSegment[] = [
+    {
+      color: ANALYTICS_STATUS_COLORS.completed,
+      detail: 'Талоны со статусом завершено',
+      label: 'Завершено',
+      value: selectedStatusCompleted,
+    },
+    {
+      color: ANALYTICS_STATUS_COLORS.skipped,
+      detail: 'Клиент не явился',
+      label: 'Не явился',
+      value: selectedStatusSkipped,
+    },
+    {
+      color: ANALYTICS_STATUS_COLORS.active,
+      detail: 'Талоны еще в работе или ожидании',
+      label: 'В работе',
+      value: selectedStatusActive,
+    },
+  ]
+  const operatorAnalyticsProcessedTotal = operatorAnalyticsRows.reduce(
+    (total, row) => total + row.stats.processed,
+    0,
   )
   const sectionStats: Record<DashboardSection, { icon: string; label: string; value: number }> = {
-    myWindow: { icon: 'monitor', label: 'Талонов в моем окне', value: myWindowTotal },
+    myWindow: { icon: 'monitor', label: 'Талонов всего', value: myWindowTotal },
+    reception: { icon: 'id-card', label: 'Активных талонов', value: receptionTotal },
     profile: { icon: 'users', label: 'Выбранных программ', value: profileProgramIds.length },
     services: { icon: 'briefcase', label: 'Услуг', value: services.length },
     windows: { icon: 'monitor', label: 'Окон', value: windows.length },
@@ -1549,7 +2457,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     academicDegrees: { icon: 'award', label: 'Степеней', value: academicDegrees.length },
     educationalPrograms: { icon: 'book', label: 'Образовательных программ', value: educationalPrograms.length },
     applicants: { icon: 'id-card', label: 'Абитуриентов', value: applicants.length },
-    analytics: { icon: 'chart', label: 'Действий операторов', value: operatorAnalyticsTotals.totalActions },
+    analytics: { icon: 'chart', label: 'Обработано талонов', value: operatorAnalyticsProcessedTotal },
     ticketEvents: { icon: 'history', label: 'Событий талонов', value: ticketEvents.length },
   }
   const activeStat = sectionStats[activeSection]
@@ -1559,29 +2467,56 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           activeStat,
           { icon: 'users', label: 'Человек в очереди', value: myWindowWaitingCount },
         ]
-      : activeSection === 'analytics'
+      : activeSection === 'reception'
         ? [
             activeStat,
-            { icon: 'history', label: 'Принято талонов', value: operatorAnalyticsTotals.accepted },
-            { icon: 'award', label: 'Завершено талонов', value: operatorAnalyticsTotals.completed },
+            { icon: 'users', label: 'Ожидают', value: receptionWaitingCount },
+            { icon: 'monitor', label: 'Приняты', value: receptionCalledCount },
           ]
+      : activeSection === 'analytics'
+        ? selectedOperatorAnalyticsRow
+          ? [
+              { icon: 'briefcase', label: 'Услуг', value: selectedServiceAnalyticsRows.length },
+              { icon: 'chart', label: 'Талонов по услугам', value: selectedServiceAnalyticsTotalTickets },
+              { icon: 'history', label: 'Время, мин', value: Math.round(selectedServiceAnalyticsTotalTime / 60) },
+            ]
+          : [
+              { icon: 'badge', label: 'Сотрудников', value: operatorAnalyticsRows.length },
+            ]
       : [activeStat]
   const currentUser = users.find((user) => user.id === currentUserId) ?? authUser
   const currentOperator = operators.find((operator) => operator.user_id === currentUserId)
   const activeServices = services.filter((service) => service.is_active)
+  const receptionServices = activeServices.filter((service) => service.requires_reception_desk)
   const activeEducationalPrograms = educationalPrograms.filter((program) => program.is_active)
   const selectedReassignService = services.find((service) => String(service.id) === reassignServiceId)
-  const filteredMyWindowTickets = sortMyWindowTickets(myWindowTicketList)
-  const myWindowStatusOptions = getMyWindowStatusOptions()
-  const myWindowServiceOptions = activeServices
-    .map((service) => [String(service.id), service.name] as const)
-    .sort(([, firstName], [, secondName]) => firstName.localeCompare(secondName))
-  const myWindowProgramOptions = activeEducationalPrograms
-    .map((program) => [String(program.id), program.name] as const)
-    .sort(([, firstName], [, secondName]) => firstName.localeCompare(secondName))
+  const selectedReassignProgram = educationalPrograms.find((program) => String(program.id) === reassignProgramId)
+  const normalizedReassignServiceQuery = normalizeChoiceSearch(reassignServiceQuery)
+  const normalizedReassignProgramQuery = normalizeChoiceSearch(reassignProgramQuery)
+  const filteredReassignServices = activeServices.filter((service) => {
+    if (!normalizedReassignServiceQuery) {
+      return true
+    }
+
+    return normalizeChoiceSearch(`${service.name} ${service.name_kk} ${service.name_en} ${service.code}`).includes(
+      normalizedReassignServiceQuery,
+    )
+  })
+  const filteredReassignPrograms = activeEducationalPrograms.filter((program) => {
+    if (!normalizedReassignProgramQuery) {
+      return true
+    }
+
+    return normalizeChoiceSearch(`${program.name} ${program.name_kk} ${program.name_en} ${program.code}`).includes(
+      normalizedReassignProgramQuery,
+    )
+  })
+  const filteredMyWindowTickets = sortMyWindowTickets(myWindowTicketList.filter(isActiveMyWindowTicket))
+  const filteredReceptionTickets = sortMyWindowTickets(receptionTicketList.filter(isActiveMyWindowTicket))
   const navSections: DashboardSection[] = isAdminUser
     ? [
         'myWindow',
+        'reception',
         'profile',
         'analytics',
         'services',
@@ -1615,7 +2550,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             >
               <Icon
                 name={
-                  section === 'services'
+                  section === 'reception'
+                    ? 'id-card'
+                    : section === 'services'
                     ? 'briefcase'
                     : section === 'myWindow'
                       ? 'monitor'
@@ -1703,25 +2640,27 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           </div>
         </header>
 
-        <section
-          className={activeSection === 'myWindow' ? 'stats-grid compact' : 'stats-grid'}
-          aria-label="Admin counters"
-        >
-          {activeStats.map((stat) => (
-            <article className="stat-card" key={stat.label}>
-              <div className="stat-top">
-                <span className="stat-icon">
-                  <Icon name={stat.icon} />
-                </span>
-                <span>{activeSection === 'myWindow' ? 'LIVE' : 'API'}</span>
-              </div>
-              <strong>{stat.value}</strong>
-              <p>{stat.label}</p>
-            </article>
-          ))}
-        </section>
+        {activeSection !== 'analytics' && (
+          <section
+            className={activeSection === 'myWindow' ? 'stats-grid compact' : 'stats-grid'}
+            aria-label="Admin counters"
+          >
+            {activeStats.map((stat) => (
+              <article className="stat-card" key={stat.label}>
+                <div className="stat-top">
+                  <span className="stat-icon">
+                    <Icon name={stat.icon} />
+                  </span>
+                  <span>{activeSection === 'myWindow' ? 'LIVE' : 'API'}</span>
+                </div>
+                <strong>{stat.value}</strong>
+                <p>{stat.label}</p>
+              </article>
+            ))}
+          </section>
+        )}
 
-        {activeSection !== 'profile' && activeSection !== 'myWindow' && activeSection !== 'analytics' && (
+        {activeSection !== 'profile' && activeSection !== 'myWindow' && activeSection !== 'analytics' && activeSection !== 'reception' && (
           <div className="dashboard-toolbar">
             <button className="primary-action" type="button" onClick={() => openCreateModal(activeSection)}>
               <Icon name="plus" />
@@ -1735,6 +2674,20 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         {activeSection === 'myWindow' && (
           <section className="admin-panel tab-panel" key="myWindow">
             <div className="dashboard-toolbar">
+              <button
+                className="primary-action compact"
+                type="button"
+                disabled={
+                  ticketActionSaving ||
+                  myWindowRefreshing ||
+                  !myWindowTickets ||
+                  myWindowTickets.operator_status !== 'ONLINE' ||
+                  myWindowTickets.window_status !== 'OPEN'
+                }
+                onClick={() => void callNextMyWindowTicket()}
+              >
+                Следующий
+              </button>
               <button
                 className="secondary-action compact"
                 type="button"
@@ -1775,97 +2728,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
             {windowStatusMessage && <div className="admin-alert success">{windowStatusMessage}</div>}
 
-            {myWindowError && <div className="admin-alert">{myWindowError}</div>}
-
-            <div className="queue-panel my-window-filters" aria-label="Фильтры талонов">
-              <label>
-                <span>Поиск</span>
-                <input
-                  placeholder="Талон, ФИО, ИИН, услуга, ОП"
-                  value={myWindowSearch}
-                  onChange={(event) => {
-                    setMyWindowPage(1)
-                    setMyWindowSearch(event.target.value)
-                  }}
-                />
-              </label>
-              <label>
-                <span>Статус талона</span>
-                <select
-                  value={myWindowStatusFilter}
-                  onChange={(event) => {
-                    setMyWindowPage(1)
-                    setMyWindowStatusFilter(event.target.value)
-                  }}
-                >
-                  <option value="">Все статусы</option>
-                  {myWindowStatusOptions.map((status) => (
-                    <option value={status.value} key={status.value}>
-                      {status.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Услуга</span>
-                <select
-                  value={myWindowServiceFilter}
-                  onChange={(event) => {
-                    setMyWindowPage(1)
-                    setMyWindowServiceFilter(event.target.value)
-                  }}
-                >
-                  <option value="">Все услуги</option>
-                  {myWindowServiceOptions.map(([serviceId, serviceName]) => (
-                    <option value={serviceId} key={serviceId}>
-                      {serviceName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>ОП</span>
-                <select
-                  value={myWindowProgramFilter}
-                  onChange={(event) => {
-                    setMyWindowPage(1)
-                    setMyWindowProgramFilter(event.target.value)
-                  }}
-                >
-                  <option value="">Все ОП</option>
-                  {myWindowProgramOptions.map(([programId, programName]) => (
-                    <option value={programId} key={programId}>
-                      {programName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="secondary-action compact"
-                type="button"
-                onClick={() => {
-                  setMyWindowSearch('')
-                  setMyWindowStatusFilter('')
-                  setMyWindowServiceFilter('')
-                  setMyWindowProgramFilter('')
-                  setMyWindowPage(1)
-                }}
-              >
-                Сбросить
-              </button>
-              <span className="filter-count">
-                {filteredMyWindowTickets.length} из {myWindowTotal}
-              </span>
-            </div>
-
             <CrudTable
               columns={[
                 'Талон',
-                'ИИН',
                 'Услуга',
                 'ОП',
-                'Язык обучения',
-                'Ответственный оператор',
                 'Статус',
                 'Ожидание',
                 'Действия',
@@ -1873,45 +2740,66 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               loading={loading}
               rowClassNames={filteredMyWindowTickets.map((ticket) => {
                 const highlight = myWindowTicketHighlights[ticket.id]
-                return highlight ? `realtime-row realtime-row-${highlight}` : ''
+                const statusClassName =
+                  ticket.status === 'WAITING'
+                    ? 'my-window-ticket-waiting'
+                    : ticket.status === 'CALLED'
+                      ? 'my-window-ticket-working'
+                      : ''
+                const highlightClassName = highlight ? `realtime-row realtime-row-${highlight}` : ''
+
+                return [statusClassName, highlightClassName].filter(Boolean).join(' ')
               })}
               rowKeys={filteredMyWindowTickets.map((ticket) => ticket.id)}
               rows={filteredMyWindowTickets.map((ticket) => [
                 ticket.ticket_number,
-                ticket.iin ?? 'Не указано',
                 ticket.service_name ?? ticket.service_id,
                 getEducationalProgramDisplayLabel(ticket),
-                getStudyLanguageLabel(ticket.study_language),
-                ticket.operator_name ?? ticket.operator_email ?? ticket.operator_id ?? 'Не назначен',
-                getTicketStatusLabel(ticket.status),
+                <span className={getMyWindowTicketStatusClassName(ticket.status)} key={`${ticket.id}-status`}>
+                  {getTicketStatusLabel(ticket.status)}
+                </span>,
                 getTicketQueueWaitLabel(ticket, currentTime),
                 <div className="row-actions" key={ticket.id}>
-                  {ticket.status === 'WAITING' && (
-                    <>
-                      <button
-                        className="primary-action compact"
-                        type="button"
-                        disabled={ticketActionSaving}
-                        onClick={() => openAcceptMyWindowTicket(ticket)}
-                      >
-                        Принять
-                      </button>
-                      <button
-                        className="danger-action"
-                        type="button"
-                        disabled={ticketActionSaving}
-                        onClick={() => declineMyWindowTicket(ticket)}
-                      >
-                        Отказать
-                      </button>
-                    </>
-                  )}
-                  {ticket.status === 'CALLED' && (
-                    <button className="secondary-action compact" type="button" onClick={() => openMyWindowTicketDetails(ticket)}>
-                      Детали
-                    </button>
-                  )}
-                  {ticket.status !== 'WAITING' && ticket.status !== 'CALLED' && <span className="row-actions-empty">—</span>}
+                  {(() => {
+                    const isCurrentWindowTicket = ticket.window_id === myWindowTickets?.window_id
+
+                    if (ticket.status === 'WAITING' && isCurrentWindowTicket) {
+                      return (
+                        <>
+                          <button
+                            className="primary-action compact"
+                            type="button"
+                            disabled={ticketActionSaving}
+                            onClick={() => openAcceptMyWindowTicket(ticket)}
+                          >
+                            Принять
+                          </button>
+                          <button
+                            className="danger-action"
+                            type="button"
+                            disabled={ticketActionSaving}
+                            onClick={() => declineMyWindowTicket(ticket)}
+                          >
+                            Отказать
+                          </button>
+                        </>
+                      )
+                    }
+
+                    if (ticket.status === 'CALLED' && isCurrentWindowTicket) {
+                      return (
+                        <button
+                          className="secondary-action compact"
+                          type="button"
+                          onClick={() => openMyWindowTicketDetails(ticket)}
+                        >
+                          Детали
+                        </button>
+                      )
+                    }
+
+                    return <span className="row-actions-empty">—</span>
+                  })()}
                 </div>,
               ])}
             />
@@ -1933,6 +2821,111 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                   type="button"
                   disabled={myWindowRefreshing || myWindowCurrentPage >= myWindowTotalPages}
                   onClick={() => setMyWindowPage((page) => Math.min(myWindowTotalPages, page + 1))}
+                >
+                  Вперед
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {activeSection === 'reception' && (
+          <section className="admin-panel tab-panel" key="reception">
+            <div className="dashboard-toolbar">
+              <input
+                className="toolbar-input"
+                placeholder="Поиск по талону, ИИН, услуге или ОП"
+                value={receptionSearch}
+                onChange={(event) => {
+                  setReceptionPage(1)
+                  setReceptionSearch(event.target.value)
+                }}
+              />
+              <select
+                value={receptionServiceId}
+                onChange={(event) => {
+                  setReceptionPage(1)
+                  setReceptionServiceId(event.target.value)
+                }}
+              >
+                <option value="">Все услуги регистратуры</option>
+                {receptionServices.map((service) => (
+                  <option value={service.id} key={service.id}>
+                    {service.name} ({service.code})
+                  </option>
+                ))}
+              </select>
+              <button
+                className="secondary-action compact"
+                type="button"
+                onClick={() => void loadReceptionData({ silent: Boolean(receptionTickets) })}
+              >
+                <Icon name="refresh" />
+                Обновить
+              </button>
+              {receptionRefreshing && <span className="my-window-refreshing">Обновляется...</span>}
+            </div>
+
+            {receptionError && <div className="admin-alert">{receptionError}</div>}
+
+            <CrudTable
+              columns={[
+                'Талон',
+                'Услуга',
+                'ОП',
+                'Статус',
+                'Ожидание',
+                'Оператор / окно',
+                'Действия',
+              ]}
+              loading={loading}
+              rowClassNames={filteredReceptionTickets.map((ticket) =>
+                ticket.status === 'WAITING'
+                  ? 'my-window-ticket-waiting'
+                  : ticket.status === 'CALLED'
+                    ? 'my-window-ticket-working'
+                    : '',
+              )}
+              rowKeys={filteredReceptionTickets.map((ticket) => ticket.id)}
+              rows={filteredReceptionTickets.map((ticket) => [
+                ticket.ticket_number,
+                ticket.service_name ?? ticket.service_id,
+                getEducationalProgramDisplayLabel(ticket),
+                <span className={getMyWindowTicketStatusClassName(ticket.status)} key={`${ticket.id}-status`}>
+                  {getTicketStatusLabel(ticket.status)}
+                </span>,
+                getTicketQueueWaitLabel(ticket, currentTime),
+                `${ticket.operator_name ?? ticket.operator_email ?? 'Не назначен'} / ${ticket.window_name ?? ticket.window_id ?? 'нет окна'}`,
+                <div className="row-actions" key={ticket.id}>
+                  <button
+                    className="secondary-action compact"
+                    type="button"
+                    disabled={ticketActionSaving}
+                    onClick={() => openReceptionTicketDetails(ticket)}
+                  >
+                    Действия
+                  </button>
+                </div>,
+              ])}
+            />
+            <div className="queue-panel my-window-pagination" aria-label="Пагинация талонов регистратуры">
+              <span>
+                Страница {receptionCurrentPage} из {receptionTotalPages}
+              </span>
+              <div>
+                <button
+                  className="secondary-action compact"
+                  type="button"
+                  disabled={receptionRefreshing || receptionCurrentPage <= 1}
+                  onClick={() => setReceptionPage((page) => Math.max(1, page - 1))}
+                >
+                  Назад
+                </button>
+                <button
+                  className="secondary-action compact"
+                  type="button"
+                  disabled={receptionRefreshing || receptionCurrentPage >= receptionTotalPages}
+                  onClick={() => setReceptionPage((page) => Math.min(receptionTotalPages, page + 1))}
                 >
                   Вперед
                 </button>
@@ -2080,7 +3073,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         {activeSection === 'services' && (
           <section className="admin-panel tab-panel" key="services">
             <CrudTable
-              columns={['ID', 'Название (RU)', 'Название (KZ)', 'Название (EN)', 'Код', 'Приоритет', 'Обр. программа', 'Статус', 'Действия']}
+              columns={['ID', 'Название (RU)', 'Название (KZ)', 'Название (EN)', 'Код', 'Приоритет', 'Обр. программа', 'Регистратура', 'Статус', 'Действия']}
               loading={loading}
               rows={services.map((service) => [
                 service.id,
@@ -2090,6 +3083,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 service.code,
                 service.priority,
                 boolLabel(service.requires_educational_program),
+                boolLabel(service.requires_reception_desk),
                 boolLabel(service.is_active),
                 <RowActions
                   key={service.id}
@@ -2103,6 +3097,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       priority: service.priority,
                       is_active: service.is_active,
                       requires_educational_program: service.requires_educational_program,
+                      requires_reception_desk: service.requires_reception_desk,
                     })
                     setFormModal('services')
                   }}
@@ -2191,27 +3186,47 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 getProgramLabels(educationalPrograms, operatorProgramIds[operator.id] ?? []),
                 operatorStatusLabels[operator.status],
                 new Date(operator.created_at).toLocaleString(),
-                <RowActions
-                  key={operator.id}
-                  onEdit={() => {
-                    setEditingOperatorId(operator.id)
-                    setOperatorForm({
-                      user_id: operator.user_id,
-                      window_id: operator.window_id,
-                      status: operator.status,
-                    })
-                    setSelectedOperatorProgramIds(operatorProgramIds[operator.id] ?? [])
-                    setSelectedOperatorServiceIds(operatorServiceIds[operator.id] ?? [])
-                    setFormModal('operators')
-                  }}
-                  onDelete={() =>
-                    setDeleteTarget({
-                      section: 'operators',
-                      id: operator.id,
-                      label: getUserLabel(users, operator.user_id),
-                    })
-                  }
-                />,
+                <div className="row-actions" key={operator.id}>
+                  <button
+                    className="secondary-action compact"
+                    type="button"
+                    onClick={() => {
+                      navigateToSection('analytics', operator.id)
+                    }}
+                  >
+                    Отчет
+                  </button>
+                  <button
+                    className="secondary-action compact"
+                    type="button"
+                    onClick={() => {
+                      setEditingOperatorId(operator.id)
+                      setOperatorForm({
+                        user_id: operator.user_id,
+                        window_id: operator.window_id,
+                        status: operator.status,
+                      })
+                      setSelectedOperatorProgramIds(operatorProgramIds[operator.id] ?? [])
+                      setSelectedOperatorServiceIds(operatorServiceIds[operator.id] ?? [])
+                      setFormModal('operators')
+                    }}
+                  >
+                    Изменить
+                  </button>
+                  <button
+                    className="danger-action"
+                    type="button"
+                    onClick={() =>
+                      setDeleteTarget({
+                        section: 'operators',
+                        id: operator.id,
+                        label: getUserLabel(users, operator.user_id),
+                      })
+                    }
+                  >
+                    Удалить
+                  </button>
+                </div>,
               ])}
             />
           </section>
@@ -2219,78 +3234,345 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
         {activeSection === 'analytics' && (
           <section className="admin-panel tab-panel analytics-section" key="analytics">
-            <div className="analytics-grid">
-              {operatorAnalyticsRows.map(({ operator, stats }) => {
-                const activityPercent = Math.round((stats.totalActions / operatorAnalyticsMaxActions) * 100)
+            {isAdminUser && (
+              <div className="analytics-master">
+                {selectedAnalyticsOperatorId ? (
+                  <button
+                    className="secondary-action compact"
+                    type="button"
+                    onClick={() => navigateToSection('analytics')}
+                  >
+                    <Icon name="users" />
+                    Все сотрудники
+                  </button>
+                ) : (
+                  <span className="profile-label">Выберите сотрудника для детального отчета</span>
+                )}
+              </div>
+            )}
 
-                return (
-                  <article className="analytics-card" key={operator.id}>
+            {isAdminUser && !selectedOperatorAnalyticsRow && (
+              <>
+                {selectedGeneralAnalytics && !loading && operatorAnalyticsRows.length > 0 && (
+                  <div className="analytics-dashboard-section analytics-general-section">
+                    <div className="analytics-section-heading">
+                      <div>
+                        <span className="profile-label">Раздел</span>
+                        <h2>Общая аналитика</h2>
+                      </div>
+                      <span className="analytics-status">{operatorPerformancePoints.length} операторов</span>
+                    </div>
+
+                    <div className="analytics-performance-summary">
+                      <div>
+                        <span className="profile-label">Клиентов в час</span>
+                        <strong>{formatDecimal(operatorPerformanceClientsPerHour)}</strong>
+                      </div>
+                      <div>
+                        <span className="profile-label">Эффективное рабочее время</span>
+                        <strong>{formatDuration(operatorPerformanceTotalEffectiveSeconds)}</strong>
+                      </div>
+                      <div>
+                        <span className="profile-label">Коэффициент загрузки</span>
+                        <strong>{operatorPerformanceUtilization}%</strong>
+                      </div>
+                    </div>
+
+                    <div className="analytics-performance-grid">
+                      <div className="analytics-performance-card">
+                        <h3>Клиенты vs среднее время</h3>
+                        <AnalyticsOperatorPerformanceChart points={operatorPerformancePoints} type="scatter" />
+                      </div>
+                      <div className="analytics-performance-card">
+                        <h3>Bubble Chart: производительность</h3>
+                        <AnalyticsOperatorPerformanceChart points={operatorPerformancePoints} type="bubble" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!selectedAnalyticsOperatorId && (
+                <div className="analytics-employee-grid">
+                {loading && <div className="analytics-empty">Загрузка...</div>}
+                {!loading && operatorAnalyticsRows.length === 0 && (
+                  <div className="analytics-empty">Данных по операторам пока нет</div>
+                )}
+                {!loading && operatorAnalyticsRows.length > 0 && (
+                  <button
+                    className="analytics-employee-card analytics-general-link-card"
+                    type="button"
+                    onClick={() => navigateToSection('analytics', 'general')}
+                  >
                     <div className="analytics-card-header">
                       <div>
-                        <span className="profile-label">Оператор</span>
-                        <strong>{getUserLabel(users, operator.user_id)}</strong>
+                        <span className="profile-label">Раздел</span>
+                        <strong>Общая аналитика</strong>
                       </div>
-                      <span className="analytics-status">{operatorStatusLabels[operator.status]}</span>
+                      <span className="analytics-status">{operatorPerformancePoints.length} операторов</span>
                     </div>
-                    <div className="analytics-bar" aria-hidden="true">
-                      <span style={{ width: `${activityPercent}%` }} />
-                    </div>
-                    <div className="analytics-metrics">
-                      <div>
-                        <span>Принято</span>
-                        <strong>{stats.accepted}</strong>
-                      </div>
-                      <div>
-                        <span>Завершено</span>
-                        <strong>{stats.completed}</strong>
-                      </div>
-                      <div>
-                        <span>Не явился</span>
-                        <strong>{stats.skipped}</strong>
-                      </div>
-                      <div>
-                        <span>Отказано</span>
-                        <strong>{stats.declined}</strong>
-                      </div>
-                    </div>
-                    <div className="analytics-footer">
-                      <span>Завершение: {stats.completionRate}%</span>
+                    <div className="analytics-employee-metrics">
                       <span>
-                        {stats.lastActivity ? new Date(stats.lastActivity).toLocaleString() : 'Активности нет'}
+                        Клиентов/час
+                        <strong>{formatDecimal(operatorPerformanceClientsPerHour)}</strong>
+                      </span>
+                      <span>
+                        Эфф. время
+                        <strong>{formatDuration(operatorPerformanceTotalEffectiveSeconds)}</strong>
+                      </span>
+                      <span>
+                        Загрузка
+                        <strong>{operatorPerformanceUtilization}%</strong>
                       </span>
                     </div>
-                  </article>
-                )
-              })}
-            </div>
+                  </button>
+                )}
+                {!loading && operatorAnalyticsRows.map(({ operator, stats }) => (
+                  <button
+                    className="analytics-employee-card"
+                    key={stats.operator_id}
+                    type="button"
+                    onClick={() => navigateToSection('analytics', stats.operator_id)}
+                  >
+                    <div className="analytics-card-header">
+                      <div>
+                        <span className="profile-label">Сотрудник</span>
+                        <strong>{getAnalyticsOperatorLabel(stats, operator, users)}</strong>
+                      </div>
+                      <span className="analytics-status">
+                        {operator ? operatorStatusLabels[operator.status] : 'Без статуса'}
+                      </span>
+                    </div>
+                    <div className="analytics-employee-metrics">
+                      <span>
+                        Клиентов/час
+                        <strong>{formatDecimal(getOperatorClientsPerHour(stats))}</strong>
+                      </span>
+                      <span>
+                        Эфф. время
+                        <strong>{formatDuration(stats.total_processing_seconds)}</strong>
+                      </span>
+                      <span>
+                        Загрузка
+                        <strong>{getOperatorUtilizationPercent(stats)}%</strong>
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+                )}
+              </>
+            )}
 
-            <CrudTable
-              columns={[
-                'Оператор',
-                'Окно',
-                'Статус',
-                'Принято',
-                'Завершено',
-                'Не явился',
-                'Отказано',
-                'Всего действий',
-                'Завершение',
-                'Последняя активность',
-              ]}
-              loading={loading}
-              rows={operatorAnalyticsRows.map(({ operator, stats }) => [
-                getUserLabel(users, operator.user_id),
-                getWindowLabel(windows, operator.window_id),
-                operatorStatusLabels[operator.status],
-                stats.accepted,
-                stats.completed,
-                stats.skipped,
-                stats.declined,
-                stats.totalActions,
-                `${stats.completionRate}%`,
-                stats.lastActivity ? new Date(stats.lastActivity).toLocaleString() : 'Активности нет',
-              ])}
-            />
+            {!isAdminUser && !loading && !selectedOperatorAnalyticsRow && (
+              <div className="analytics-empty">Данных по оператору пока нет</div>
+            )}
+
+            {selectedOperatorAnalyticsRow && (
+              <>
+                <div className="analytics-dashboard-section">
+                  <div className="analytics-section-heading">
+                    <div>
+                      <span className="profile-label">Раздел 1</span>
+                      <h2>Аналитика по услугам</h2>
+                    </div>
+                    <span className="analytics-status">
+                      {selectedServiceAnalyticsRows.length} услуг
+                    </span>
+                  </div>
+
+                  <div className="analytics-service-summary">
+                    <div>
+                      <span className="profile-label">Всего талонов по услугам</span>
+                      <strong>{selectedServiceAnalyticsTotalTickets}</strong>
+                      <p>Все талоны, закрепленные за сотрудником</p>
+                    </div>
+                    <div>
+                      <span className="profile-label">Общее время оказания</span>
+                      <strong>{formatDuration(selectedServiceAnalyticsTotalTime)}</strong>
+                      <p>Сумма времени обслуживания по услугам</p>
+                    </div>
+                    <div>
+                      <span className="profile-label">Лучшее завершение</span>
+                      <strong>{selectedServiceAnalyticsBestCompletion?.service_name ?? 'Нет данных'}</strong>
+                      <p>
+                        {selectedServiceAnalyticsBestCompletion
+                          ? `${selectedServiceAnalyticsBestCompletion.completion_rate}% завершения`
+                          : 'Пока нет обработанных услуг'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="analytics-service-pie-panel">
+                    {selectedServiceAnalyticsRows.length === 0 ? (
+                      <div className="analytics-empty">По этому сотруднику пока нет услуг</div>
+                    ) : (
+                      <>
+                        <div className="analytics-chart-block">
+                          <h3>Распределение по услугам</h3>
+                          <AnalyticsDonutChart
+                            centerLabel="талонов"
+                            centerValue={selectedServiceAnalyticsTotalTickets}
+                            segments={selectedServicePieSegments}
+                            total={selectedServiceAnalyticsTotalTickets}
+                          />
+                        </div>
+                        <div className="analytics-chart-block">
+                          <h3>Статусы талонов</h3>
+                          <AnalyticsDonutChart
+                            centerLabel="статусов"
+                            centerValue={selectedStatusTotal}
+                            segments={selectedStatusPieSegments}
+                            total={selectedStatusTotal}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="analytics-daily-panel">
+                    <div className="analytics-card-header">
+                      <div>
+                        <span className="profile-label">Раздел 2</span>
+                        <h3>Талоны по дням</h3>
+                      </div>
+                      <span className="analytics-status">
+                        {selectedDailyAnalyticsRows.length} {selectedDailyAnalyticsUnitLabel}
+                      </span>
+                    </div>
+                    <div className="analytics-date-filter">
+                      <div className="analytics-grouping-toggle" role="group" aria-label="Группировка графика">
+                        <button
+                          className={analyticsTimeGrouping === 'day' ? 'selected' : ''}
+                          type="button"
+                          onClick={() => setAnalyticsTimeGrouping('day')}
+                        >
+                          Дни
+                        </button>
+                        <button
+                          className={analyticsTimeGrouping === 'month' ? 'selected' : ''}
+                          type="button"
+                          onClick={() => setAnalyticsTimeGrouping('month')}
+                        >
+                          Месяцы
+                        </button>
+                      </div>
+                      <label>
+                        <span>С даты</span>
+                        <input
+                          type="date"
+                          value={analyticsDateFrom}
+                          onChange={(event) => setAnalyticsDateFrom(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        <span>По дату</span>
+                        <input
+                          type="date"
+                          value={analyticsDateTo}
+                          onChange={(event) => setAnalyticsDateTo(event.target.value)}
+                        />
+                      </label>
+                      <button
+                        className="secondary-action compact"
+                        type="button"
+                        onClick={() => {
+                          const summerRange = getDefaultSummerDateRange()
+                          setAnalyticsDateFrom(summerRange.from)
+                          setAnalyticsDateTo(summerRange.to)
+                        }}
+                      >
+                        Лето
+                      </button>
+                    </div>
+                    {selectedDailyAnalyticsRows.length === 0 ? (
+                      <div className="analytics-empty">{selectedDailyAnalyticsEmptyLabel}</div>
+                    ) : (
+                      <AnalyticsDailyLineChart grouping={analyticsTimeGrouping} rows={selectedDailyAnalyticsRows} />
+                    )}
+                  </div>
+
+                  <div className="analytics-services-grid">
+                    {selectedServiceAnalyticsRows.map((serviceStats) => (
+                        <article className="analytics-service-card" key={serviceStats.service_id}>
+                          <div className="analytics-card-header">
+                            <div>
+                              <span className="profile-label">Услуга</span>
+                              <strong>{serviceStats.service_name ?? `Услуга ${serviceStats.service_id}`}</strong>
+                            </div>
+                            <span className="analytics-status">{serviceStats.share_percent}%</span>
+                          </div>
+                          <div className="analytics-service-metrics">
+                            <div>
+                              <span>Талонов</span>
+                              <strong>{serviceStats.tickets_count}</strong>
+                            </div>
+                            <div>
+                              <span>Среднее время</span>
+                              <strong>{formatDuration(serviceStats.average_processing_seconds)}</strong>
+                            </div>
+                            <div>
+                              <span>Общее время</span>
+                              <strong>{formatDuration(serviceStats.total_processing_seconds)}</strong>
+                            </div>
+                            <div>
+                              <span>Завершено</span>
+                              <strong>{serviceStats.completed}</strong>
+                            </div>
+                            <div>
+                              <span>Не явился</span>
+                              <strong>{serviceStats.skipped}</strong>
+                            </div>
+                            <div>
+                              <span>Ожидание</span>
+                              <strong>{formatDuration(serviceStats.average_wait_seconds)}</strong>
+                            </div>
+                            <div>
+                              <span>Диапазон</span>
+                              <strong>
+                                {formatDuration(serviceStats.fastest_processing_seconds)} - {formatDuration(serviceStats.slowest_processing_seconds)}
+                              </strong>
+                            </div>
+                          </div>
+                        </article>
+                    ))}
+                  </div>
+
+                  <CrudTable
+                    columns={[
+                      'Услуга',
+                      'Талонов',
+                      'Обработано',
+                      'Завершено',
+                      'Не явился',
+                      'В работе',
+                      'Среднее время',
+                      'Общее время',
+                      'Среднее ожидание',
+                      'Доля',
+                      'Завершение',
+                      'Последний талон',
+                    ]}
+                    loading={loading}
+                    rows={selectedServiceAnalyticsRows.map((serviceStats) => [
+                      serviceStats.service_name ?? `Услуга ${serviceStats.service_id}`,
+                      serviceStats.tickets_count,
+                      serviceStats.processed,
+                      serviceStats.completed,
+                      serviceStats.skipped,
+                      serviceStats.active,
+                      formatDuration(serviceStats.average_processing_seconds),
+                      formatDuration(serviceStats.total_processing_seconds),
+                      formatDuration(serviceStats.average_wait_seconds),
+                      `${serviceStats.share_percent}%`,
+                      `${serviceStats.completion_rate}%`,
+                      serviceStats.last_ticket_at
+                        ? new Date(serviceStats.last_ticket_at).toLocaleString()
+                        : 'Активности нет',
+                    ])}
+                  />
+                </div>
+              </>
+            )}
           </section>
         )}
 
@@ -2506,6 +3788,19 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                   }
                 />
                 При данной услуге запрашивать образовательные программы
+              </label>
+              <label className="check-field">
+                <input
+                  type="checkbox"
+                  checked={serviceForm.requires_reception_desk}
+                  onChange={(event) =>
+                    setServiceForm({
+                      ...serviceForm,
+                      requires_reception_desk: event.target.checked,
+                    })
+                  }
+                />
+                Предусмотреть для данной услуги стойку регистратуры
               </label>
               <ModalActions onCancel={closeFormModal} submitText={editingServiceId === null ? 'Создать' : 'Сохранить'} />
             </form>
@@ -2891,7 +4186,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       )}
 
       {selectedMyWindowTicket !== null && (
-        <AdminModal title={`Талон ${selectedMyWindowTicket.ticket_number}`} onClose={() => setSelectedMyWindowTicket(null)}>
+        <AdminModal title={`Талон ${selectedMyWindowTicket.ticket_number}`} onClose={closeMyWindowTicketDetails} size="wide">
           <div className="ticket-detail-grid">
             <div>
               <span className="profile-label">Абитуриент</span>
@@ -2906,26 +4201,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             <div>
               <span className="profile-label">Язык обучения</span>
               <strong>{getStudyLanguageLabel(selectedMyWindowTicket.study_language)}</strong>
-              {selectedMyWindowTicket.status === 'CALLED' && (
-                <select
-                  aria-label="Язык обучения"
-                  disabled={ticketActionSaving}
-                  value={selectedMyWindowTicket.study_language ?? ''}
-                  onChange={(event) => {
-                    void updateMyWindowTicketStudyLanguage(
-                      selectedMyWindowTicket,
-                      parseStudyLanguage(event.target.value),
-                    )
-                  }}
-                >
-                  <option value="">Не указан</option>
-                  {studyLanguageOptions.map((option) => (
-                    <option value={option.value} key={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              )}
             </div>
             <div>
               <span className="profile-label">Статус</span>
@@ -2944,37 +4219,176 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             </div>
           </div>
 
-          <form className="admin-form modal-form" onSubmit={reassignMyWindowTicket}>
-            <select
-              required
-              value={reassignServiceId}
-              onChange={(event) => {
-                setReassignServiceId(event.target.value)
-                setReassignProgramId('')
-              }}
-            >
-              <option value="">Выберите новую услугу</option>
-              {activeServices.map((service) => (
-                <option value={service.id} key={service.id}>
-                  {service.name} ({service.code})
-                </option>
-              ))}
-            </select>
-            <select
-              disabled={!selectedReassignService?.requires_educational_program}
-              required={Boolean(selectedReassignService?.requires_educational_program)}
-              value={reassignProgramId}
-              onChange={(event) => setReassignProgramId(event.target.value)}
-            >
-              <option value="">
-                {selectedReassignService?.requires_educational_program ? 'Выберите ОП' : 'ОП не требуется'}
-              </option>
-              {activeEducationalPrograms.map((program) => (
-                <option value={program.id} key={program.id}>
-                  {program.name} ({program.code})
-                </option>
-              ))}
-            </select>
+          {selectedMyWindowTicket.status === 'CALLED' && (
+            <form className="admin-form modal-form ticket-admission-form" onSubmit={saveMyWindowTicketApplicantData}>
+              <div className="ticket-form-grid">
+                <input
+                  required
+                  autoFocus
+                  inputMode="numeric"
+                  pattern="[0-9]{12}"
+                  maxLength={12}
+                  minLength={12}
+                  placeholder="ИИН абитуриента"
+                  value={acceptIin}
+                  onChange={(event) => setAcceptIin(event.target.value.replace(/\D/g, '').slice(0, 12))}
+                />
+                <select
+                  required
+                  value={acceptStudyLanguage}
+                  onChange={(event) => setAcceptStudyLanguage(parseStudyLanguage(event.target.value) ?? '')}
+                >
+                  <option value="">Выберите язык обучения</option>
+                  {studyLanguageOptions.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button className="secondary-action compact" type="submit" disabled={ticketActionSaving}>
+                  Сохранить данные
+                </button>
+              </div>
+            </form>
+          )}
+
+          <form className="admin-form modal-form touch-reassign-form" onSubmit={reassignMyWindowTicket}>
+            <div className="touch-choice-field">
+              <span className="profile-label">Новая услуга</span>
+              <button
+                className="touch-choice-trigger"
+                type="button"
+                aria-expanded={reassignServiceListOpen}
+                onClick={() => setReassignServiceListOpen((isOpen) => !isOpen)}
+              >
+                <span>
+                  <strong>{selectedReassignService?.name ?? 'Выберите услугу'}</strong>
+                  <small>
+                    {selectedReassignService
+                      ? `${selectedReassignService.code} · приоритет ${selectedReassignService.priority}`
+                      : 'Нажмите, чтобы открыть список услуг'}
+                  </small>
+                </span>
+              </button>
+              {reassignServiceListOpen && (
+                <div className="touch-choice-popover">
+                  <input
+                    className="touch-choice-search"
+                    placeholder="Найти услугу"
+                    value={reassignServiceQuery}
+                    onChange={(event) => setReassignServiceQuery(event.target.value)}
+                  />
+                  <div className="touch-choice-list" role="radiogroup" aria-label="Новая услуга">
+                    {activeServices.length === 0 && <div className="touch-choice-empty">Активных услуг пока нет</div>}
+                    {activeServices.length > 0 && filteredReassignServices.length === 0 && (
+                      <div className="touch-choice-empty">Услуги не найдены</div>
+                    )}
+                    {filteredReassignServices.map((service) => {
+                      const selected = reassignServiceId === String(service.id)
+
+                      return (
+                        <button
+                          className={selected ? 'touch-choice selected' : 'touch-choice'}
+                          disabled={ticketActionSaving}
+                          key={service.id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => {
+                            const nextServiceId = String(service.id)
+                            const currentProgramId =
+                              selectedMyWindowTicket.educational_program_id === null
+                                ? ''
+                                : String(selectedMyWindowTicket.educational_program_id)
+
+                            setReassignServiceId(nextServiceId)
+                            setReassignProgramQuery('')
+                            setReassignProgramListOpen(false)
+                            setReassignServiceListOpen(false)
+                            setReassignProgramId(
+                              service.requires_educational_program ? reassignProgramId || currentProgramId : '',
+                            )
+                          }}
+                        >
+                          <span>
+                            <strong>{service.name}</strong>
+                            <small>
+                              {service.code} · приоритет {service.priority}
+                              {service.requires_educational_program ? ' · нужна ОП' : ''}
+                            </small>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                )}
+            </div>
+            <div className="touch-choice-field">
+              <span className="profile-label">ОП</span>
+              {selectedReassignService?.requires_educational_program ? (
+                <>
+                  <button
+                    className="touch-choice-trigger"
+                    type="button"
+                    aria-expanded={reassignProgramListOpen}
+                    onClick={() => setReassignProgramListOpen((isOpen) => !isOpen)}
+                  >
+                    <span>
+                      <strong>{selectedReassignProgram?.name ?? 'Выберите ОП'}</strong>
+                      <small>
+                        {selectedReassignProgram
+                          ? `${selectedReassignProgram.code} · ${getDegreeLabel(academicDegrees, selectedReassignProgram.academic_degree_id)}`
+                          : 'Нажмите, чтобы открыть список ОП'}
+                      </small>
+                    </span>
+                  </button>
+                  {reassignProgramListOpen && (
+                    <div className="touch-choice-popover">
+                      <input
+                        className="touch-choice-search"
+                        placeholder="Найти ОП"
+                        value={reassignProgramQuery}
+                        onChange={(event) => setReassignProgramQuery(event.target.value)}
+                      />
+                      <div className="touch-choice-list" role="radiogroup" aria-label="ОП">
+                        {activeEducationalPrograms.length === 0 && (
+                          <div className="touch-choice-empty">Активных ОП пока нет</div>
+                        )}
+                        {activeEducationalPrograms.length > 0 && filteredReassignPrograms.length === 0 && (
+                          <div className="touch-choice-empty">ОП не найдены</div>
+                        )}
+                        {filteredReassignPrograms.map((program) => {
+                          const selected = reassignProgramId === String(program.id)
+
+                          return (
+                            <button
+                              className={selected ? 'touch-choice selected' : 'touch-choice'}
+                              disabled={ticketActionSaving}
+                              key={program.id}
+                              type="button"
+                              aria-pressed={selected}
+                              onClick={() => {
+                                setReassignProgramId(String(program.id))
+                                setReassignProgramListOpen(false)
+                              }}
+                            >
+                              <span>
+                                <strong>{program.name}</strong>
+                                <small>
+                                  {program.code} · {getDegreeLabel(academicDegrees, program.academic_degree_id)}
+                                </small>
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="touch-choice-empty">ОП не требуется</div>
+              )}
+            </div>
             <div className="modal-actions">
               <button
                 className="primary-action compact"
@@ -3000,50 +4414,270 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         </AdminModal>
       )}
 
-      {acceptTicketTarget !== null && (
-        <AdminModal
-          title={`Данные талона ${acceptTicketTarget.ticket_number}`}
-          onClose={closeAcceptTicketModal}
-          size="small"
-        >
-          <form className="admin-form modal-form" onSubmit={acceptMyWindowTicket}>
-            <input
-              required
-              autoFocus
-              inputMode="numeric"
-              pattern="[0-9]{12}"
-              maxLength={12}
-              minLength={12}
-              placeholder="ИИН абитуриента"
-              value={acceptIin}
-              onChange={(event) => setAcceptIin(event.target.value.replace(/\D/g, '').slice(0, 12))}
-            />
-            <select
-              required
-              value={acceptStudyLanguage}
-              onChange={(event) => setAcceptStudyLanguage(parseStudyLanguage(event.target.value) ?? '')}
-            >
-              <option value="">Выберите язык обучения</option>
-              {studyLanguageOptions.map((option) => (
-                <option value={option.value} key={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <div className="modal-actions">
-              <button
-                className="secondary-action compact"
-                type="button"
-                disabled={ticketActionSaving}
-                onClick={closeAcceptTicketModal}
+      {selectedReceptionTicket !== null && (
+        <AdminModal title={`Регистратура: талон ${selectedReceptionTicket.ticket_number}`} onClose={closeReceptionTicketDetails} size="wide">
+          <div className="ticket-detail-grid">
+            <div>
+              <span className="profile-label">Абитуриент</span>
+              <strong>{selectedReceptionTicket.full_name ?? 'Не указано'}</strong>
+              <p>{selectedReceptionTicket.iin ?? 'ИИН не указан'}</p>
+            </div>
+            <div>
+              <span className="profile-label">Текущая услуга</span>
+              <strong>{selectedReceptionTicket.service_name ?? selectedReceptionTicket.service_id}</strong>
+              <p>{getEducationalProgramDisplayLabel(selectedReceptionTicket)}</p>
+            </div>
+            <div>
+              <span className="profile-label">Язык обучения</span>
+              <strong>{getStudyLanguageLabel(selectedReceptionTicket.study_language)}</strong>
+            </div>
+            <div>
+              <span className="profile-label">Статус</span>
+              <strong>{getTicketStatusLabel(selectedReceptionTicket.status)}</strong>
+              <p>Создан: {new Date(selectedReceptionTicket.created_at).toLocaleString()}</p>
+            </div>
+            <div>
+              <span className="profile-label">Ответственный оператор</span>
+              <strong>
+                {selectedReceptionTicket.operator_name ??
+                  selectedReceptionTicket.operator_email ??
+                  selectedReceptionTicket.operator_id ??
+                  'Не назначен'}
+              </strong>
+              <p>Окно: {selectedReceptionTicket.window_name ?? selectedReceptionTicket.window_id ?? 'Не указано'}</p>
+            </div>
+          </div>
+
+          <form className="admin-form modal-form ticket-admission-form" onSubmit={saveReceptionTicketApplicantData}>
+            <div className="ticket-form-grid">
+              <input
+                required
+                autoFocus
+                inputMode="numeric"
+                pattern="[0-9]{12}"
+                maxLength={12}
+                minLength={12}
+                placeholder="ИИН абитуриента"
+                value={acceptIin}
+                onChange={(event) => setAcceptIin(event.target.value.replace(/\D/g, '').slice(0, 12))}
+              />
+              <select
+                required
+                value={acceptStudyLanguage}
+                onChange={(event) => setAcceptStudyLanguage(parseStudyLanguage(event.target.value) ?? '')}
               >
-                Отмена
-              </button>
-              <button className="primary-action compact" type="submit" disabled={ticketActionSaving}>
-                Сохранить
+                <option value="">Выберите язык обучения</option>
+                {studyLanguageOptions.map((option) => (
+                  <option value={option.value} key={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <button className="secondary-action compact" type="submit" disabled={ticketActionSaving}>
+                Сохранить данные
               </button>
             </div>
           </form>
+
+          <form className="admin-form modal-form touch-reassign-form" onSubmit={reassignReceptionTicket}>
+            <div className="touch-choice-field">
+              <span className="profile-label">Новая услуга</span>
+              <button
+                className="touch-choice-trigger"
+                type="button"
+                aria-expanded={reassignServiceListOpen}
+                onClick={() => setReassignServiceListOpen((isOpen) => !isOpen)}
+              >
+                <span>
+                  <strong>{selectedReassignService?.name ?? 'Выберите услугу'}</strong>
+                  <small>
+                    {selectedReassignService
+                      ? `${selectedReassignService.code} · приоритет ${selectedReassignService.priority}`
+                      : 'Нажмите, чтобы открыть список услуг'}
+                  </small>
+                </span>
+              </button>
+              {reassignServiceListOpen && (
+                <div className="touch-choice-popover">
+                  <input
+                    className="touch-choice-search"
+                    placeholder="Найти услугу"
+                    value={reassignServiceQuery}
+                    onChange={(event) => setReassignServiceQuery(event.target.value)}
+                  />
+                  <div className="touch-choice-list" role="radiogroup" aria-label="Новая услуга">
+                    {activeServices.length === 0 && <div className="touch-choice-empty">Активных услуг пока нет</div>}
+                    {activeServices.length > 0 && filteredReassignServices.length === 0 && (
+                      <div className="touch-choice-empty">Услуги не найдены</div>
+                    )}
+                    {filteredReassignServices.map((service) => {
+                      const selected = reassignServiceId === String(service.id)
+
+                      return (
+                        <button
+                          className={selected ? 'touch-choice selected' : 'touch-choice'}
+                          disabled={ticketActionSaving}
+                          key={service.id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => {
+                            const currentProgramId =
+                              selectedReceptionTicket.educational_program_id === null
+                                ? ''
+                                : String(selectedReceptionTicket.educational_program_id)
+
+                            setReassignServiceId(String(service.id))
+                            setReassignProgramQuery('')
+                            setReassignProgramListOpen(false)
+                            setReassignServiceListOpen(false)
+                            setReassignProgramId(
+                              service.requires_educational_program ? reassignProgramId || currentProgramId : '',
+                            )
+                          }}
+                        >
+                          <span>
+                            <strong>{service.name}</strong>
+                            <small>
+                              {service.code} · приоритет {service.priority}
+                              {service.requires_educational_program ? ' · нужна ОП' : ''}
+                            </small>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                )}
+            </div>
+            <div className="touch-choice-field">
+              <span className="profile-label">ОП</span>
+              {selectedReassignService?.requires_educational_program ? (
+                <>
+                  <button
+                    className="touch-choice-trigger"
+                    type="button"
+                    aria-expanded={reassignProgramListOpen}
+                    onClick={() => setReassignProgramListOpen((isOpen) => !isOpen)}
+                  >
+                    <span>
+                      <strong>{selectedReassignProgram?.name ?? 'Выберите ОП'}</strong>
+                      <small>
+                        {selectedReassignProgram
+                          ? `${selectedReassignProgram.code} · ${getDegreeLabel(academicDegrees, selectedReassignProgram.academic_degree_id)}`
+                          : 'Нажмите, чтобы открыть список ОП'}
+                      </small>
+                    </span>
+                  </button>
+                  {reassignProgramListOpen && (
+                    <div className="touch-choice-popover">
+                      <input
+                        className="touch-choice-search"
+                        placeholder="Найти ОП"
+                        value={reassignProgramQuery}
+                        onChange={(event) => setReassignProgramQuery(event.target.value)}
+                      />
+                      <div className="touch-choice-list" role="radiogroup" aria-label="ОП">
+                        {activeEducationalPrograms.length === 0 && (
+                          <div className="touch-choice-empty">Активных ОП пока нет</div>
+                        )}
+                        {activeEducationalPrograms.length > 0 && filteredReassignPrograms.length === 0 && (
+                          <div className="touch-choice-empty">ОП не найдены</div>
+                        )}
+                        {filteredReassignPrograms.map((program) => {
+                          const selected = reassignProgramId === String(program.id)
+
+                          return (
+                            <button
+                              className={selected ? 'touch-choice selected' : 'touch-choice'}
+                              disabled={ticketActionSaving}
+                              key={program.id}
+                              type="button"
+                              aria-pressed={selected}
+                              onClick={() => {
+                                setReassignProgramId(String(program.id))
+                                setReassignProgramListOpen(false)
+                              }}
+                            >
+                              <span>
+                                <strong>{program.name}</strong>
+                                <small>
+                                  {program.code} · {getDegreeLabel(academicDegrees, program.academic_degree_id)}
+                                </small>
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="touch-choice-empty">ОП не требуется</div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="primary-action compact" type="submit" disabled={ticketActionSaving}>
+                Переназначить услугу
+              </button>
+            </div>
+          </form>
+
+          <div className="modal-actions">
+            <button
+              className="primary-action compact"
+              type="button"
+              disabled={ticketActionSaving}
+              onClick={() => completeReceptionTicket(selectedReceptionTicket)}
+            >
+              Завершить
+            </button>
+            <button
+              className="danger-action"
+              type="button"
+              disabled={ticketActionSaving}
+              onClick={() => skipReceptionTicket(selectedReceptionTicket)}
+            >
+              Не явился
+            </button>
+          </div>
+        </AdminModal>
+      )}
+
+      {receptionError && activeSection !== 'reception' && (
+        <AdminModal title="Ошибка" onClose={() => setReceptionError('')} size="small">
+          <div className="error-dialog">
+            <div className="error-dialog-icon" aria-hidden="true">
+              !
+            </div>
+            <div>
+              <strong>Не удалось выполнить действие</strong>
+              <p>{receptionError}</p>
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button className="primary-action compact" type="button" onClick={() => setReceptionError('')}>
+              Понятно
+            </button>
+          </div>
+        </AdminModal>
+      )}
+
+      {myWindowError && (
+        <AdminModal title="Ошибка" onClose={() => setMyWindowError('')} size="small">
+          <div className="error-dialog">
+            <div className="error-dialog-icon" aria-hidden="true">
+              !
+            </div>
+            <div>
+              <strong>Не удалось выполнить действие</strong>
+              <p>{myWindowError}</p>
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button className="primary-action compact" type="button" onClick={() => setMyWindowError('')}>
+              Понятно
+            </button>
+          </div>
         </AdminModal>
       )}
 
@@ -3138,13 +4772,13 @@ function AdminModal({
 }: {
   children: ReactNode
   onClose: () => void
-  size?: 'default' | 'small'
+  size?: 'default' | 'small' | 'wide'
   title: string
 }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
-        className={size === 'small' ? 'admin-modal small' : 'admin-modal'}
+        className={`admin-modal ${size === 'small' ? 'small' : size === 'wide' ? 'wide' : ''}`.trim()}
         role="dialog"
         aria-modal="true"
         aria-label={title}

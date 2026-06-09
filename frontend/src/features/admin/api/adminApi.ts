@@ -9,6 +9,7 @@ export type ServiceItem = {
   priority: number
   is_active: boolean
   requires_educational_program: boolean
+  requires_reception_desk: boolean
 }
 
 export type ServicePayload = Omit<ServiceItem, 'id'>
@@ -111,8 +112,13 @@ export type ApplicantPayload = {
 
 export type TicketEventType =
   | 'TICKET_CREATED'
+  | 'TICKET_ASSIGNED'
   | 'TICKET_CALLED'
+  | 'TICKET_ACCEPTED'
   | 'TICKET_DECLINED'
+  | 'TICKET_STUDY_LANGUAGE_UPDATED'
+  | 'TICKET_UPDATED'
+  | 'SERVICE_CHANGED'
   | 'TICKET_SKIPPED'
   | 'TICKET_COMPLETED'
   | 'STATUS_CHANGED'
@@ -139,6 +145,59 @@ export type TicketEventPayload = {
   metadata: Record<string, unknown> | null
 }
 
+export type OperatorTicketAnalyticsItem = {
+  operator_id: string
+  operator_name: string | null
+  operator_email: string | null
+  window_id: number | null
+  window_name: string | null
+  window_status: string | null
+  accepted: number
+  completed: number
+  skipped: number
+  declined: number
+  processed: number
+  total_actions: number
+  completion_rate: number
+  average_processing_seconds: number
+  total_processing_seconds: number
+  worked_seconds: number
+  break_seconds: number
+  popular_service_id: number | null
+  popular_service_name: string | null
+  popular_service_count: number
+  last_activity: string | null
+  service_analytics: OperatorServiceAnalyticsItem[]
+  daily_analytics: OperatorDailyAnalyticsItem[]
+}
+
+export type OperatorDailyAnalyticsItem = {
+  date: string
+  tickets_count: number
+  completed: number
+  skipped: number
+  active: number
+}
+
+export type OperatorServiceAnalyticsItem = {
+  service_id: number
+  service_name: string | null
+  service_code: string | null
+  tickets_count: number
+  completed: number
+  skipped: number
+  active: number
+  processed: number
+  completion_rate: number
+  share_percent: number
+  average_processing_seconds: number
+  total_processing_seconds: number
+  fastest_processing_seconds: number
+  slowest_processing_seconds: number
+  average_wait_seconds: number
+  last_ticket_at: string | null
+}
+
 export type TicketItem = {
   id: string
   applicant_id: string | null
@@ -159,6 +218,7 @@ export type TicketItem = {
   operator_name: string | null
   operator_email: string | null
   window_id: number | null
+  window_name: string | null
   ticket_number: string
   queue_number: number
   priority: number
@@ -184,11 +244,28 @@ export type MyWindowTickets = {
   tickets: TicketItem[]
 }
 
+export type ReceptionTickets = {
+  waiting_count: number
+  called_count: number
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+  tickets: TicketItem[]
+}
+
 export type MyWindowTicketParams = {
   search?: string
   status?: string
   service_id?: number
   educational_program_id?: string
+  page?: number
+  page_size?: number
+}
+
+export type ReceptionTicketParams = {
+  search?: string
+  service_id?: number
   page?: number
   page_size?: number
 }
@@ -224,6 +301,8 @@ export const adminApi = {
       request<MyWindowTickets>('/tickets/my-window/status', { method: 'PATCH', body: { status } }),
     updateMyWindowStatus: (status: WindowStatus) =>
       request<MyWindowTickets>('/tickets/my-window/window-status', { method: 'PATCH', body: { status } }),
+    callNextMyTicket: () =>
+      request<TicketItem>('/tickets/my-window/next', { method: 'PATCH' }),
     acceptMyTicket: (id: string, payload: TicketAcceptPayload) =>
       request<TicketItem>(`/tickets/my-window/${id}/accept`, { method: 'PATCH', body: payload }),
     completeMyTicket: (id: string) =>
@@ -236,6 +315,28 @@ export const adminApi = {
       request<TicketItem>(`/tickets/my-window/${id}/study-language`, { method: 'PATCH', body: payload }),
     reassignMyTicketService: (id: string, payload: TicketServiceReassignPayload) =>
       request<TicketItem>(`/tickets/my-window/${id}/service`, { method: 'PATCH', body: payload }),
+    reception: (params: ReceptionTicketParams = {}) => {
+      const searchParams = new URLSearchParams()
+
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          searchParams.set(key, String(value))
+        }
+      })
+
+      const queryString = searchParams.toString()
+      return request<ReceptionTickets>(`/tickets/reception${queryString ? `?${queryString}` : ''}`)
+    },
+    acceptReceptionTicket: (id: string, payload: TicketAcceptPayload) =>
+      request<TicketItem>(`/tickets/reception/${id}/accept`, { method: 'PATCH', body: payload }),
+    completeReceptionTicket: (id: string) =>
+      request<TicketItem>(`/tickets/reception/${id}/complete`, { method: 'PATCH' }),
+    skipReceptionTicket: (id: string) =>
+      request<TicketItem>(`/tickets/reception/${id}/skip`, { method: 'PATCH' }),
+    updateReceptionTicketStudyLanguage: (id: string, payload: TicketStudyLanguagePayload) =>
+      request<TicketItem>(`/tickets/reception/${id}/study-language`, { method: 'PATCH', body: payload }),
+    reassignReceptionTicketService: (id: string, payload: TicketServiceReassignPayload) =>
+      request<TicketItem>(`/tickets/reception/${id}/service`, { method: 'PATCH', body: payload }),
   },
   services: {
     list: () => request<ServiceItem[]>('/services/'),
@@ -323,6 +424,8 @@ export const adminApi = {
   ticketEvents: {
     list: () => request<TicketEventItem[]>('/ticket-events/'),
     me: () => request<TicketEventItem[]>('/ticket-events/me'),
+    analytics: () => request<OperatorTicketAnalyticsItem[]>('/ticket-events/analytics'),
+    myAnalytics: () => request<OperatorTicketAnalyticsItem>('/ticket-events/me/analytics'),
     create: (payload: TicketEventPayload) =>
       request<TicketEventItem>('/ticket-events/', { method: 'POST', body: payload }),
     update: (id: string, payload: Partial<TicketEventPayload>) =>

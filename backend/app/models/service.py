@@ -22,6 +22,8 @@ class Service(Base):
 
     requires_educational_program: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    requires_reception_desk: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 class OperatorService(Base):
     __tablename__ = "operator_services"

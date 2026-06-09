@@ -14,6 +14,7 @@ import './public-ticket-page.css'
 
 type Lang = 'kk' | 'ru' | 'en'
 type TicketFormState = TicketCreatePayload
+type ChoiceModalKind = 'services' | 'programs' | null
 
 const LANG_STORAGE_KEY = 'public-ticket-language'
 const languages: Array<{ value: Lang; label: string }> = [
@@ -215,6 +216,7 @@ export function PublicTicketPage() {
   const [isLoadingTicket, setIsLoadingTicket] = useState(Boolean(ticketId))
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [choiceModal, setChoiceModal] = useState<ChoiceModalKind>(null)
   const t = translations[lang]
 
   useEffect(() => {
@@ -290,7 +292,28 @@ export function PublicTicketPage() {
     () => services.find((service) => service.id === form.service_id || service.id === ticket?.service_id),
     [form.service_id, services, ticket?.service_id],
   )
+  const selectedEducationalProgram = useMemo(
+    () => educationalPrograms.find((program) => program.id === form.educational_program_id),
+    [educationalPrograms, form.educational_program_id],
+  )
   const mustSelectEducationalProgram = requiresEducationalProgram(selectedService)
+
+  function selectService(service: PublicServiceItem) {
+    setForm((current) => ({
+      ...current,
+      service_id: service.id,
+      educational_program_id: null,
+    }))
+    setChoiceModal(null)
+  }
+
+  function selectEducationalProgram(program: PublicEducationalProgramItem) {
+    setForm((current) => ({
+      ...current,
+      educational_program_id: program.id,
+    }))
+    setChoiceModal(null)
+  }
 
   useEffect(() => {
     if (!autoPrintTicketId.current || ticket?.id !== autoPrintTicketId.current || ticketId !== autoPrintTicketId.current || isLoadingTicket) {
@@ -308,6 +331,11 @@ export function PublicTicketPage() {
 
     if (mustSelectEducationalProgram && !form.educational_program_id) {
       setError(t.programRequired)
+      return
+    }
+
+    if (!form.service_id) {
+      setError(t.selectService)
       return
     }
 
@@ -393,49 +421,34 @@ export function PublicTicketPage() {
               <h2>{t.formTitle}</h2>
             </div>
 
-            <label className="ticket-select-field" htmlFor="service_id">
+            <div className="ticket-choice-field">
               <span>{t.service}</span>
-              <select
+              <button
+                className="ticket-choice-trigger"
                 disabled={isLoadingServices || services.length === 0}
-                id="service_id"
-                name="service_id"
-                onChange={(event) => setForm((current) => ({ ...current, service_id: Number(event.target.value) }))}
-                required
-                value={form.service_id || ''}
+                type="button"
+                onClick={() => setChoiceModal('services')}
               >
-                <option value="">{t.selectService}</option>
-                {services.map((service) => (
-                  <option key={service.id} value={service.id}>
-                    {getLocalizedName(service, lang)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <strong>{selectedService ? getLocalizedName(selectedService, lang) : t.selectService}</strong>
+              </button>
+            </div>
 
             {mustSelectEducationalProgram ? (
-              <label className="ticket-select-field" htmlFor="educational_program_id">
+              <div className="ticket-choice-field">
                 <span>{t.educationalProgram}</span>
-                <select
+                <button
+                  className="ticket-choice-trigger"
                   disabled={educationalPrograms.length === 0}
-                  id="educational_program_id"
-                  name="educational_program_id"
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      educational_program_id: event.target.value ? Number(event.target.value) : null,
-                    }))
-                  }
-                  required
-                  value={form.educational_program_id ?? ''}
+                  type="button"
+                  onClick={() => setChoiceModal('programs')}
                 >
-                  <option value="">{t.selectEducationalProgram}</option>
-                  {educationalPrograms.map((program) => (
-                    <option key={program.id} value={program.id}>
-                      {getLocalizedName(program, lang)} ({program.code})
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <strong>
+                    {selectedEducationalProgram
+                      ? getLocalizedName(selectedEducationalProgram, lang)
+                      : t.selectEducationalProgram}
+                  </strong>
+                </button>
+              </div>
             ) : null}
 
             {error ? <div className="ticket-alert">{error}</div> : null}
@@ -471,7 +484,87 @@ export function PublicTicketPage() {
           </aside>
         </section>
       )}
+
+      {choiceModal === 'services' ? (
+        <TicketChoiceModal
+          emptyLabel={t.selectService}
+          getLabel={(service) => getLocalizedName(service, lang)}
+          items={services}
+          onClose={() => setChoiceModal(null)}
+          onSelect={selectService}
+          selectedId={form.service_id}
+          title={t.selectService}
+        />
+      ) : null}
+
+      {choiceModal === 'programs' ? (
+        <TicketChoiceModal
+          emptyLabel={t.selectEducationalProgram}
+          getLabel={(program) => getLocalizedName(program, lang)}
+          items={educationalPrograms}
+          onClose={() => setChoiceModal(null)}
+          onSelect={selectEducationalProgram}
+          selectedId={form.educational_program_id ?? null}
+          title={t.selectEducationalProgram}
+        />
+      ) : null}
     </main>
+  )
+}
+
+function TicketChoiceModal<TItem extends { id: number; code?: string }>({
+  emptyLabel,
+  getLabel,
+  items,
+  onClose,
+  onSelect,
+  selectedId,
+  title,
+}: {
+  emptyLabel: string
+  getLabel: (item: TItem) => string
+  items: TItem[]
+  onClose: () => void
+  onSelect: (item: TItem) => void
+  selectedId: number | null
+  title: string
+}) {
+  return (
+    <div className="ticket-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="ticket-choice-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="ticket-choice-modal-header">
+          <h2>{title}</h2>
+          <button className="ticket-choice-modal-close" type="button" aria-label="Close" onClick={onClose}>
+            x
+          </button>
+        </header>
+
+        <div className="ticket-choice-list modal-list" role="radiogroup" aria-label={title}>
+          {items.length === 0 ? <p className="ticket-choice-empty">{emptyLabel}</p> : null}
+          {items.map((item) => {
+            const selected = selectedId === item.id
+
+            return (
+              <button
+                className={selected ? 'ticket-choice selected' : 'ticket-choice'}
+                key={item.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onSelect(item)}
+              >
+                <strong>{getLabel(item)}</strong>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+    </div>
   )
 }
 

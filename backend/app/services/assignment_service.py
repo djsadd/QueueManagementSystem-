@@ -119,6 +119,7 @@ class AssignmentService:
                 Ticket.service_id.in_(profile.service_ids),
             )
             .order_by(Ticket.priority.desc(), Ticket.created_at.asc())
+            .with_for_update(skip_locked=True)
         )
         tickets = list(result.scalars().all())
         scored_tickets = [
