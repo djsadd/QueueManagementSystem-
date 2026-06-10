@@ -56,7 +56,11 @@ export function LoginPage() {
       })
 
       tokenStorage.setTokens(tokens.access_token, tokens.refresh_token)
-      window.location.reload()
+      const pathParts = window.location.pathname.split('/').filter(Boolean)
+      const shouldStayOnCurrentPath =
+        pathParts.includes('admin') || pathParts.includes('operator-display')
+
+      window.location.assign(shouldStayOnCurrentPath ? window.location.pathname : '/admin')
     } catch (caughtError) {
       if (caughtError instanceof ApiError && caughtError.status === 401) {
         setError('Неверная почта или пароль')

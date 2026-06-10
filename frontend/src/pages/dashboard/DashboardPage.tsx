@@ -2632,27 +2632,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   })
   const filteredMyWindowTickets = sortMyWindowTickets(myWindowTicketList.filter(isActiveMyWindowTicket))
   const filteredReceptionTickets = sortReceptionTickets(receptionTicketList.filter(isActiveMyWindowTicket))
-  const currentMyWindowTicket =
-    filteredMyWindowTickets.find(
-      (ticket) => ticket.status === 'CALLED' && ticket.window_id === myWindowTickets?.window_id,
-    ) ?? null
-  const nextMyWindowTicket =
-    filteredMyWindowTickets.find(
-      (ticket) => ticket.status === 'WAITING' && ticket.window_id === myWindowTickets?.window_id,
-    ) ?? null
-  const assignedWindowName = myWindowTickets?.window_name ?? (myWindowTickets ? `Окно #${myWindowTickets.window_id}` : 'Окно не назначено')
-  const assignedWindowStatus = myWindowTickets?.window_status
-    ? windowStatusLabels[myWindowTickets.window_status]
-    : 'Не определено'
-  const operatorStatusText = myWindowTickets?.operator_status
-    ? operatorStatusLabels[myWindowTickets.operator_status]
-    : currentOperator
-      ? operatorStatusLabels[currentOperator.status]
-      : 'Не определено'
   const dashboardClassName = [
     'dashboard-layout',
     sidebarCollapsed ? 'sidebar-collapsed' : '',
-    !isAdminUser ? 'operator-workspace' : '',
   ]
     .filter(Boolean)
     .join(' ')
@@ -2833,60 +2815,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
         {activeSection === 'myWindow' && (
           <section className="admin-panel tab-panel" key="myWindow">
-            {!isAdminUser && (
-              <div className="operator-console">
-                <section className="operator-console-hero" aria-label="Рабочее окно оператора">
-                  <div className="operator-console-kicker">
-                    <span className={`my-window-realtime ${myWindowRealtimeStatus}`}>
-                      <span aria-hidden="true" />
-                      {myWindowRealtimeStatus === 'connected'
-                        ? 'Онлайн'
-                        : myWindowRealtimeStatus === 'connecting'
-                          ? 'Подключение'
-                          : 'Офлайн'}
-                    </span>
-                    <strong>{assignedWindowStatus}</strong>
-                  </div>
-                  <div>
-                    <span className="operator-console-label">Мое окно</span>
-                    <h2>{assignedWindowName}</h2>
-                  </div>
-                  <div className="operator-console-state">
-                    <span>Статус оператора</span>
-                    <strong>{operatorStatusText}</strong>
-                  </div>
-                </section>
-
-                <section className="operator-ticket-board" aria-label="Текущий талон">
-                  <div>
-                    <span className="operator-console-label">Сейчас у окна</span>
-                    <strong>{currentMyWindowTicket?.ticket_number ?? 'Нет вызова'}</strong>
-                    <p>
-                      {currentMyWindowTicket
-                        ? currentMyWindowTicket.service_name ?? currentMyWindowTicket.service_id
-                        : 'Нажмите "Следующий", когда готовы принять клиента'}
-                    </p>
-                  </div>
-                  <div className="operator-ticket-next">
-                    <span>Следующий</span>
-                    <strong>{nextMyWindowTicket?.ticket_number ?? '-'}</strong>
-                    <small>{nextMyWindowTicket ? getTicketQueueWaitLabel(nextMyWindowTicket, currentTime) : 'Очередь пуста'}</small>
-                  </div>
-                </section>
-
-                <section className="operator-display-card" aria-label="Второй экран">
-                  <div>
-                    <span className="operator-console-label">Второй экран</span>
-                    <strong>Статус окна на мониторе клиента</strong>
-                    <p>Откроется отдельным окном, растянется на второй монитор и запустит полноэкранный режим.</p>
-                  </div>
-                  <button className="primary-action compact" type="button" onClick={() => void openSecondDisplay()}>
-                    <Icon name="display" />
-                    Открыть экран
-                  </button>
-                </section>
-              </div>
-            )}
             <div className="dashboard-toolbar">
               <button
                 className="primary-action compact"
