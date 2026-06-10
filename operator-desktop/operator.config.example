@@ -1,0 +1,10 @@
+ApiBaseUrl=http://localhost:8000
+DisplayUrl=http://localhost:5173/ru/admin/operator-display?fullscreen=1
+MonitorIndex=2
+DisplayMode=Kiosk
+DisplayScale=0.9
+DisplayAutoFit=true
+FullScreen=false
+RefreshSeconds=5
+Browser=Auto
+RememberEmail=true

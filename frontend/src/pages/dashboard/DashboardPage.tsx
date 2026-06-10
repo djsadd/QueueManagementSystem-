@@ -295,7 +295,7 @@ function getAnalyticsOperatorIdFromPath() {
 }
 
 function canUseOperatorSection(section: DashboardSection) {
-  return section === 'myWindow' || section === 'profile' || section === 'analytics'
+  return section === 'myWindow' || section === 'profile'
 }
 
 function buildSectionPath(lang: Lang, section: DashboardSection, analyticsOperatorId: string | null = null) {
@@ -303,6 +303,63 @@ function buildSectionPath(lang: Lang, section: DashboardSection, analyticsOperat
     section === 'analytics' && analyticsOperatorId ? `/${encodeURIComponent(analyticsOperatorId)}` : ''
 
   return `/${lang}/admin/${sectionPaths[section]}${analyticsOperatorPath}${window.location.search}${window.location.hash}`
+}
+
+function buildOperatorDisplayPath(lang: Lang) {
+  return `/${lang}/admin/operator-display?fullscreen=1`
+}
+
+type BrowserScreen = {
+  availHeight?: number
+  availLeft?: number
+  availTop?: number
+  availWidth?: number
+  height: number
+  isPrimary?: boolean
+  left: number
+  top: number
+  width: number
+}
+
+type BrowserScreenDetails = {
+  screens: BrowserScreen[]
+}
+
+async function openOperatorDisplayOnSecondScreen(url: string) {
+  const popup = window.open(
+    'about:blank',
+    'operator-second-display',
+    'popup=yes,fullscreen=yes,width=1280,height=720',
+  )
+
+  if (!popup) {
+    return 'Браузер заблокировал открытие окна. Разрешите всплывающие окна для этого сайта.'
+  }
+
+  try {
+    const screenApi = window as Window & {
+      getScreenDetails?: () => Promise<BrowserScreenDetails>
+    }
+    const screenDetails = screenApi.getScreenDetails ? await screenApi.getScreenDetails() : null
+    const secondScreen =
+      screenDetails?.screens.find((screen) => !screen.isPrimary) ?? screenDetails?.screens[1] ?? null
+
+    if (secondScreen) {
+      const left = secondScreen.availLeft ?? secondScreen.left
+      const top = secondScreen.availTop ?? secondScreen.top
+      const width = secondScreen.availWidth ?? secondScreen.width
+      const height = secondScreen.availHeight ?? secondScreen.height
+
+      popup.moveTo(left, top)
+      popup.resizeTo(width, height)
+    }
+  } catch {
+    // The display still opens even when the browser denies multi-screen placement.
+  }
+
+  popup.location.replace(url)
+  popup.focus()
+  return null
 }
 
 function Icon({ name }: { name: string }) {
@@ -321,6 +378,8 @@ function Icon({ name }: { name: string }) {
       {name === 'display' && <path d="M4 5h16v11H4zM8 20h8M12 16v4M8 9h3M13 9h3M8 12h8" />}
       {name === 'plus' && <path d="M12 5v14M5 12h14" />}
       {name === 'refresh' && <path d="M20 12a8 8 0 0 1-13.7 5.7M4 12A8 8 0 0 1 17.7 6.3M18 3v4h-4M6 21v-4h4" />}
+      {name === 'sidebar-collapse' && <path d="M4 5h16v14H4zM9 5v14M15 9l-3 3 3 3" />}
+      {name === 'sidebar-expand' && <path d="M4 5h16v14H4zM9 5v14M12 9l3 3-3 3" />}
     </svg>
   )
 }
@@ -702,7 +761,46 @@ function isActiveMyWindowTicket(ticket: TicketItem) {
   return ACTIVE_MY_WINDOW_TICKET_STATUSES.has(ticket.status)
 }
 
+function getMyWindowTicketStatusOrder(status: string) {
+  if (status === 'CALLED') {
+    return 0
+  }
+
+  if (status === 'WAITING') {
+    return 1
+  }
+
+  return 2
+}
+
+function getTicketCreatedAtTime(ticket: TicketItem) {
+  const createdAtTime = Date.parse(ticket.created_at)
+  return Number.isNaN(createdAtTime) ? 0 : createdAtTime
+}
+
 function sortMyWindowTickets(tickets: TicketItem[]) {
+  return [...tickets].sort((firstTicket, secondTicket) => {
+    const statusOrder = getMyWindowTicketStatusOrder(firstTicket.status) - getMyWindowTicketStatusOrder(secondTicket.status)
+
+    if (statusOrder !== 0) {
+      return statusOrder
+    }
+
+    const createdAtOrder = getTicketCreatedAtTime(firstTicket) - getTicketCreatedAtTime(secondTicket)
+
+    if (createdAtOrder !== 0) {
+      return createdAtOrder
+    }
+
+    if (firstTicket.queue_number !== secondTicket.queue_number) {
+      return firstTicket.queue_number - secondTicket.queue_number
+    }
+
+    return firstTicket.ticket_number.localeCompare(secondTicket.ticket_number)
+  })
+}
+
+function sortReceptionTickets(tickets: TicketItem[]) {
   return [...tickets].sort((firstTicket, secondTicket) => {
     if (firstTicket.status === secondTicket.status) {
       return 0
@@ -1017,6 +1115,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [formModal, setFormModal] = useState<CrudSection | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [services, setServices] = useState<ServiceItem[]>([])
   const [windows, setWindows] = useState<WindowItem[]>([])
   const [users, setUsers] = useState<UserItem[]>([])
@@ -1161,6 +1260,15 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
+  async function openSecondDisplay() {
+    setError('')
+    const launchError = await openOperatorDisplayOnSecondScreen(buildOperatorDisplayPath(lang))
+
+    if (launchError) {
+      setError(launchError)
+    }
+  }
+
   function highlightMyWindowChanges(nextRows: MyWindowTickets) {
     const previousRows = myWindowTicketsRef.current
     if (!previousRows) {
@@ -1202,14 +1310,19 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   }
 
   function applyMyWindowData(nextRows: MyWindowTickets, animate = false) {
-    if (animate) {
-      highlightMyWindowChanges(nextRows)
+    const orderedRows = {
+      ...nextRows,
+      tickets: sortMyWindowTickets(nextRows.tickets),
     }
 
-    myWindowTicketsRef.current = nextRows
-    setMyWindowTickets(nextRows)
+    if (animate) {
+      highlightMyWindowChanges(orderedRows)
+    }
+
+    myWindowTicketsRef.current = orderedRows
+    setMyWindowTickets(orderedRows)
     setSelectedMyWindowTicket((current) =>
-      current ? nextRows.tickets.find((ticket) => ticket.id === current.id) ?? current : current,
+      current ? orderedRows.tickets.find((ticket) => ticket.id === current.id) ?? current : current,
     )
   }
 
@@ -2512,7 +2625,31 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     )
   })
   const filteredMyWindowTickets = sortMyWindowTickets(myWindowTicketList.filter(isActiveMyWindowTicket))
-  const filteredReceptionTickets = sortMyWindowTickets(receptionTicketList.filter(isActiveMyWindowTicket))
+  const filteredReceptionTickets = sortReceptionTickets(receptionTicketList.filter(isActiveMyWindowTicket))
+  const currentMyWindowTicket =
+    filteredMyWindowTickets.find(
+      (ticket) => ticket.status === 'CALLED' && ticket.window_id === myWindowTickets?.window_id,
+    ) ?? null
+  const nextMyWindowTicket =
+    filteredMyWindowTickets.find(
+      (ticket) => ticket.status === 'WAITING' && ticket.window_id === myWindowTickets?.window_id,
+    ) ?? null
+  const assignedWindowName = myWindowTickets?.window_name ?? (myWindowTickets ? `Окно #${myWindowTickets.window_id}` : 'Окно не назначено')
+  const assignedWindowStatus = myWindowTickets?.window_status
+    ? windowStatusLabels[myWindowTickets.window_status]
+    : 'Не определено'
+  const operatorStatusText = myWindowTickets?.operator_status
+    ? operatorStatusLabels[myWindowTickets.operator_status]
+    : currentOperator
+      ? operatorStatusLabels[currentOperator.status]
+      : 'Не определено'
+  const dashboardClassName = [
+    'dashboard-layout',
+    sidebarCollapsed ? 'sidebar-collapsed' : '',
+    !isAdminUser ? 'operator-workspace' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
   const navSections: DashboardSection[] = isAdminUser
     ? [
         'myWindow',
@@ -2528,13 +2665,26 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         'applicants',
         'ticketEvents',
       ]
-    : ['myWindow', 'profile', 'analytics']
+    : ['myWindow', 'profile']
 
   return (
-    <div className="dashboard-layout">
+    <div className={dashboardClassName}>
       <aside className="dashboard-sidebar">
         <div className="dashboard-brand">
           <img className="dashboard-brand-logo" src={logoUrl} alt="Turan Astana University" />
+          <button
+            className="sidebar-toggle"
+            type="button"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-pressed={sidebarCollapsed}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => {
+              setSidebarCollapsed((isCollapsed) => !isCollapsed)
+              setProfileMenuOpen(false)
+            }}
+          >
+            <Icon name={sidebarCollapsed ? 'sidebar-expand' : 'sidebar-collapse'} />
+          </button>
         </div>
 
         <nav className="dashboard-nav" aria-label="Admin navigation">
@@ -2576,6 +2726,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               <span>{sectionLabels[section]}</span>
             </a>
           ))}
+          <button className="nav-item nav-item-display" type="button" onClick={() => void openSecondDisplay()}>
+            <Icon name="display" />
+            <span>Второй дисплей</span>
+          </button>
           {isAdminUser && (
             <a className="nav-item" href={`/${lang}/queue-display`} target="_blank" rel="noreferrer">
               <Icon name="display" />
@@ -2673,6 +2827,60 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
         {activeSection === 'myWindow' && (
           <section className="admin-panel tab-panel" key="myWindow">
+            {!isAdminUser && (
+              <div className="operator-console">
+                <section className="operator-console-hero" aria-label="Рабочее окно оператора">
+                  <div className="operator-console-kicker">
+                    <span className={`my-window-realtime ${myWindowRealtimeStatus}`}>
+                      <span aria-hidden="true" />
+                      {myWindowRealtimeStatus === 'connected'
+                        ? 'Онлайн'
+                        : myWindowRealtimeStatus === 'connecting'
+                          ? 'Подключение'
+                          : 'Офлайн'}
+                    </span>
+                    <strong>{assignedWindowStatus}</strong>
+                  </div>
+                  <div>
+                    <span className="operator-console-label">Мое окно</span>
+                    <h2>{assignedWindowName}</h2>
+                  </div>
+                  <div className="operator-console-state">
+                    <span>Статус оператора</span>
+                    <strong>{operatorStatusText}</strong>
+                  </div>
+                </section>
+
+                <section className="operator-ticket-board" aria-label="Текущий талон">
+                  <div>
+                    <span className="operator-console-label">Сейчас у окна</span>
+                    <strong>{currentMyWindowTicket?.ticket_number ?? 'Нет вызова'}</strong>
+                    <p>
+                      {currentMyWindowTicket
+                        ? currentMyWindowTicket.service_name ?? currentMyWindowTicket.service_id
+                        : 'Нажмите "Следующий", когда готовы принять клиента'}
+                    </p>
+                  </div>
+                  <div className="operator-ticket-next">
+                    <span>Следующий</span>
+                    <strong>{nextMyWindowTicket?.ticket_number ?? '-'}</strong>
+                    <small>{nextMyWindowTicket ? getTicketQueueWaitLabel(nextMyWindowTicket, currentTime) : 'Очередь пуста'}</small>
+                  </div>
+                </section>
+
+                <section className="operator-display-card" aria-label="Второй экран">
+                  <div>
+                    <span className="operator-console-label">Второй экран</span>
+                    <strong>Статус окна на мониторе клиента</strong>
+                    <p>Откроется отдельным окном, растянется на второй монитор и запустит полноэкранный режим.</p>
+                  </div>
+                  <button className="primary-action compact" type="button" onClick={() => void openSecondDisplay()}>
+                    <Icon name="display" />
+                    Открыть экран
+                  </button>
+                </section>
+              </div>
+            )}
             <div className="dashboard-toolbar">
               <button
                 className="primary-action compact"
@@ -2687,14 +2895,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 onClick={() => void callNextMyWindowTicket()}
               >
                 Следующий
-              </button>
-              <button
-                className="secondary-action compact"
-                type="button"
-                onClick={() => void loadMyWindowData({ animate: Boolean(myWindowTickets), silent: Boolean(myWindowTickets) })}
-              >
-                <Icon name="refresh" />
-                Обновить
               </button>
               {myWindowTickets && (
                 <span className={`my-window-realtime ${myWindowRealtimeStatus}`}>
@@ -2804,26 +3004,23 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               ])}
             />
             <div className="queue-panel my-window-pagination" aria-label="Пагинация талонов">
-              <span>
-                Страница {myWindowCurrentPage} из {myWindowTotalPages}
-              </span>
-              <div>
-                <button
-                  className="secondary-action compact"
-                  type="button"
-                  disabled={myWindowRefreshing || myWindowCurrentPage <= 1}
-                  onClick={() => setMyWindowPage((page) => Math.max(1, page - 1))}
-                >
-                  Назад
-                </button>
-                <button
-                  className="secondary-action compact"
-                  type="button"
-                  disabled={myWindowRefreshing || myWindowCurrentPage >= myWindowTotalPages}
-                  onClick={() => setMyWindowPage((page) => Math.min(myWindowTotalPages, page + 1))}
-                >
-                  Вперед
-                </button>
+              <div className="pagination-pages">
+                {Array.from({ length: myWindowTotalPages }, (_, pageIndex) => pageIndex + 1).map((pageNumber) => (
+                  <button
+                    className={
+                      pageNumber === myWindowCurrentPage
+                        ? 'secondary-action compact pagination-page selected'
+                        : 'secondary-action compact pagination-page'
+                    }
+                    type="button"
+                    disabled={myWindowRefreshing}
+                    key={pageNumber}
+                    aria-current={pageNumber === myWindowCurrentPage ? 'page' : undefined}
+                    onClick={() => setMyWindowPage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </button>
+                ))}
               </div>
             </div>
           </section>
@@ -2936,6 +3133,19 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
         {activeSection === 'profile' && (
           <section className="admin-panel tab-panel profile-section" key="profile">
+            {!isAdminUser && (
+              <div className="operator-profile-intro">
+                <div>
+                  <span className="operator-console-label">Профиль оператора</span>
+                  <h2>Выбор услуг и ОП</h2>
+                  <p>Отметьте услуги и образовательные программы, которые это окно может принимать.</p>
+                </div>
+                <button className="secondary-action compact" type="button" onClick={() => navigateToSection('myWindow')}>
+                  <Icon name="monitor" />
+                  Вернуться к окну
+                </button>
+              </div>
+            )}
             <div className="profile-summary queue-panel">
               <div>
                 <span className="profile-label">Пользователь</span>

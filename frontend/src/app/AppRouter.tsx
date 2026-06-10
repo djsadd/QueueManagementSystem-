@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { LoginPage } from '../pages/auth/LoginPage'
 import { DashboardPage } from '../pages/dashboard/DashboardPage'
+import { OperatorSecondDisplayPage } from '../pages/operator-second-display/OperatorSecondDisplayPage'
 import { PublicTicketPage } from '../pages/public-ticket/PublicTicketPage'
 import { QueueDisplayPage } from '../pages/queue-display/QueueDisplayPage'
 import { authApi } from '../features/auth/api/authApi'
@@ -10,14 +11,16 @@ import { tokenStorage } from '../shared/lib/tokenStorage'
 export function AppRouter() {
   const pathParts = window.location.pathname.split('/').filter(Boolean)
   const isAdminPath = pathParts.includes('admin')
+  const isOperatorDisplayPath = pathParts.includes('operator-display')
   const isQueueDisplayPath = pathParts.includes('queue-display')
+  const requiresStaffAuth = isAdminPath || isOperatorDisplayPath
   const [isCheckingAdmin, setIsCheckingAdmin] = useState(
-    () => isAdminPath && tokenStorage.hasTokens(),
+    () => requiresStaffAuth && tokenStorage.hasTokens(),
   )
   const [staffUser, setStaffUser] = useState<AuthUser | null>(null)
 
   useEffect(() => {
-    if (!isAdminPath) {
+    if (!requiresStaffAuth) {
       setIsCheckingAdmin(false)
       setStaffUser(null)
       return
@@ -62,13 +65,13 @@ export function AppRouter() {
     return () => {
       isMounted = false
     }
-  }, [isAdminPath])
+  }, [requiresStaffAuth])
 
   if (isQueueDisplayPath) {
     return <QueueDisplayPage />
   }
 
-  if (!isAdminPath) {
+  if (!requiresStaffAuth) {
     return <PublicTicketPage />
   }
 
@@ -77,6 +80,10 @@ export function AppRouter() {
   }
 
   if (staffUser) {
+    if (isOperatorDisplayPath) {
+      return <OperatorSecondDisplayPage authUser={staffUser} />
+    }
+
     return <DashboardPage authUser={staffUser} />
   }
 

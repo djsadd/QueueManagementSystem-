@@ -1,0 +1,7 @@
+node_modules/
+bin/
+dist/
+dist-electron/
+bin-electron/
+*.tsbuildinfo
+electron-start.*.log

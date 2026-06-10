@@ -1,0 +1,16 @@
+# React frontend URL for the operator's second display.
+# Use the server IP address on operator computers.
+Url=http://localhost:5173/ru/admin/operator-display?fullscreen=1
+
+# Auto, Edge, or Chrome.
+Browser=Auto
+
+# 2 means the first non-primary monitor. Use 1 to force the primary monitor.
+MonitorIndex=2
+
+# Kiosk removes browser UI. Fullscreen keeps normal browser behavior but starts full screen.
+Mode=Kiosk
+
+# Dedicated profile keeps the operator display login separate and persistent.
+# Leave empty to use %LOCALAPPDATA%\QueueOperatorDisplay\BrowserProfile.
+ProfilePath=

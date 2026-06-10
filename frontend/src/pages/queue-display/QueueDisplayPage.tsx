@@ -4,8 +4,8 @@ import {
   type PublicTicketItem,
   type QueueDisplayPayload,
 } from '../../features/public/api/publicApi'
-import notificationSoundUrl from '../../assets/message-notification-sound-imassage-on-iphone.mp3'
 import { env } from '../../shared/config/env'
+import { useTicketCallSound } from '../../shared/hooks/useTicketCallSound'
 import './queue-display-page.css'
 
 type Lang = 'kk' | 'ru' | 'en'
@@ -59,6 +59,21 @@ const translations = {
   },
 } satisfies Record<Lang, Record<string, string>>
 
+const soundControlLabels: Record<Lang, { blocked: string; enable: string }> = {
+  kk: {
+    blocked: '\u0414\u044b\u0431\u044b\u0441\u0442\u044b \u049b\u043e\u0441\u0443',
+    enable: '\u0414\u044b\u0431\u044b\u0441\u0442\u044b \u049b\u043e\u0441\u0443',
+  },
+  ru: {
+    blocked: '\u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0437\u0432\u0443\u043a',
+    enable: '\u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0437\u0432\u0443\u043a',
+  },
+  en: {
+    blocked: 'Enable sound',
+    enable: 'Enable sound',
+  },
+}
+
 function getInitialLang(): Lang {
   const pathLang = window.location.pathname.split('/').filter(Boolean)[0]
   return pathLang === 'kk' || pathLang === 'ru' || pathLang === 'en' ? pathLang : 'ru'
@@ -87,18 +102,6 @@ function getServingCallKey(ticket: PublicTicketItem) {
 
 function hasAssignedDesk(ticket: PublicTicketItem) {
   return ticket.window_id !== null || Boolean(ticket.window_name)
-}
-
-async function playTicketCallSound() {
-  const audio = new Audio(notificationSoundUrl)
-  audio.preload = 'auto'
-  audio.currentTime = 0
-
-  try {
-    await audio.play()
-  } catch {
-    // Browser autoplay policy can block sound until the display page receives a user gesture.
-  }
 }
 
 function useAnimatedTickets(tickets: PublicTicketItem[]) {
@@ -167,7 +170,9 @@ export function QueueDisplayPage() {
   const [now, setNow] = useState(new Date())
   const observedDisplayRef = useRef(false)
   const servingCallKeysRef = useRef<Set<string>>(new Set())
+  const { enableSound, isSoundBlocked, isSoundReady, playSound } = useTicketCallSound()
   const t = translations[lang]
+  const soundControlLabel = soundControlLabels[lang]
 
   const loadDisplay = useCallback(async () => {
     try {
@@ -178,7 +183,7 @@ export function QueueDisplayPage() {
       )
 
       if (observedDisplayRef.current && hasNewCall) {
-        void playTicketCallSound()
+        void playSound()
       }
 
       servingCallKeysRef.current = nextCallKeys
@@ -187,7 +192,7 @@ export function QueueDisplayPage() {
     } catch {
       setData({ serving: [], next: [] })
     }
-  }, [])
+  }, [playSound])
 
   useEffect(() => {
     const localizedPath = buildDisplayPath(lang)
@@ -278,6 +283,16 @@ export function QueueDisplayPage() {
 
   return (
     <main className="queue-display-shell">
+      {!isSoundReady && (
+        <button
+          className={`queue-display-sound-control${isSoundBlocked ? ' blocked' : ''}`}
+          type="button"
+          onClick={() => void enableSound()}
+        >
+          {isSoundBlocked ? soundControlLabel.blocked : soundControlLabel.enable}
+        </button>
+      )}
+
       <section className="queue-display-hero">
         <div className="queue-display-time">
           <span>{t.currentTime}</span>

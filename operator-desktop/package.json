@@ -1,0 +1,56 @@
+{
+  "name": "queue-operator-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Electron operator workstation for the queue management system",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5174 && node electron/launch.cjs .\"",
+    "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
+    "start": "node electron/launch.cjs .",
+    "package": "npm run build && electron-builder --win portable"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "kz.queue.operator",
+    "productName": "Queue Operator CRM",
+    "directories": {
+      "output": "bin-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "operator.config.example"
+    ],
+    "extraResources": [
+      {
+        "from": "operator.config.example",
+        "to": "operator.config"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
+  }
+}

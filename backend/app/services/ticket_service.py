@@ -255,8 +255,13 @@ class TicketService:
             .outerjoin(EducationalProgram, EducationalProgram.id == Ticket.educational_program_id)
             .where(*conditions)
             .order_by(
-                case((Ticket.status == TicketStatus.WAITING.value, 0), else_=1),
-                Ticket.created_at.desc(),
+                case(
+                    (Ticket.status == TicketStatus.CALLED.value, 0),
+                    (Ticket.status == TicketStatus.WAITING.value, 1),
+                    else_=2,
+                ),
+                Ticket.created_at.asc(),
+                Ticket.queue_number.asc(),
             )
             .offset(offset)
             .limit(page_size)
