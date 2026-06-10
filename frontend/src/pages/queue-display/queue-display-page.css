@@ -138,8 +138,13 @@
   overflow-wrap: anywhere;
 }
 
-.display-ticket-table td:last-child strong {
+.display-serving-table td:nth-child(n + 2) strong {
   color: #061226;
+}
+
+.display-serving-table th,
+.display-serving-table td {
+  width: 33.333%;
 }
 
 .display-next-wrap {

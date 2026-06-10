@@ -10,6 +10,3 @@ FullScreen=true
 # Thermal receipt paper width and additional feed after the final printed line.
 ReceiptWidthMm=80
 ReceiptBottomFeedMm=5
-
-# PNG image displayed on the right side for online booking.
-OnlineQrImage=online-qr.png

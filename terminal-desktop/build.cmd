@@ -16,6 +16,5 @@ if errorlevel 1 exit /b 1
 
 if not exist "%~dp0bin\terminal.config" copy /Y "%~dp0terminal.config.example" "%~dp0bin\terminal.config" >nul
 copy /Y "%~dp0..\frontend\src\assets\Logo+RGB.png" "%~dp0bin\logo.png" >nul
-if exist "%~dp0..\QRCode.png" copy /Y "%~dp0..\QRCode.png" "%~dp0bin\online-qr.png" >nul
 
 echo Built: %~dp0bin\QueueTerminal.exe

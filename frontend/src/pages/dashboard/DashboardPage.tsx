@@ -99,7 +99,7 @@ const emptyService: ServicePayload = {
   requires_educational_program: false,
   requires_reception_desk: false,
 }
-const emptyWindow: WindowPayload = { name: '', status: 'OPEN', current_operator_id: null }
+const emptyWindow: WindowPayload = { name: '', floor: '', status: 'OPEN', current_operator_id: null }
 const emptyUser: UserPayload = {
   email: '',
   password: '',
@@ -837,7 +837,9 @@ function getWindowLabel(windows: WindowItem[], windowId: number | null) {
   }
 
   const windowItem = windows.find((item) => item.id === windowId)
-  return windowItem ? `${windowItem.name} (${windowItem.status})` : String(windowId)
+  return windowItem
+    ? `${windowItem.name}${windowItem.floor ? `, этаж ${windowItem.floor}` : ''} (${windowItem.status})`
+    : String(windowId)
 }
 
 function getOperatorLabel(operators: OperatorItem[], users: UserItem[], operatorId: string | null) {
@@ -1744,7 +1746,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
     try {
       let savedWindowId = editingWindowId
-      const payload = { ...windowForm, current_operator_id: null }
+      const payload = {
+        ...windowForm,
+        floor: windowForm.floor?.trim() || null,
+        current_operator_id: null,
+      }
 
       if (editingWindowId === null) {
         const createdWindow = await adminApi.windows.create(payload)
@@ -3321,11 +3327,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         {activeSection === 'windows' && (
           <section className="admin-panel tab-panel" key="windows">
             <CrudTable
-              columns={['ID', 'Название', 'Статус', 'Оператор', 'Действия']}
+              columns={['ID', 'Название', 'Этаж', 'Статус', 'Оператор', 'Действия']}
               loading={loading}
               rows={windows.map((windowItem) => [
                 windowItem.id,
                 windowItem.name,
+                windowItem.floor ?? 'Не указан',
                 windowItem.status,
                 getOperatorLabel(
                   operators,
@@ -3339,6 +3346,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                     setEditingWindowId(windowItem.id)
                     setWindowForm({
                       name: windowItem.name,
+                      floor: windowItem.floor ?? '',
                       status: windowItem.status,
                       current_operator_id: windowItem.current_operator_id,
                     })
@@ -4023,6 +4031,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 placeholder="Название окна"
                 value={windowForm.name}
                 onChange={(event) => setWindowForm({ ...windowForm, name: event.target.value })}
+              />
+              <input
+                placeholder="Этаж"
+                value={windowForm.floor ?? ''}
+                onChange={(event) => setWindowForm({ ...windowForm, floor: event.target.value })}
               />
               <select
                 value={windowForm.status}

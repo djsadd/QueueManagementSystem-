@@ -51,10 +51,10 @@ start.cmd
 ```
 
 The application loads active services, registers a ticket through
-`POST /public/tickets`, and immediately submits an 80 mm receipt to the
-printer. If printing fails after registration, the issued number remains on
-screen and can be printed again with `Повторить печать`; it does not create a
-second ticket.
+`POST /public/tickets` with the desktop terminal header, and immediately
+submits an 80 mm receipt to the printer. The issued number remains on screen
+for 10 seconds and can be printed again with `Повторить печать` during that
+time; it does not create a second ticket.
 
 The desktop header includes the university logo, current local time, and a
 `Қазақша` / `Русский` / `English` interface switch.

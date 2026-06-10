@@ -32,7 +32,6 @@ namespace QueueTerminal
         public bool FullScreen = true;
         public int ReceiptWidthMm = 80;
         public int ReceiptBottomFeedMm = 5;
-        public string OnlineQrImage = "online-qr.png";
 
         public static TerminalConfig Load()
         {
@@ -82,10 +81,6 @@ namespace QueueTerminal
                 else if (key.Equals("ReceiptBottomFeedMm", StringComparison.OrdinalIgnoreCase) && Int32.TryParse(value, out number))
                 {
                     config.ReceiptBottomFeedMm = Math.Max(0, number);
-                }
-                else if (key.Equals("OnlineQrImage", StringComparison.OrdinalIgnoreCase))
-                {
-                    config.OnlineQrImage = value;
                 }
             }
 
@@ -177,6 +172,7 @@ namespace QueueTerminal
             request.Method = method;
             request.Accept = "application/json";
             request.ContentType = "application/json; charset=utf-8";
+            request.Headers["X-Queue-Client"] = "desktop-terminal";
             request.Timeout = 15000;
             request.ReadWriteTimeout = 15000;
 
@@ -245,9 +241,8 @@ namespace QueueTerminal
         private readonly Label resultLabel = new Label();
         private readonly Label ticketNumber = new Label();
         private readonly Label ticketDetails = new Label();
-        private readonly Label onlineAppointmentLabel = new Label();
-        private readonly PictureBox onlineQrCode = new PictureBox();
         private readonly System.Windows.Forms.Timer clockTimer = new System.Windows.Forms.Timer();
+        private readonly System.Windows.Forms.Timer ticketDisplayTimer = new System.Windows.Forms.Timer();
         private TableLayoutPanel ticketFormLayout;
         private List<ServiceItem> serviceCatalog = new List<ServiceItem>();
         private List<ProgramItem> programCatalog = new List<ProgramItem>();
@@ -267,6 +262,8 @@ namespace QueueTerminal
             clockTimer.Interval = 1000;
             clockTimer.Tick += delegate { UpdateClock(); };
             clockTimer.Start();
+            ticketDisplayTimer.Interval = 10000;
+            ticketDisplayTimer.Tick += delegate { ClearDisplayedTicket(); };
             UpdateClock();
             Shown += delegate { LoadCatalogs(); };
         }
@@ -427,27 +424,6 @@ namespace QueueTerminal
             ticketDetails.TextAlign = ContentAlignment.TopCenter;
             result.Controls.Add(ticketDetails, 0, 2);
 
-            TableLayoutPanel onlineAppointment = new TableLayoutPanel();
-            onlineAppointment.Dock = DockStyle.Fill;
-            onlineAppointment.ColumnCount = 1;
-            onlineAppointment.RowCount = 2;
-            onlineAppointment.RowStyles.Add(new RowStyle(SizeType.Absolute, 60F));
-            onlineAppointment.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            onlineAppointment.Margin = new Padding(0, 6, 0, 12);
-            result.Controls.Add(onlineAppointment, 0, 3);
-
-            onlineAppointmentLabel.Dock = DockStyle.Fill;
-            onlineAppointmentLabel.TextAlign = ContentAlignment.MiddleCenter;
-            onlineAppointmentLabel.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
-            onlineAppointmentLabel.ForeColor = Color.FromArgb(93, 15, 37);
-            onlineAppointment.Controls.Add(onlineAppointmentLabel, 0, 0);
-
-            onlineQrCode.Dock = DockStyle.Fill;
-            onlineQrCode.SizeMode = PictureBoxSizeMode.Zoom;
-            onlineQrCode.Margin = new Padding(16, 0, 16, 0);
-            LoadOnlineQrCode();
-            onlineAppointment.Controls.Add(onlineQrCode, 0, 1);
-
             reprintButton.Dock = DockStyle.Fill;
             reprintButton.Enabled = false;
             reprintButton.Click += delegate { PrintLastTicket(); };
@@ -469,20 +445,6 @@ namespace QueueTerminal
             using (Image source = Image.FromFile(logoPath))
             {
                 logo.Image = new Bitmap(source);
-            }
-        }
-
-        private void LoadOnlineQrCode()
-        {
-            string path = GetOnlineQrPath();
-            if (!File.Exists(path))
-            {
-                return;
-            }
-
-            using (Image source = Image.FromFile(path))
-            {
-                onlineQrCode.Image = new Bitmap(source);
             }
         }
 
@@ -590,7 +552,6 @@ namespace QueueTerminal
             resultLabel.Text = T("СІЗДІҢ ТАЛОНЫҢЫЗ", "ВАШ ТАЛОН", "YOUR TICKET");
             reprintButton.Text = T("Қайта басып шығару", "Повторить печать", "Print again");
             reloadButton.Text = T("Қызметтерді жаңарту", "Обновить список услуг", "Reload services");
-            onlineAppointmentLabel.Text = BuildOnlineAppointmentMessage();
             kazakhButton.Text = "Қазақша";
             russianButton.Text = "Русский";
             englishButton.Text = "English";
@@ -879,6 +840,8 @@ namespace QueueTerminal
                         ticketNumber.Text = ticket.ticket_number;
                         ticketDetails.Text = BuildTicketDetails(ticket);
                         reprintButton.Enabled = true;
+                        ticketDisplayTimer.Stop();
+                        ticketDisplayTimer.Start();
                         SetBusy(false, T("Талон тіркелді. Басып шығару...", "Талон зарегистрирован. Печать...", "Ticket registered. Printing..."));
                         PrintLastTicket();
                     });
@@ -930,6 +893,16 @@ namespace QueueTerminal
                     "Талон создан, но печать не выполнена: ",
                     "Ticket created, but printing failed: ") + exception.Message;
             }
+        }
+
+        private void ClearDisplayedTicket()
+        {
+            ticketDisplayTimer.Stop();
+            lastTicket = null;
+            ticketNumber.Text = "---";
+            reprintButton.Enabled = false;
+            statusLabel.Text = "";
+            ApplyLanguage();
         }
 
         private int GetReceiptHeight()
@@ -1224,29 +1197,6 @@ namespace QueueTerminal
             graphics.DrawArc(pen, centerX + 9F, y - 11F, 22F, 22F, 0F, 250F);
             graphics.DrawBezier(pen, new PointF(centerX - 9F, y), new PointF(centerX - 18F, y - 13F), new PointF(centerX - 27F, y + 13F), new PointF(centerX - 38F, y));
             graphics.DrawBezier(pen, new PointF(centerX + 9F, y), new PointF(centerX + 18F, y - 13F), new PointF(centerX + 27F, y + 13F), new PointF(centerX + 38F, y));
-        }
-
-        private string BuildOnlineAppointmentMessage()
-        {
-            return T(
-                "QR-кодты сканерлеп,\r\nонлайн жазыла аласыз",
-                "Можете записаться онлайн,\r\nотсканировав QR-код",
-                "Book online by scanning\r\nthe QR code");
-        }
-
-        private string GetOnlineQrPath()
-        {
-            if (String.IsNullOrWhiteSpace(config.OnlineQrImage))
-            {
-                return "";
-            }
-
-            if (Path.IsPathRooted(config.OnlineQrImage))
-            {
-                return config.OnlineQrImage;
-            }
-
-            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, config.OnlineQrImage);
         }
 
         private void DrawCenteredWrapped(Graphics graphics, string valueText, Font font, RectangleF bounds, ref float y)

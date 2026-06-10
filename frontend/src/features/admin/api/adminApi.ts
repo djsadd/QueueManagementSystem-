@@ -19,6 +19,7 @@ export type WindowStatus = 'OPEN' | 'BUSY' | 'CLOSED'
 export type WindowItem = {
   id: number
   name: string
+  floor: string | null
   status: WindowStatus
   current_operator_id: number | null
 }
@@ -219,6 +220,7 @@ export type TicketItem = {
   operator_email: string | null
   window_id: number | null
   window_name: string | null
+  window_floor: string | null
   ticket_number: string
   queue_number: number
   priority: number
@@ -235,6 +237,7 @@ export type MyWindowTickets = {
   operator_status: OperatorStatus
   window_id: number
   window_name: string | null
+  window_floor: string | null
   window_status: WindowStatus | null
   global_waiting_count: number
   page: number

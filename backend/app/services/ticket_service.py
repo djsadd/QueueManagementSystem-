@@ -276,6 +276,7 @@ class TicketService:
             "operator_status": operator.status,
             "window_id": operator.window_id,
             "window_name": window.name if window else None,
+            "window_floor": window.floor if window else None,
             "window_status": window.status if window else None,
             "global_waiting_count": global_waiting_count_result.scalar() or 0,
             "page": current_page,
@@ -1514,6 +1515,7 @@ class TicketService:
             "status": operator.status,
             "window_id": operator.window_id,
             "window_name": window.name if window else None,
+            "window_floor": window.floor if window else None,
             "window_status": window.status if window else None,
             "full_name": user.full_name if user else None,
             "email": user.email if user else None,
@@ -1531,6 +1533,7 @@ class TicketService:
         return {
             "id": window.id,
             "name": window.name,
+            "floor": window.floor,
             "status": window.status,
             "current_operator_id": window.current_operator_id,
         }
@@ -1643,6 +1646,7 @@ class TicketService:
             "operator_email": assigned_operator_user.email if assigned_operator_user else None,
             "window_id": ticket.window_id,
             "window_name": window.name if window else None,
+            "window_floor": window.floor if window else None,
             "ticket_number": ticket.ticket_number,
             "queue_number": ticket.queue_number,
             "priority": ticket.priority,

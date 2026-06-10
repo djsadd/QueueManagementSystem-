@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { LoginPage } from '../pages/auth/LoginPage'
 import { DashboardPage } from '../pages/dashboard/DashboardPage'
 import { OperatorSecondDisplayPage } from '../pages/operator-second-display/OperatorSecondDisplayPage'
-import { PublicTicketPage } from '../pages/public-ticket/PublicTicketPage'
 import { QueueDisplayPage } from '../pages/queue-display/QueueDisplayPage'
 import { authApi } from '../features/auth/api/authApi'
 import type { AuthUser } from '../features/auth/model/types'
@@ -72,7 +71,7 @@ export function AppRouter() {
   }
 
   if (!requiresStaffAuth) {
-    return <PublicTicketPage />
+    return <LoginPage />
   }
 
   if (isCheckingAdmin) {

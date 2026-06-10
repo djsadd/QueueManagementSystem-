@@ -49,6 +49,7 @@ export type PublicTicketItem = {
   operator_email: string | null
   window_id: number | null
   window_name: string | null
+  window_floor: string | null
   ticket_number: string
   queue_number: number
   priority: number

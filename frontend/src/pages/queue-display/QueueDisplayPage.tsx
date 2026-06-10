@@ -26,6 +26,12 @@ const windowLabels: Record<Lang, string> = {
   en: 'Window',
 }
 
+const floorLabels: Record<Lang, string> = {
+  kk: 'Қабат',
+  ru: 'Этаж',
+  en: 'Floor',
+}
+
 const displayLangOrder: Lang[] = ['ru', 'kk', 'en']
 const languageRotationMs = 3000
 
@@ -90,6 +96,10 @@ function getQueueDisplayWebSocketUrl() {
 
 function getDesk(ticket: PublicTicketItem, unknown: string) {
   return ticket.window_name ?? (ticket.window_id ? `#${ticket.window_id}` : unknown)
+}
+
+function getFloor(ticket: PublicTicketItem, unknown: string) {
+  return ticket.window_floor || unknown
 }
 
 function getAnimationClass(state: AnimationState) {
@@ -311,6 +321,7 @@ export function QueueDisplayPage() {
                 <tr>
                   <th>{ticketLabels[lang]}</th>
                   <th>{windowLabels[lang]}</th>
+                  <th>{floorLabels[lang]}</th>
                 </tr>
               </thead>
               <tbody>
@@ -321,6 +332,9 @@ export function QueueDisplayPage() {
                     </td>
                     <td>
                       <strong>{getDesk(ticket, t.unknown)}</strong>
+                    </td>
+                    <td>
+                      <strong>{getFloor(ticket, t.unknown)}</strong>
                     </td>
                   </tr>
                 ))}

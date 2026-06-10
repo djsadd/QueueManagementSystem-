@@ -83,6 +83,7 @@ class TicketResponse(BaseModel):
     operator_email: str | None = None
     window_id: int | None
     window_name: str | None = None
+    window_floor: str | None = None
     ticket_number: str
     queue_number: int
     priority: int
@@ -103,6 +104,7 @@ class MyWindowTicketsResponse(BaseModel):
     operator_status: OperatorStatus
     window_id: int
     window_name: str | None = None
+    window_floor: str | None = None
     window_status: str | None = None
     global_waiting_count: int
     page: int

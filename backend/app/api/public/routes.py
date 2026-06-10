@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,8 +33,12 @@ async def get_public_educational_programs(db: AsyncSession = Depends(get_db)):
 @public_router.post("/tickets", response_model=TicketResponse)
 async def create_public_ticket(
     data: TicketCreate,
+    x_queue_client: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ):
+    if x_queue_client != "desktop-terminal":
+        raise HTTPException(status_code=403, detail="Онлайн получение талона через сайт закрыто")
+
     return await TicketService.create_ticket(db, data)
 
 

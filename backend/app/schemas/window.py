@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 class WindowBase(BaseModel):
     name: str
+    floor: str | None = None
     status: str = "OPEN"
     current_operator_id: int | None = None
 
@@ -17,6 +18,7 @@ class WindowCreate(WindowBase):
 
 class WindowUpdate(BaseModel):
     name: str | None = None
+    floor: str | None = None
     status: str | None = None
     current_operator_id: int | None = None
 
