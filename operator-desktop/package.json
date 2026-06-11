@@ -5,7 +5,7 @@
   "description": "Electron operator workstation for the queue management system",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5174 && node electron/launch.cjs .\"",
+    "dev": "concurrently -k \"vite --host 0.0.0.0\" \"wait-on tcp:5174 && node electron/launch.cjs .\"",
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
     "start": "node electron/launch.cjs .",
     "package": "npm run build && electron-builder --win portable"

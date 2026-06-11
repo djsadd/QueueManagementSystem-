@@ -1,0 +1,62 @@
+{
+  "name": "queue-terminal-kiosk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Electron kiosk ticket terminal for the queue management system",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 0.0.0.0 --port 5175\" \"wait-on tcp:5175 && node electron/launch.cjs .\"",
+    "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
+    "start": "node electron/launch.cjs .",
+    "package": "npm run build && electron-builder --win portable --x64 && electron-builder --win portable --ia32"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "@types/node": "^18.19.112",
+    "@types/react": "^18.3.23",
+    "@types/react-dom": "^18.3.7",
+    "concurrently": "^8.2.2",
+    "electron": "22.3.27",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.4.5",
+    "vite": "^5.4.19",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "kz.queue.terminal",
+    "productName": "Queue Terminal Kiosk",
+    "directories": {
+      "output": "bin-electron"
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "terminal.config.example"
+    ],
+    "extraResources": [
+      {
+        "from": "terminal.config.example",
+        "to": "terminal.config"
+      },
+      {
+        "from": "../frontend/src/assets/Logo+RGB.png",
+        "to": "logo.png"
+      },
+      {
+        "from": "assets",
+        "to": "assets"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
+  }
+}

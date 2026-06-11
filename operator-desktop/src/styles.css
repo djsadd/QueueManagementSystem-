@@ -146,6 +146,31 @@ button:disabled {
     @apply grid h-14 w-24 shrink-0 place-items-center rounded-lg bg-ink text-2xl font-semibold tracking-normal text-white;
   }
 
+  .ticket-time {
+    @apply flex w-[190px] shrink-0 flex-col items-end gap-1 text-right;
+  }
+
+  .ticket-time-main,
+  .ticket-time-sub {
+    @apply inline-flex max-w-full items-center justify-end gap-2;
+  }
+
+  .ticket-time-main {
+    @apply text-sm font-semibold text-ink;
+  }
+
+  .ticket-time-main svg {
+    @apply text-signal;
+  }
+
+  .ticket-time-sub {
+    @apply text-xs font-medium text-muted;
+  }
+
+  .ticket-time-sub span {
+    @apply truncate;
+  }
+
   .check-row {
     @apply flex min-h-[74px] cursor-pointer items-center gap-4 px-5 py-4 transition hover:bg-slate-50;
   }
@@ -164,5 +189,137 @@ button:disabled {
 
   .info-line strong {
     @apply mt-2 block min-w-0 truncate text-sm font-semibold text-ink;
+  }
+
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-5;
+    animation: modal-backdrop-in 180ms ease both;
+  }
+
+  .admin-modal {
+    @apply max-h-[calc(100vh-40px)] w-full max-w-[620px] overflow-auto rounded-lg border border-line bg-white shadow-[0_24px_70px_rgba(16,24,40,0.28)];
+    animation: modal-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  .admin-modal-small {
+    @apply max-w-[460px];
+  }
+
+  .admin-modal-wide {
+    @apply max-w-[980px];
+  }
+
+  .modal-header {
+    @apply flex items-center justify-between gap-4 border-b border-line px-6 py-5;
+  }
+
+  .modal-header h2 {
+    @apply m-0 text-2xl font-semibold tracking-normal text-ink;
+  }
+
+  .modal-close {
+    @apply grid h-10 w-10 place-items-center rounded-lg border border-line bg-white text-muted transition hover:bg-slate-50 hover:text-ink;
+  }
+
+  .modal-body {
+    @apply p-6;
+  }
+
+  .ticket-detail-grid {
+    @apply mb-5 grid gap-4 md:grid-cols-2;
+  }
+
+  .ticket-detail-grid > div {
+    @apply rounded-lg border border-line bg-slate-50 p-4;
+  }
+
+  .ticket-detail-grid strong {
+    @apply mt-2 block text-base font-semibold leading-snug text-ink;
+  }
+
+  .ticket-detail-grid p {
+    @apply mt-2 text-sm font-medium text-muted;
+  }
+
+  .profile-label {
+    @apply text-xs font-bold uppercase tracking-[0.12em] text-muted;
+  }
+
+  .modal-form {
+    @apply grid gap-5;
+  }
+
+  .ticket-admission-form {
+    @apply mb-5;
+  }
+
+  .ticket-form-grid {
+    @apply grid items-center gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto];
+  }
+
+  .touch-reassign-form {
+    @apply gap-5;
+  }
+
+  .reassign-select-grid {
+    @apply grid gap-5 lg:grid-cols-2;
+  }
+
+  .reassign-select {
+    @apply h-12 w-full rounded-lg border border-line bg-white px-4 text-base font-semibold text-ink outline-none transition focus:border-brand focus:ring-4 focus:ring-teal-100;
+  }
+
+  .touch-choice-field {
+    @apply grid gap-2.5;
+  }
+
+  .touch-choice-search {
+    @apply h-12 w-full rounded-lg border border-line bg-white px-4 text-base font-semibold text-ink outline-none transition placeholder:text-slate-400 focus:border-brand focus:ring-4 focus:ring-teal-100;
+  }
+
+  .touch-choice-empty {
+    @apply min-h-[58px] rounded-lg border border-line bg-slate-50 px-4 py-4 text-sm font-bold text-muted;
+  }
+
+  .modal-actions {
+    @apply mt-2 flex flex-wrap justify-end gap-3;
+  }
+
+  .error-dialog {
+    @apply grid grid-cols-[48px_1fr] items-start gap-4 text-slate-700;
+  }
+
+  .error-dialog-icon {
+    @apply grid h-12 w-12 place-items-center rounded-full border border-red-200 bg-red-50 text-2xl font-black leading-none text-red-700;
+  }
+
+  .error-dialog strong {
+    @apply mb-2 block text-lg font-semibold text-ink;
+  }
+
+  .error-dialog p {
+    @apply m-0 text-base leading-relaxed text-slate-600;
+  }
+}
+
+@keyframes modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }

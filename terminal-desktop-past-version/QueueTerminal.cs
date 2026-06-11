@@ -214,6 +214,9 @@ namespace QueueTerminal
 
     internal sealed class TerminalForm : Form
     {
+        private const int ChoiceCardWidth = 250;
+        private const int ChoiceCardHeight = 112;
+
         private enum UiLanguage
         {
             Kazakh,
@@ -486,9 +489,9 @@ namespace QueueTerminal
             panel.AutoScroll = true;
             panel.BackColor = Color.White;
             panel.BorderStyle = BorderStyle.FixedSingle;
-            panel.FlowDirection = FlowDirection.TopDown;
-            panel.WrapContents = false;
-            panel.Padding = new Padding(8);
+            panel.FlowDirection = FlowDirection.LeftToRight;
+            panel.WrapContents = true;
+            panel.Padding = new Padding(10);
             panel.Resize += delegate { ResizeChoiceButtons(panel); };
         }
 
@@ -511,12 +514,12 @@ namespace QueueTerminal
             Button button = new Button();
             button.AutoEllipsis = true;
             button.FlatStyle = FlatStyle.Flat;
-            button.Font = new Font("Segoe UI", 14F, FontStyle.Bold);
-            button.Height = 74;
-            button.Margin = new Padding(0, 0, 0, 10);
-            button.Padding = new Padding(14, 0, 14, 0);
+            button.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+            button.Margin = new Padding(8);
+            button.Padding = new Padding(14);
+            button.Size = new Size(ChoiceCardWidth, ChoiceCardHeight);
             button.Text = text;
-            button.TextAlign = ContentAlignment.MiddleLeft;
+            button.TextAlign = ContentAlignment.MiddleCenter;
             button.UseVisualStyleBackColor = false;
             button.Click += onClick;
             StyleChoiceButton(button, selected);
@@ -525,19 +528,29 @@ namespace QueueTerminal
 
         private void StyleChoiceButton(Button button, bool selected)
         {
-            button.FlatAppearance.BorderSize = 1;
+            button.FlatAppearance.BorderSize = selected ? 2 : 1;
             button.FlatAppearance.BorderColor = selected ? Color.FromArgb(122, 22, 49) : Color.FromArgb(234, 212, 218);
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(252, 239, 243);
+            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(247, 219, 227);
             button.BackColor = selected ? Color.FromArgb(247, 219, 227) : Color.White;
             button.ForeColor = selected ? Color.FromArgb(93, 15, 37) : Color.FromArgb(40, 21, 26);
         }
 
         private void ResizeChoiceButtons(FlowLayoutPanel panel)
         {
-            int width = Math.Max(120, panel.ClientSize.Width - panel.Padding.Horizontal - 24);
+            int maxWidth = Math.Max(180, panel.ClientSize.Width - panel.Padding.Horizontal - 24);
+            int cardWidth = Math.Min(ChoiceCardWidth, maxWidth);
 
             foreach (Control control in panel.Controls)
             {
-                control.Width = width;
+                Button button = control as Button;
+                if (button != null)
+                {
+                    button.Size = new Size(cardWidth, ChoiceCardHeight);
+                    continue;
+                }
+
+                control.Width = maxWidth;
             }
         }
 
@@ -731,7 +744,6 @@ namespace QueueTerminal
                         dialog.DialogResult = DialogResult.OK;
                         dialog.Close();
                     });
-                    button.Height = 88;
                     choices.Controls.Add(button);
                 }
 
@@ -1008,7 +1020,7 @@ namespace QueueTerminal
 
         private bool DrawTopLeftCornerImage(Graphics graphics, RectangleF frame)
         {
-            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "left-head.png");
+            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "left-top.png");
             if (!File.Exists(path))
             {
                 return false;
@@ -1032,7 +1044,7 @@ namespace QueueTerminal
 
         private bool DrawTopRightCornerImage(Graphics graphics, RectangleF frame)
         {
-            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "right-head.png");
+            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "right-top.png");
             if (!File.Exists(path))
             {
                 return false;
@@ -1114,10 +1126,14 @@ namespace QueueTerminal
 
         private bool DrawReceiptLogo(Graphics graphics, RectangleF content, float y, float maxHeight)
         {
-            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logo.png");
+            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "receipt-logo.png");
             if (!File.Exists(path))
             {
-                return false;
+                path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logo.png");
+                if (!File.Exists(path))
+                {
+                    return false;
+                }
             }
 
             using (Image image = Image.FromFile(path))

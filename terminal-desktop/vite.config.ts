@@ -5,11 +5,13 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   server: {
-    port: 5174,
+    port: 5175,
     strictPort: true,
+    fs: {
+      allow: ['..'],
+    },
   },
   build: {
-    outDir: 'dist',
-    emptyOutDir: true,
+    target: 'chrome108',
   },
 })

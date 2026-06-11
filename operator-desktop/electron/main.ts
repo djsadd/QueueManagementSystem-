@@ -21,7 +21,13 @@ type ApiRequest = {
   accessToken?: string | null
 }
 
-const isDev = !app.isPackaged
+type DisplayAuthTokens = {
+  accessToken?: string | null
+  refreshToken?: string | null
+}
+
+const isDev = !app.isPackaged && process.env.npm_lifecycle_event === 'dev'
+const devServerUrl = process.env.OPERATOR_DEV_URL ?? 'http://192.168.115.12'
 
 let mainWindow: BrowserWindow | null = null
 let displayWindow: BrowserWindow | null = null
@@ -76,8 +82,8 @@ function readConfig(): OperatorConfig {
   const displayMode = values.get('DisplayMode') ?? 'Kiosk'
 
   return {
-    apiBaseUrl: values.get('ApiBaseUrl') ?? 'http://localhost:8000',
-    displayUrl: values.get('DisplayUrl') ?? 'http://localhost:5173/ru/admin/operator-display?fullscreen=1',
+    apiBaseUrl: values.get('ApiBaseUrl') ?? 'http://192.168.115.12/api',
+    displayUrl: values.get('DisplayUrl') ?? 'http://192.168.115.12/ru/admin/operator-display?fullscreen=1',
     monitorIndex: Number(values.get('MonitorIndex') ?? '2') || 2,
     displayMode: displayMode === 'Fullscreen' || displayMode === 'Window' ? displayMode : 'Kiosk',
     displayScale: parseScale(values.get('DisplayScale'), 0.9),
@@ -86,6 +92,19 @@ function readConfig(): OperatorConfig {
     refreshSeconds: Number(values.get('RefreshSeconds') ?? '5') || 5,
     rememberEmail: parseBool(values.get('RememberEmail'), true),
   }
+}
+
+function getDisplayUrl(authTokens?: DisplayAuthTokens) {
+  if (!authTokens?.accessToken || !authTokens.refreshToken) {
+    return config.displayUrl
+  }
+
+  const url = new URL(config.displayUrl)
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''))
+  hashParams.set('access_token', authTokens.accessToken)
+  hashParams.set('refresh_token', authTokens.refreshToken)
+  url.hash = hashParams.toString()
+  return url.toString()
 }
 
 function createMainWindow() {
@@ -111,14 +130,15 @@ function createMainWindow() {
   })
 
   if (isDev) {
-    mainWindow.loadURL('http://127.0.0.1:5174')
+    mainWindow.loadURL(devServerUrl)
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
 }
 
-function openDisplayWindow() {
+function openDisplayWindow(authTokens?: DisplayAuthTokens) {
   config = readConfig()
+  const displayUrl = getDisplayUrl(authTokens)
 
   const displays = screen.getAllDisplays()
   const selectedDisplay = displays[Math.max(0, Math.min(displays.length - 1, config.monitorIndex - 1))] ?? displays[0]
@@ -131,7 +151,7 @@ function openDisplayWindow() {
   if (displayWindow && !displayWindow.isDestroyed()) {
     displayWindow.focus()
     displayWindow.webContents.setZoomFactor(displayZoom)
-    displayWindow.loadURL(config.displayUrl)
+    displayWindow.loadURL(displayUrl)
     return { ok: true, reused: true }
   }
 
@@ -155,7 +175,7 @@ function openDisplayWindow() {
     displayWindow = null
   })
   displayWindow.webContents.setZoomFactor(displayZoom)
-  displayWindow.loadURL(config.displayUrl)
+  displayWindow.loadURL(displayUrl)
 
   return { ok: true, reused: false }
 }
@@ -203,7 +223,7 @@ app.whenReady().then(() => {
     return config
   })
   ipcMain.handle('operator:api-request', (_event, request: ApiRequest) => apiRequest(request))
-  ipcMain.handle('operator:open-display', () => openDisplayWindow())
+  ipcMain.handle('operator:open-display', (_event, authTokens?: DisplayAuthTokens) => openDisplayWindow(authTokens))
 
   createMainWindow()
 

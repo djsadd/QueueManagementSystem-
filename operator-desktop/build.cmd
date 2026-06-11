@@ -12,7 +12,7 @@ if errorlevel 1 (
 if not exist "node_modules" npm install
 if errorlevel 1 exit /b 1
 
-npm run build
+call npm run build
 if errorlevel 1 exit /b 1
 
 if not exist "bin" mkdir "bin"

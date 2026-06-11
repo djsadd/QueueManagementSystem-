@@ -14,7 +14,7 @@ copy operator-display.config.example operator-display.config
 Edit `operator-display.config`:
 
 ```ini
-Url=http://192.168.1.20:5173/ru/admin/operator-display?fullscreen=1
+Url=http://192.168.115.12:5173/ru/admin/operator-display?fullscreen=1
 Browser=Auto
 MonitorIndex=2
 Mode=Kiosk

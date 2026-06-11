@@ -7,7 +7,30 @@ import { authApi } from '../features/auth/api/authApi'
 import type { AuthUser } from '../features/auth/model/types'
 import { tokenStorage } from '../shared/lib/tokenStorage'
 
+function consumeAuthTokensFromUrl() {
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const accessToken = hashParams.get('access_token')
+  const refreshToken = hashParams.get('refresh_token')
+
+  if (!accessToken || !refreshToken) {
+    return
+  }
+
+  tokenStorage.setTokens(accessToken, refreshToken)
+  hashParams.delete('access_token')
+  hashParams.delete('refresh_token')
+
+  const nextHash = hashParams.toString()
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`,
+  )
+}
+
 export function AppRouter() {
+  consumeAuthTokensFromUrl()
+
   const pathParts = window.location.pathname.split('/').filter(Boolean)
   const isAdminPath = pathParts.includes('admin')
   const isOperatorDisplayPath = pathParts.includes('operator-display')

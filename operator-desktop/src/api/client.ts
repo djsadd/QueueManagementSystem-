@@ -149,5 +149,12 @@ export const api = {
     complete: (id: string) => request<TicketItem>(`/tickets/my-window/${id}/complete`, { method: 'PATCH' }),
     skip: (id: string) => request<TicketItem>(`/tickets/my-window/${id}/skip`, { method: 'PATCH' }),
     decline: (id: string) => request<TicketItem>(`/tickets/my-window/${id}/decline`, { method: 'PATCH' }),
+    updateStudyLanguage: (id: string, study_language: TicketItem['study_language']) =>
+      request<TicketItem>(`/tickets/my-window/${id}/study-language`, {
+        method: 'PATCH',
+        body: { study_language },
+      }),
+    reassignService: (id: string, payload: { service_id: number; educational_program_id: number | null }) =>
+      request<TicketItem>(`/tickets/my-window/${id}/service`, { method: 'PATCH', body: payload }),
   },
 }

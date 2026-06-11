@@ -4,8 +4,6 @@ Electron + React + Tailwind CSS desktop app for the operator workstation. The
 React UI talks to FastAPI through Electron IPC, so it works with the current
 backend without browser CORS changes.
 
-The previous WinForms source is still kept in `OperatorCrm.cs` as a fallback.
-
 ## Install
 
 ```cmd
@@ -24,8 +22,8 @@ npm run dev
 Edit `operator-desktop\bin\operator.config`:
 
 ```ini
-ApiBaseUrl=http://localhost:8000
-DisplayUrl=http://localhost:5173/ru/admin/operator-display?fullscreen=1
+ApiBaseUrl=http://192.168.115.12/api
+DisplayUrl=http://192.168.115.12/ru/admin/operator-display?fullscreen=1
 MonitorIndex=2
 DisplayMode=Kiosk
 DisplayScale=0.9

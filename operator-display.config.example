@@ -1,6 +1,6 @@
 # React frontend URL for the operator's second display.
 # Use the server IP address on operator computers.
-Url=http://localhost:5173/ru/admin/operator-display?fullscreen=1
+Url=http://192.168.115.12:5173/ru/admin/operator-display?fullscreen=1
 
 # Auto, Edge, or Chrome.
 Browser=Auto

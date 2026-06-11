@@ -17,7 +17,10 @@ declare global {
         body?: unknown
         accessToken?: string | null
       }) => Promise<BridgeApiResponse<T>>
-      openDisplay: () => Promise<{ ok: boolean; reused: boolean }>
+      openDisplay: (authTokens?: {
+        accessToken?: string | null
+        refreshToken?: string | null
+      }) => Promise<{ ok: boolean; reused: boolean }>
     }
   }
 }

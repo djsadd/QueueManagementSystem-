@@ -10,7 +10,7 @@ param(
 
 $configPath = Join-Path $PSScriptRoot "operator-display.config"
 $config = @{
-    Url = "http://localhost:5173/ru/admin/operator-display?fullscreen=1"
+    Url = "http://192.168.115.12:5173/ru/admin/operator-display?fullscreen=1"
     Browser = "Auto"
     MonitorIndex = "2"
     Mode = "Kiosk"

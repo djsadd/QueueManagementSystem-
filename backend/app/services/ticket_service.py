@@ -27,6 +27,13 @@ from app.services.service_service import ServiceService
 
 
 class TicketService:
+    WINDOW_OPERATOR_STATUS_MAP = {
+        "OPEN": OperatorStatus.ONLINE,
+        "AVAILABLE": OperatorStatus.ONLINE,
+        "BUSY": OperatorStatus.BUSY,
+        "CLOSED": OperatorStatus.OFFLINE,
+    }
+
     ACTIVE_MY_WINDOW_TICKET_STATUSES = {
         TicketStatus.WAITING.value,
         TicketStatus.CALLED.value,
@@ -88,7 +95,7 @@ class TicketService:
 
         queue_number = last_queue + 1
 
-        ticket_number = f"A-{queue_number}"
+        ticket_number = f"{TicketService.build_ticket_number_prefix(service)}-{queue_number}"
         academic_degree_id, routing_key = await AssignmentService.prepare_ticket_routing(
             db,
             data.service_id,
@@ -131,6 +138,18 @@ class TicketService:
         )
 
         return await TicketService.build_ticket_response(db, ticket)
+
+    @staticmethod
+    def build_ticket_number_prefix(service: Service) -> str:
+        for value in (service.name, service.name_kk, service.name_en, service.code):
+            if not value:
+                continue
+
+            for character in value.strip():
+                if character.isalpha():
+                    return character.upper()
+
+        return "A"
 
     @staticmethod
     async def find_available_operator_for_ticket(
@@ -457,15 +476,44 @@ class TicketService:
         if window is None:
             raise HTTPException(status_code=404, detail="Окно не найдено")
 
+        old_operator_status = operator.status
+        operator_status = TicketService.WINDOW_OPERATOR_STATUS_MAP.get(window_status)
+
         window.status = window_status
+        if operator_status is not None:
+            operator.status = operator_status
+            if old_operator_status != operator_status:
+                db.add(
+                    TicketEvent(
+                        ticket_id=None,
+                        event_type="OPERATOR_STATUS_CHANGED",
+                        old_status=old_operator_status.value,
+                        new_status=operator_status.value,
+                        operator_id=operator.id,
+                        metadata_={
+                            "old_status": old_operator_status.value,
+                            "new_status": operator_status.value,
+                            "source": "window_status",
+                            "window_status": window_status,
+                        },
+                    )
+                )
+
         await db.commit()
         await db.refresh(window)
+        await db.refresh(operator)
 
         await realtime_manager.broadcast_my_window_update(
             operator.window_id,
             "window_status_changed",
             {"status": window.status},
         )
+        if old_operator_status != operator.status:
+            await realtime_manager.broadcast_my_window_update(
+                operator.window_id,
+                "operator_status_changed",
+                {"operator_id": str(operator.id), "status": operator.status.value},
+            )
         await realtime_manager.broadcast_all_my_windows_update(
             "global_waiting_count_changed",
             {"window_id": operator.window_id},
@@ -524,15 +572,32 @@ class TicketService:
         if operator.window_id is None:
             raise HTTPException(status_code=404, detail="Оператору не назначено окно")
 
-        if operator.status != OperatorStatus.ONLINE:
-            raise HTTPException(status_code=409, detail="Чтобы вызвать следующий талон, оператор должен быть онлайн")
-
         window = await db.get(Window, operator.window_id)
         if window is None:
             raise HTTPException(status_code=404, detail="Окно не найдено")
 
         if window.status not in {"OPEN", "AVAILABLE"}:
             raise HTTPException(status_code=409, detail="Чтобы вызвать следующий талон, окно должно быть открыто")
+
+        if operator.status != OperatorStatus.ONLINE:
+            old_operator_status = operator.status
+            operator.status = OperatorStatus.ONLINE
+            db.add(
+                TicketEvent(
+                    ticket_id=None,
+                    event_type="OPERATOR_STATUS_CHANGED",
+                    old_status=old_operator_status.value,
+                    new_status=OperatorStatus.ONLINE.value,
+                    operator_id=operator.id,
+                    metadata_={
+                        "old_status": old_operator_status.value,
+                        "new_status": OperatorStatus.ONLINE.value,
+                        "source": "window_status",
+                        "window_status": window.status,
+                    },
+                )
+            )
+            await db.flush()
 
         active_result = await db.execute(
             select(func.count(Ticket.id)).where(

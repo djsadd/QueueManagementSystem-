@@ -8,7 +8,7 @@ start Chromium in kiosk printing mode:
 .\start-terminal-printing.cmd
 ```
 
-The launcher opens `http://localhost:5173/` in Microsoft Edge or Google Chrome
+The launcher opens `http://192.168.115.12:5173/` in Microsoft Edge or Google Chrome
 with:
 
 - `--kiosk` for the full-screen terminal window;
@@ -33,5 +33,5 @@ To select a browser explicitly:
 To use a different local URL:
 
 ```powershell
-.\start-terminal-printing.ps1 -Url "http://localhost/"
+.\start-terminal-printing.ps1 -Url "http://192.168.115.12/"
 ```

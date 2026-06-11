@@ -10,6 +10,3 @@ FullScreen=true
 # Thermal receipt paper width and additional feed after the final printed line.
 ReceiptWidthMm=80
 ReceiptBottomFeedMm=5
-
-# How long the issued ticket stays on screen before the panel resets.
-AutoResetSeconds=10

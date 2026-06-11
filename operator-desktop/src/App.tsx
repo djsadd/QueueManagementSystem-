@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   BellRing,
+  CalendarClock,
   Check,
   Clock3,
   DoorOpen,
@@ -8,13 +9,12 @@ import {
   Loader2,
   LogOut,
   MonitorUp,
-  Pause,
   Play,
   RefreshCw,
   Search,
   Settings2,
   SkipForward,
-  UserRound,
+  Timer,
   X,
 } from 'lucide-react'
 import { api, ApiError } from './api/client'
@@ -24,20 +24,13 @@ import type {
   EducationalProgramItem,
   MyWindowTickets,
   OperatorConfig,
-  OperatorStatus,
   ServiceItem,
+  StudyLanguage,
   TicketItem,
   WindowStatus,
 } from './types/domain'
 
 type View = 'window' | 'profile'
-
-const operatorStatusLabels: Record<OperatorStatus, string> = {
-  ONLINE: 'Онлайн',
-  OFFLINE: 'Офлайн',
-  BUSY: 'Занят',
-  BREAK: 'Перерыв',
-}
 
 const windowStatusLabels: Record<WindowStatus, string> = {
   OPEN: 'Открыто',
@@ -52,6 +45,18 @@ const ticketStatusLabels: Record<string, string> = {
   SKIPPED: 'Пропущен',
 }
 
+const studyLanguageLabels: Record<StudyLanguage, string> = {
+  KAZAKH: 'Казахский',
+  RUSSIAN: 'Русский',
+  ENGLISH: 'Английский',
+}
+
+const studyLanguageOptions: Array<{ value: StudyLanguage; label: string }> = [
+  { value: 'KAZAKH', label: studyLanguageLabels.KAZAKH },
+  { value: 'RUSSIAN', label: studyLanguageLabels.RUSSIAN },
+  { value: 'ENGLISH', label: studyLanguageLabels.ENGLISH },
+]
+
 function getErrorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message
   if (error instanceof Error) return error.message
@@ -59,7 +64,7 @@ function getErrorMessage(error: unknown) {
 }
 
 function formatDateTime(value: string | null) {
-  if (!value) return '—'
+  if (!value) return 'Нет времени'
   return new Date(value).toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
@@ -72,6 +77,20 @@ function getWaitMinutes(ticket: TicketItem) {
   const createdAt = new Date(ticket.created_at).getTime()
   if (Number.isNaN(createdAt)) return 0
   return Math.max(0, Math.round((Date.now() - createdAt) / 60000))
+}
+
+function formatWaitMinutes(ticket: TicketItem) {
+  const minutes = getWaitMinutes(ticket)
+  if (minutes < 1) return 'меньше минуты'
+  return `${minutes} мин`
+}
+
+function getStudyLanguageLabel(value: StudyLanguage | null) {
+  return value ? studyLanguageLabels[value] : 'Не указан'
+}
+
+function parseStudyLanguage(value: string): StudyLanguage | '' {
+  return studyLanguageOptions.some((option) => option.value === value) ? (value as StudyLanguage) : ''
 }
 
 function classNames(...values: Array<string | false | null | undefined>) {
@@ -99,11 +118,18 @@ function App() {
   const [password, setPassword] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-  const [iin, setIin] = useState('')
+  const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null)
+  const [acceptIin, setAcceptIin] = useState('')
+  const [acceptStudyLanguage, setAcceptStudyLanguage] = useState<StudyLanguage | ''>('')
+  const [reassignServiceId, setReassignServiceId] = useState('')
+  const [reassignProgramId, setReassignProgramId] = useState('')
+  const [reassignServiceQuery, setReassignServiceQuery] = useState('')
+  const [reassignProgramQuery, setReassignProgramQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
   const currentTicket = useMemo(
@@ -114,7 +140,31 @@ function App() {
     () => myWindow?.tickets.filter((ticket) => ticket.status === 'WAITING') ?? [],
     [myWindow],
   )
-  const canCallNext = Boolean(myWindow && myWindow.operator_status === 'ONLINE' && myWindow.window_status === 'OPEN')
+  const activeServices = useMemo(() => services.filter((service) => service.is_active), [services])
+  const activePrograms = useMemo(() => programs.filter((program) => program.is_active), [programs])
+  const selectedReassignService = useMemo(
+    () => activeServices.find((service) => String(service.id) === reassignServiceId) ?? null,
+    [activeServices, reassignServiceId],
+  )
+  const selectedReassignProgram = useMemo(
+    () => activePrograms.find((program) => String(program.id) === reassignProgramId) ?? null,
+    [activePrograms, reassignProgramId],
+  )
+  const filteredReassignServices = useMemo(() => {
+    const query = reassignServiceQuery.trim().toLowerCase()
+    if (!query) return activeServices
+    return activeServices.filter((service) =>
+      `${service.name} ${service.code}`.toLowerCase().includes(query),
+    )
+  }, [activeServices, reassignServiceQuery])
+  const filteredReassignPrograms = useMemo(() => {
+    const query = reassignProgramQuery.trim().toLowerCase()
+    if (!query) return activePrograms
+    return activePrograms.filter((program) =>
+      `${program.name} ${program.code}`.toLowerCase().includes(query),
+    )
+  }, [activePrograms, reassignProgramQuery])
+  const canCallNext = Boolean(myWindow && myWindow.window_status === 'OPEN')
 
   const refreshWorkspace = useCallback(
     async (silent = false) => {
@@ -231,6 +281,163 @@ function App() {
     }
   }
 
+  function updateTicketInState(updatedTicket: TicketItem) {
+    setMyWindow((current) => {
+      if (!current) return current
+
+      return {
+        ...current,
+        tickets: current.tickets.map((ticket) => (ticket.id === updatedTicket.id ? updatedTicket : ticket)),
+      }
+    })
+
+    setSelectedTicket((current) => (current?.id === updatedTicket.id ? updatedTicket : current))
+  }
+
+  function openTicketDetails(ticket: TicketItem) {
+    setSelectedTicket(ticket)
+    setAcceptIin(ticket.iin ?? '')
+    setAcceptStudyLanguage(ticket.study_language ?? '')
+    setReassignServiceId(String(ticket.service_id))
+    setReassignProgramId(ticket.educational_program_id === null ? '' : String(ticket.educational_program_id))
+    setReassignServiceQuery('')
+    setReassignProgramQuery('')
+  }
+
+  function closeTicketDetails() {
+    setSelectedTicket(null)
+    setAcceptIin('')
+    setAcceptStudyLanguage('')
+    setReassignServiceId('')
+    setReassignProgramId('')
+    setReassignServiceQuery('')
+    setReassignProgramQuery('')
+  }
+
+  async function persistTicketApplicantData(ticket: TicketItem) {
+    const normalizedIin = acceptIin.trim()
+
+    if (!/^\d{12}$/.test(normalizedIin)) {
+      throw new Error('ИИН должен состоять из 12 цифр')
+    }
+
+    if (!acceptStudyLanguage) {
+      throw new Error('Выберите язык обучения')
+    }
+
+    let updatedTicket = await api.tickets.accept(ticket.id, normalizedIin)
+    updatedTicket = await api.tickets.updateStudyLanguage(updatedTicket.id, acceptStudyLanguage)
+    updateTicketInState(updatedTicket)
+    return updatedTicket
+  }
+
+  async function callNextTicket() {
+    setSaving(true)
+    setMessage('')
+    setError('')
+    setActionError('')
+
+    try {
+      const nextTicket = await api.tickets.callNext()
+      await refreshWorkspace(true)
+      openTicketDetails(nextTicket)
+    } catch (err) {
+      setActionError(getErrorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function saveTicketApplicantData(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedTicket) return
+
+    setSaving(true)
+    setMessage('')
+    setActionError('')
+
+    try {
+      await persistTicketApplicantData(selectedTicket)
+      setMessage('Данные талона сохранены')
+    } catch (err) {
+      setActionError(getErrorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function completeTicket(ticket: TicketItem) {
+    setSaving(true)
+    setMessage('')
+    setActionError('')
+
+    try {
+      const ticketToComplete = selectedTicket?.id === ticket.id ? await persistTicketApplicantData(ticket) : ticket
+      await api.tickets.complete(ticketToComplete.id)
+      closeTicketDetails()
+      setMessage('Талон завершен')
+      await refreshWorkspace(true)
+    } catch (err) {
+      setActionError(getErrorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function skipTicket(ticket: TicketItem) {
+    const confirmed = window.confirm(`Отметить талон ${ticket.ticket_number} как "Не явился"?`)
+    if (!confirmed) return
+
+    setSaving(true)
+    setMessage('')
+    setActionError('')
+
+    try {
+      await api.tickets.skip(ticket.id)
+      closeTicketDetails()
+      setMessage('Талон отмечен как не явившийся')
+      await refreshWorkspace(true)
+    } catch (err) {
+      setActionError(getErrorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function reassignTicket(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedTicket || !reassignServiceId) return
+
+    if (!selectedReassignService) {
+      setActionError('Выберите услугу')
+      return
+    }
+
+    if (selectedReassignService?.requires_educational_program && !reassignProgramId) {
+      setActionError('Выберите образовательную программу')
+      return
+    }
+
+    setSaving(true)
+    setMessage('')
+    setActionError('')
+
+    try {
+      const ticketToReassign = await persistTicketApplicantData(selectedTicket)
+      await api.tickets.reassignService(ticketToReassign.id, {
+        service_id: Number(reassignServiceId),
+        educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
+      })
+      closeTicketDetails()
+      setMessage('Услуга талона переназначена')
+      await refreshWorkspace(true)
+    } catch (err) {
+      setActionError(getErrorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function saveServices() {
     await runAction(async () => {
       const updated = await api.operator.setServices(selectedServices)
@@ -332,12 +539,25 @@ function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {lastRefresh && <span className="text-sm text-muted">Обновлено {lastRefresh.toLocaleTimeString('ru-RU')}</span>}
+            {lastRefresh && (
+              <span className="inline-flex items-center gap-2 text-sm font-medium text-muted">
+                <Clock3 className="h-4 w-4" />
+                Обновлено {lastRefresh.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
             <button className="ghost-button" onClick={() => refreshWorkspace()} disabled={saving}>
               <RefreshCw className="h-5 w-5" />
               Обновить
             </button>
-            <button className="primary-button" onClick={() => window.operatorBridge.openDisplay()}>
+            <button
+              className="primary-button"
+              onClick={() =>
+                window.operatorBridge.openDisplay({
+                  accessToken: tokenStorage.getAccessToken(),
+                  refreshToken: tokenStorage.getRefreshToken(),
+                })
+              }
+            >
               <MonitorUp className="h-5 w-5" />
               Второй экран
             </button>
@@ -383,20 +603,6 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="mt-6 grid grid-cols-2 gap-3">
-                    {(['ONLINE', 'BREAK', 'OFFLINE', 'BUSY'] as OperatorStatus[]).map((status) => (
-                      <button
-                        key={status}
-                        className={classNames('segmented-button', myWindow?.operator_status === status && 'segmented-button-active')}
-                        disabled={saving || !myWindow}
-                        onClick={() => runAction(() => api.tickets.setOperatorStatus(status), 'Статус оператора обновлен')}
-                      >
-                        {status === 'ONLINE' ? <Play className="h-4 w-4" /> : status === 'BREAK' ? <Pause className="h-4 w-4" /> : <UserRound className="h-4 w-4" />}
-                        {operatorStatusLabels[status]}
-                      </button>
-                    ))}
-                  </div>
-
                   <div className="mt-6 grid grid-cols-3 gap-3">
                     {(['OPEN', 'BUSY', 'CLOSED'] as WindowStatus[]).map((status) => (
                       <button
@@ -415,7 +621,7 @@ function App() {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <span className="section-label">Сейчас у окна</span>
-                      <h2 className="mt-2 text-5xl font-semibold tracking-normal">{currentTicket?.ticket_number ?? '—'}</h2>
+                      <h2 className="mt-2 text-5xl font-semibold tracking-normal">{currentTicket?.ticket_number ?? 'Нет талона'}</h2>
                     </div>
                     <Clock3 className="h-9 w-9 text-signal" />
                   </div>
@@ -426,38 +632,17 @@ function App() {
                         <p className="text-sm font-semibold text-muted">{currentTicket.service_name ?? 'Услуга'}</p>
                         <p className="mt-1 text-lg font-semibold">{currentTicket.full_name ?? 'Клиент без ФИО'}</p>
                       </div>
-                      <input
-                        className="text-input"
-                        placeholder="ИИН, если нужно"
-                        maxLength={12}
-                        value={iin}
-                        onChange={(event) => setIin(event.target.value.replace(/\D/g, ''))}
-                      />
-                      <div className="grid grid-cols-2 gap-3">
-                        <button className="primary-button" disabled={saving} onClick={() => runAction(() => api.tickets.accept(currentTicket.id, iin), 'Клиент принят')}>
-                          <Check className="h-5 w-5" />
-                          Принять
-                        </button>
-                        <button className="success-button" disabled={saving} onClick={() => runAction(() => api.tickets.complete(currentTicket.id), 'Талон завершен')}>
-                          <Check className="h-5 w-5" />
-                          Завершить
-                        </button>
-                        <button className="ghost-button" disabled={saving} onClick={() => runAction(() => api.tickets.skip(currentTicket.id), 'Талон пропущен')}>
-                          <SkipForward className="h-5 w-5" />
-                          Пропустить
-                        </button>
-                        <button className="danger-button" disabled={saving} onClick={() => runAction(() => api.tickets.decline(currentTicket.id), 'Талон отклонен')}>
-                          <X className="h-5 w-5" />
-                          Отклонить
-                        </button>
-                      </div>
+                      <button className="primary-button h-12 w-full" disabled={saving} onClick={() => openTicketDetails(currentTicket)}>
+                        <ExternalLink className="h-5 w-5" />
+                        Открыть талон
+                      </button>
                     </div>
                   ) : (
                     <div className="mt-6">
                       <button
                         className="primary-button h-14 w-full text-base"
                         disabled={saving || !canCallNext}
-                        onClick={() => runAction(() => api.tickets.callNext(), 'Следующий талон вызван')}
+                        onClick={callNextTicket}
                       >
                         <BellRing className="h-6 w-6" />
                         Вызвать следующего
@@ -498,10 +683,22 @@ function App() {
                             </div>
                             <p className="mt-1 truncate text-sm text-muted">{ticket.educational_program_name ?? ticket.full_name ?? 'Без дополнительной информации'}</p>
                           </div>
-                          <div className="w-[170px] text-right text-sm text-muted">
-                            <strong className="block text-ink">{getWaitMinutes(ticket)} мин</strong>
-                            {formatDateTime(ticket.created_at)}
+                          <div className="ticket-time">
+                            <div className="ticket-time-main">
+                              <Timer className="h-4 w-4" />
+                              <strong>{formatWaitMinutes(ticket)}</strong>
+                            </div>
+                            <div className="ticket-time-sub">
+                              <CalendarClock className="h-4 w-4" />
+                              <span>{formatDateTime(ticket.created_at)}</span>
+                            </div>
                           </div>
+                          {ticket.status === 'CALLED' && (
+                            <button className="ghost-button shrink-0" disabled={saving} onClick={() => openTicketDetails(ticket)}>
+                              <ExternalLink className="h-5 w-5" />
+                              Открыть
+                            </button>
+                          )}
                         </article>
                       ))}
                   </div>
@@ -513,7 +710,7 @@ function App() {
 
                 {waitingTickets.length > 0 && !currentTicket && (
                   <div className="border-t border-line bg-white p-5">
-                    <button className="primary-button h-12 w-full" disabled={saving || !canCallNext} onClick={() => runAction(() => api.tickets.callNext(), 'Следующий талон вызван')}>
+                    <button className="primary-button h-12 w-full" disabled={saving || !canCallNext} onClick={callNextTicket}>
                       <BellRing className="h-5 w-5" />
                       Вызвать следующий талон
                     </button>
@@ -565,6 +762,191 @@ function App() {
           )}
         </div>
       </section>
+
+      {selectedTicket && (
+        <AdminModal title={`Талон ${selectedTicket.ticket_number}`} onClose={closeTicketDetails} size="wide">
+          <div className="ticket-detail-grid">
+            <div>
+              <span className="profile-label">Абитуриент</span>
+              <strong>{selectedTicket.full_name ?? 'Не указано'}</strong>
+              <p>{selectedTicket.iin ?? 'ИИН не указан'}</p>
+            </div>
+            <div>
+              <span className="profile-label">Текущая услуга</span>
+              <strong>{selectedTicket.service_name ?? selectedTicket.service_id}</strong>
+              <p>{selectedTicket.educational_program_name ?? 'ОП не указана'}</p>
+            </div>
+            <div>
+              <span className="profile-label">Язык обучения</span>
+              <strong>{getStudyLanguageLabel(selectedTicket.study_language)}</strong>
+            </div>
+            <div>
+              <span className="profile-label">Статус</span>
+              <strong>{ticketStatusLabels[selectedTicket.status] ?? selectedTicket.status}</strong>
+              <p>Создан: {new Date(selectedTicket.created_at).toLocaleString('ru-RU')}</p>
+            </div>
+            <div>
+              <span className="profile-label">Ответственный оператор</span>
+              <strong>{selectedTicket.operator_name ?? selectedTicket.operator_email ?? selectedTicket.operator_id ?? 'Не назначен'}</strong>
+              <p>Окно: {selectedTicket.window_id ?? 'Не указано'}</p>
+            </div>
+          </div>
+
+          {selectedTicket.status === 'CALLED' && (
+            <form className="modal-form ticket-admission-form" onSubmit={saveTicketApplicantData}>
+              <div className="ticket-form-grid">
+                <input
+                  required
+                  autoFocus
+                  className="text-input"
+                  inputMode="numeric"
+                  pattern="[0-9]{12}"
+                  maxLength={12}
+                  minLength={12}
+                  placeholder="ИИН абитуриента"
+                  value={acceptIin}
+                  onChange={(event) => setAcceptIin(event.target.value.replace(/\D/g, '').slice(0, 12))}
+                />
+                <select
+                  required
+                  className="text-input"
+                  value={acceptStudyLanguage}
+                  onChange={(event) => setAcceptStudyLanguage(parseStudyLanguage(event.target.value))}
+                >
+                  <option value="">Выберите язык обучения</option>
+                  {studyLanguageOptions.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button className="ghost-button h-12" type="submit" disabled={saving}>
+                  <Check className="h-5 w-5" />
+                  Сохранить данные
+                </button>
+              </div>
+            </form>
+          )}
+
+          <form className="modal-form touch-reassign-form" onSubmit={reassignTicket}>
+            <div className="reassign-select-grid">
+              <div className="touch-choice-field">
+              <span className="profile-label">Новая услуга</span>
+                <input
+                  className="touch-choice-search"
+                  placeholder="Поиск по услуге или коду"
+                  value={reassignServiceQuery}
+                  onChange={(event) => setReassignServiceQuery(event.target.value)}
+                />
+                <select
+                  className="reassign-select"
+                  disabled={saving || activeServices.length === 0}
+                  value={reassignServiceId}
+                  onChange={(event) => {
+                    const nextServiceId = event.target.value
+                    const service = activeServices.find((item) => String(item.id) === nextServiceId)
+                    const currentProgramId =
+                      selectedTicket.educational_program_id === null ? '' : String(selectedTicket.educational_program_id)
+
+                    setReassignServiceId(nextServiceId)
+                    setReassignProgramQuery('')
+                    setReassignProgramId(service?.requires_educational_program ? reassignProgramId || currentProgramId : '')
+                  }}
+                >
+                  <option value="">Выберите услугу</option>
+                  {filteredReassignServices.map((service) => (
+                    <option value={service.id} key={service.id}>
+                      {service.name}
+                    </option>
+                  ))}
+                </select>
+                {activeServices.length === 0 && <div className="touch-choice-empty">Активных услуг пока нет</div>}
+                {activeServices.length > 0 && filteredReassignServices.length === 0 && (
+                  <div className="touch-choice-empty">Услуги не найдены</div>
+                )}
+              </div>
+
+              <div className="touch-choice-field">
+              <span className="profile-label">Образовательная программа</span>
+              {selectedReassignService?.requires_educational_program ? (
+                <>
+                  <input
+                    className="touch-choice-search"
+                    placeholder="Поиск по ОП или коду"
+                    value={reassignProgramQuery}
+                    onChange={(event) => setReassignProgramQuery(event.target.value)}
+                  />
+                  <select
+                    className="reassign-select"
+                    disabled={saving || activePrograms.length === 0}
+                    required={selectedReassignService.requires_educational_program}
+                    value={reassignProgramId}
+                    onChange={(event) => setReassignProgramId(event.target.value)}
+                  >
+                    <option value="">Выберите ОП</option>
+                    {filteredReassignPrograms.map((program) => (
+                      <option value={program.id} key={program.id}>
+                        {program.name}
+                      </option>
+                    ))}
+                  </select>
+                  {activePrograms.length === 0 && <div className="touch-choice-empty">Активных ОП пока нет</div>}
+                  {activePrograms.length > 0 && filteredReassignPrograms.length === 0 && (
+                    <div className="touch-choice-empty">ОП не найдены</div>
+                  )}
+                </>
+              ) : (
+                <div className="touch-choice-empty">ОП не требуется</div>
+              )}
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="success-button"
+                type="button"
+                disabled={saving || selectedTicket.status !== 'CALLED'}
+                onClick={() => completeTicket(selectedTicket)}
+              >
+                <Check className="h-5 w-5" />
+                Завершить талон
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={saving || selectedTicket.status !== 'CALLED'}
+                onClick={() => skipTicket(selectedTicket)}
+              >
+                <SkipForward className="h-5 w-5" />
+                Талон не явился
+              </button>
+              <button className="primary-button" type="submit" disabled={saving || selectedTicket.status !== 'CALLED'}>
+                <RefreshCw className="h-5 w-5" />
+                Переназначить услугу
+              </button>
+            </div>
+          </form>
+        </AdminModal>
+      )}
+
+      {actionError && (
+        <AdminModal title="Ошибка" onClose={() => setActionError('')} size="small">
+          <div className="error-dialog">
+            <div className="error-dialog-icon" aria-hidden="true">
+              !
+            </div>
+            <div>
+              <strong>Не удалось выполнить действие</strong>
+              <p>{actionError}</p>
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button className="primary-button" type="button" onClick={() => setActionError('')}>
+              Понятно
+            </button>
+          </div>
+        </AdminModal>
+      )}
     </main>
   )
 }
@@ -618,6 +1000,38 @@ function ProfileList<T extends { id: number; name: string; code: string; is_acti
         )}
       </div>
     </section>
+  )
+}
+
+function AdminModal({
+  children,
+  onClose,
+  size = 'default',
+  title,
+}: {
+  children: React.ReactNode
+  onClose: () => void
+  size?: 'default' | 'small' | 'wide'
+  title: string
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className={classNames('admin-modal', size === 'small' && 'admin-modal-small', size === 'wide' && 'admin-modal-wide')}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="modal-header">
+          <h2>{title}</h2>
+          <button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+        <div className="modal-body">{children}</div>
+      </section>
+    </div>
   )
 }
 

@@ -1,5 +1,5 @@
 param(
-    [string]$Url = "http://localhost:5173/",
+    [string]$Url = "http://192.168.115.12:5173/",
     [ValidateSet("Auto", "Edge", "Chrome")]
     [string]$Browser = "Auto"
 )
