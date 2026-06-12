@@ -95,7 +95,8 @@ class TicketService:
 
         queue_number = last_queue + 1
 
-        ticket_number = f"{TicketService.build_ticket_number_prefix(service)}-{queue_number}"
+        ticket_prefix = await TicketService.build_ticket_number_prefix(db, service)
+        ticket_number = f"{ticket_prefix}-{queue_number}"
         academic_degree_id, routing_key = await AssignmentService.prepare_ticket_routing(
             db,
             data.service_id,
@@ -140,16 +141,53 @@ class TicketService:
         return await TicketService.build_ticket_response(db, ticket)
 
     @staticmethod
-    def build_ticket_number_prefix(service: Service) -> str:
-        if service.code:
-            prefix = "".join(
-                character.upper()
-                for character in service.code.strip()
-                if character.isalnum()
-            )
-            if prefix:
-                return prefix
+    async def build_ticket_number_prefix(db, service: Service) -> str:
+        services = await ServiceService.get_all(db)
+        prefixes_by_service_id = TicketService.build_service_prefix_map(services)
 
+        return prefixes_by_service_id.get(
+            service.id,
+            TicketService.get_service_name_prefix(service),
+        )
+
+    @staticmethod
+    def build_service_prefix_map(services: list[Service]) -> dict[int, str]:
+        service_prefixes = {
+            service.id: TicketService.get_service_name_prefix(service)
+            for service in services
+        }
+        services_by_prefix: dict[str, list[Service]] = {}
+
+        for service in services:
+            services_by_prefix.setdefault(service_prefixes[service.id], []).append(service)
+
+        assigned_prefixes = {
+            prefix
+            for prefix, prefix_services in services_by_prefix.items()
+            if len(prefix_services) == 1
+        }
+        prefixes_by_service_id: dict[int, str] = {}
+
+        for prefix, prefix_services in services_by_prefix.items():
+            if len(prefix_services) == 1:
+                prefixes_by_service_id[prefix_services[0].id] = prefix
+
+        for prefix, prefix_services in sorted(services_by_prefix.items()):
+            if len(prefix_services) == 1:
+                continue
+
+            for duplicate_service in sorted(prefix_services, key=lambda item: item.id):
+                generated_prefix = TicketService.pick_duplicate_service_prefix(
+                    duplicate_service,
+                    blocked_prefixes=assigned_prefixes | {prefix},
+                )
+                prefixes_by_service_id[duplicate_service.id] = generated_prefix
+                assigned_prefixes.add(generated_prefix)
+
+        return prefixes_by_service_id
+
+    @staticmethod
+    def get_service_name_prefix(service: Service) -> str:
         for value in (service.name, service.name_kk, service.name_en):
             if not value:
                 continue
@@ -159,6 +197,34 @@ class TicketService:
                     return character.upper()
 
         return "A"
+
+    @staticmethod
+    def pick_duplicate_service_prefix(
+        service: Service,
+        blocked_prefixes: set[str],
+    ) -> str:
+        alphabet = TicketService.get_prefix_alphabet(service)
+        available_prefixes = [
+            prefix
+            for prefix in alphabet
+            if prefix not in blocked_prefixes
+        ]
+
+        if not available_prefixes:
+            return f"{TicketService.get_service_name_prefix(service)}{service.id}"
+
+        offset = sum(ord(character) for character in f"{service.id}:{service.name}") % len(available_prefixes)
+        return available_prefixes[offset]
+
+    @staticmethod
+    def get_prefix_alphabet(service: Service) -> str:
+        prefix = TicketService.get_service_name_prefix(service)
+        cyrillic_alphabet = "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
+
+        if prefix in cyrillic_alphabet:
+            return cyrillic_alphabet
+
+        return "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
     @staticmethod
     async def find_available_operator_for_ticket(
