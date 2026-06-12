@@ -13,11 +13,91 @@ import logoUrl from '../../assets/Logo+RGB.png'
 import './operator-second-display-page.css'
 
 type RealtimeState = 'connecting' | 'connected' | 'disconnected'
+type DisplayLanguage = 'ru' | 'kk' | 'en'
 
-const windowStatusLabels: Record<string, string> = {
-  OPEN: 'Окно открыто',
-  BUSY: 'Окно занято',
-  CLOSED: 'Окно закрыто',
+const displayLanguages: DisplayLanguage[] = ['ru', 'kk', 'en']
+
+const displayCopy: Record<
+  DisplayLanguage,
+  {
+    locale: string
+    windowTitle: string
+    windowUnassigned: string
+    windowStatusUnknown: string
+    waitingCall: string
+    serviceFallback: string
+    loading: string
+    ticketInvited: string
+    noTicket: string
+    noTicketDescription: string
+    operator: string
+    enableSound: string
+    fullscreen: string
+  }
+> = {
+  ru: {
+    locale: 'ru-RU',
+    windowTitle: 'Окно',
+    windowUnassigned: 'Окно не назначено',
+    windowStatusUnknown: 'Статус окна не определен',
+    waitingCall: 'Ожидание вызова',
+    serviceFallback: 'Услуга',
+    loading: 'Загрузка...',
+    ticketInvited: 'Приглашается талон',
+    noTicket: 'Талон не вызван',
+    noTicketDescription: 'После вызова следующего клиента номер появится здесь.',
+    operator: 'Оператор',
+    enableSound: 'Включить звук',
+    fullscreen: 'На весь экран',
+  },
+  kk: {
+    locale: 'kk-KZ',
+    windowTitle: 'Терезе',
+    windowUnassigned: 'Терезе тағайындалмаған',
+    windowStatusUnknown: 'Терезе мәртебесі анықталмаған',
+    waitingCall: 'Шақыруды күту',
+    serviceFallback: 'Қызмет',
+    loading: 'Жүктелуде...',
+    ticketInvited: 'Талон шақырылады',
+    noTicket: 'Талон шақырылған жоқ',
+    noTicketDescription: 'Келесі клиент шақырылғаннан кейін нөмір осында шығады.',
+    operator: 'Оператор',
+    enableSound: 'Дыбысты қосу',
+    fullscreen: 'Толық экран',
+  },
+  en: {
+    locale: 'en-US',
+    windowTitle: 'Window',
+    windowUnassigned: 'Window is not assigned',
+    windowStatusUnknown: 'Window status is unknown',
+    waitingCall: 'Waiting for a call',
+    serviceFallback: 'Service',
+    loading: 'Loading...',
+    ticketInvited: 'Ticket is invited',
+    noTicket: 'No ticket called',
+    noTicketDescription: 'The number will appear here after the next client is called.',
+    operator: 'Operator',
+    enableSound: 'Enable sound',
+    fullscreen: 'Fullscreen',
+  },
+}
+
+const windowStatusLabels: Record<DisplayLanguage, Record<string, string>> = {
+  ru: {
+    OPEN: 'Окно открыто',
+    BUSY: 'Окно занято',
+    CLOSED: 'Окно закрыто',
+  },
+  kk: {
+    OPEN: 'Терезе ашық',
+    BUSY: 'Терезе бос емес',
+    CLOSED: 'Терезе жабық',
+  },
+  en: {
+    OPEN: 'Window open',
+    BUSY: 'Window busy',
+    CLOSED: 'Window closed',
+  },
 }
 
 function getMyWindowWebSocketUrl(token: string) {
@@ -35,20 +115,53 @@ function getCurrentTicket(data: MyWindowTickets | null) {
   return data.tickets.find((ticket) => ticket.status === 'CALLED' && ticket.window_id === data.window_id) ?? null
 }
 
-function getServiceLabel(ticket: TicketItem | null) {
+function getServiceLabel(
+  ticket: TicketItem | null,
+  language: DisplayLanguage,
+  copy: (typeof displayCopy)[DisplayLanguage],
+) {
   if (!ticket) {
-    return 'Ожидание вызова'
+    return copy.waitingCall
   }
 
-  return ticket.service_name ?? `Услуга #${ticket.service_id}`
+  const localizedName =
+    language === 'kk'
+      ? ticket.service_name_kk
+      : language === 'en'
+        ? ticket.service_name_en
+        : ticket.service_name
+
+  return localizedName ?? ticket.service_name ?? `${copy.serviceFallback} #${ticket.service_id}`
 }
 
-function getProgramLabel(ticket: TicketItem | null) {
-  if (!ticket?.educational_program_name) {
+function getProgramLabel(ticket: TicketItem | null, language: DisplayLanguage) {
+  if (!ticket) {
     return null
   }
 
-  return ticket.educational_program_name
+  const localizedName =
+    language === 'kk'
+      ? ticket.educational_program_name_kk
+      : language === 'en'
+        ? ticket.educational_program_name_en
+        : ticket.educational_program_name
+
+  return localizedName ?? ticket.educational_program_name
+}
+
+function getWindowName(data: MyWindowTickets | null, copy: (typeof displayCopy)[DisplayLanguage]) {
+  if (!data) {
+    return copy.windowUnassigned
+  }
+
+  const sourceName = data.window_name?.trim()
+
+  if (sourceName) {
+    const commonName = sourceName.match(/^(?:Окно|Терезе|Window)\s*(.+)$/i)
+    return commonName?.[1] ? `${copy.windowTitle} ${commonName[1]}` : sourceName
+  }
+
+  return `${copy.windowTitle} #${data.window_id}`
 }
 
 function getFullscreenSupported() {
@@ -68,6 +181,7 @@ export function OperatorSecondDisplayPage({ authUser }: { authUser: AuthUser }) 
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [now, setNow] = useState(() => new Date())
+  const [languageIndex, setLanguageIndex] = useState(0)
   const [realtimeState, setRealtimeState] = useState<RealtimeState>('disconnected')
   const [fullscreenError, setFullscreenError] = useState('')
   const observedDisplayRef = useRef(false)
@@ -75,13 +189,16 @@ export function OperatorSecondDisplayPage({ authUser }: { authUser: AuthUser }) 
   const { enableSound, isSoundBlocked, isSoundReady, playSound } = useTicketCallSound()
   const currentTicket = getCurrentTicket(data)
   const currentTicketCallKey = getTicketCallKey(currentTicket)
-  const windowName = data?.window_name ?? (data ? `Окно #${data.window_id}` : 'Окно не назначено')
+  const displayLanguage = displayLanguages[languageIndex] ?? 'ru'
+  const copy = displayCopy[displayLanguage]
+  const programLabel = getProgramLabel(currentTicket, displayLanguage)
+  const windowName = getWindowName(data, copy)
   const windowStatusText = data?.window_status
-    ? windowStatusLabels[data.window_status] ?? data.window_status
-    : 'Статус окна не определен'
+    ? windowStatusLabels[displayLanguage][data.window_status] ?? data.window_status
+    : copy.windowStatusUnknown
   const timeText = useMemo(
-    () => now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-    [now],
+    () => now.toLocaleTimeString(copy.locale, { hour: '2-digit', minute: '2-digit' }),
+    [copy.locale, now],
   )
 
   const loadDisplay = useCallback(async () => {
@@ -130,6 +247,15 @@ export function OperatorSecondDisplayPage({ authUser }: { authUser: AuthUser }) 
     const clockId = window.setInterval(() => setNow(new Date()), 1000)
 
     return () => window.clearInterval(clockId)
+  }, [])
+
+  useEffect(() => {
+    const languageId = window.setInterval(
+      () => setLanguageIndex((currentIndex) => (currentIndex + 1) % displayLanguages.length),
+      6000,
+    )
+
+    return () => window.clearInterval(languageId)
   }, [])
 
   useEffect(() => {
@@ -229,32 +355,32 @@ export function OperatorSecondDisplayPage({ authUser }: { authUser: AuthUser }) 
       </header>
 
       <section className="operator-display-stage" aria-live="polite">
-        <div className="operator-window-label">Окно</div>
+        <div className="operator-window-label">{copy.windowTitle}</div>
         <h1>{windowName}</h1>
         <div className={`operator-display-window-state ${data?.window_status?.toLowerCase() ?? 'unknown'}`}>
           {windowStatusText}
         </div>
 
         {loading ? (
-          <div className="operator-display-placeholder">Загрузка...</div>
+          <div className="operator-display-placeholder">{copy.loading}</div>
         ) : currentTicket ? (
           <div className="operator-ticket-call">
-            <span>Приглашается талон</span>
+            <span>{copy.ticketInvited}</span>
             <strong>{currentTicket.ticket_number}</strong>
-            <p>{getServiceLabel(currentTicket)}</p>
-            {getProgramLabel(currentTicket) && <small>{getProgramLabel(currentTicket)}</small>}
+            <p>{getServiceLabel(currentTicket, displayLanguage, copy)}</p>
+            {programLabel && <small>{programLabel}</small>}
           </div>
         ) : (
           <div className="operator-display-placeholder">
-            <strong>Талон не вызван</strong>
-            <span>После вызова следующего клиента номер появится здесь.</span>
+            <strong>{copy.noTicket}</strong>
+            <span>{copy.noTicketDescription}</span>
           </div>
         )}
       </section>
 
       <footer className="operator-display-footer">
         <div>
-          <span>Оператор</span>
+          <span>{copy.operator}</span>
           <strong>{authUser.full_name}</strong>
         </div>
         <div className="operator-display-actions">
@@ -264,11 +390,11 @@ export function OperatorSecondDisplayPage({ authUser }: { authUser: AuthUser }) 
               type="button"
               onClick={() => void enableSound()}
             >
-              {'\u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0437\u0432\u0443\u043a'}
+              {copy.enableSound}
             </button>
           )}
           <button type="button" onClick={enterFullscreen}>
-          На весь экран
+            {copy.fullscreen}
           </button>
         </div>
       </footer>

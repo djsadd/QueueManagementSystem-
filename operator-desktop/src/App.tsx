@@ -71,9 +71,17 @@ function getErrorMessage(error: unknown) {
   return 'Неизвестная ошибка'
 }
 
+function parseApiDate(value: string) {
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value)
+  return new Date(hasTimezone ? value : `${value}Z`)
+}
+
 function formatDateTime(value: string | null) {
   if (!value) return 'Нет времени'
-  return new Date(value).toLocaleString('ru-RU', {
+  const date = parseApiDate(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
@@ -82,7 +90,7 @@ function formatDateTime(value: string | null) {
 }
 
 function getWaitMinutes(ticket: TicketItem) {
-  const createdAt = new Date(ticket.created_at).getTime()
+  const createdAt = parseApiDate(ticket.created_at).getTime()
   if (Number.isNaN(createdAt)) return 0
   return Math.max(0, Math.round((Date.now() - createdAt) / 60000))
 }
@@ -787,7 +795,7 @@ function App() {
                 {myWindow && myWindow.tickets.length > 0 ? (
                   <div className="divide-y divide-line">
                     {[...myWindow.tickets]
-                      .sort((a, b) => (a.status === 'CALLED' ? -1 : b.status === 'CALLED' ? 1 : new Date(a.created_at).getTime() - new Date(b.created_at).getTime()))
+                      .sort((a, b) => (a.status === 'CALLED' ? -1 : b.status === 'CALLED' ? 1 : parseApiDate(a.created_at).getTime() - parseApiDate(b.created_at).getTime()))
                       .map((ticket) => (
                         <article key={ticket.id} className="ticket-row">
                           <div className="ticket-number">{ticket.ticket_number}</div>
@@ -900,7 +908,7 @@ function App() {
             <div>
               <span className="profile-label">Статус</span>
               <strong>{ticketStatusLabels[selectedTicket.status] ?? selectedTicket.status}</strong>
-              <p>Создан: {new Date(selectedTicket.created_at).toLocaleString('ru-RU')}</p>
+              <p>Создан: {formatDateTime(selectedTicket.created_at)}</p>
             </div>
             <div>
               <span className="profile-label">Ответственный оператор</span>
