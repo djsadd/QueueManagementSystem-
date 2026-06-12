@@ -27,6 +27,41 @@ from app.services.service_service import ServiceService
 
 
 class TicketService:
+    TICKET_PREFIX_ALPHABET = "ABCDEFGHIKLMNOPRSTUVXYZ"
+    CYRILLIC_TO_LATIN_PREFIX = {
+        "А": "A",
+        "Б": "B",
+        "В": "V",
+        "Г": "G",
+        "Д": "D",
+        "Е": "E",
+        "Ё": "E",
+        "Ж": "Z",
+        "З": "Z",
+        "И": "I",
+        "Й": "Y",
+        "К": "K",
+        "Л": "L",
+        "М": "M",
+        "Н": "N",
+        "О": "O",
+        "П": "P",
+        "Р": "R",
+        "С": "S",
+        "Т": "T",
+        "У": "U",
+        "Ф": "F",
+        "Х": "H",
+        "Ц": "C",
+        "Ч": "C",
+        "Ш": "S",
+        "Щ": "S",
+        "Ы": "Y",
+        "Э": "E",
+        "Ю": "Y",
+        "Я": "Y",
+    }
+
     WINDOW_OPERATOR_STATUS_MAP = {
         "OPEN": OperatorStatus.ONLINE,
         "AVAILABLE": OperatorStatus.ONLINE,
@@ -194,7 +229,17 @@ class TicketService:
 
             for character in value.strip():
                 if character.isalpha():
-                    return character.upper()
+                    return TicketService.normalize_ticket_prefix_letter(character)
+
+        return "A"
+
+    @staticmethod
+    def normalize_ticket_prefix_letter(character: str) -> str:
+        upper_character = character.upper()
+        latin_prefix = TicketService.CYRILLIC_TO_LATIN_PREFIX.get(upper_character, upper_character)
+
+        if latin_prefix in TicketService.TICKET_PREFIX_ALPHABET:
+            return latin_prefix
 
         return "A"
 
@@ -203,10 +248,9 @@ class TicketService:
         service: Service,
         blocked_prefixes: set[str],
     ) -> str:
-        alphabet = TicketService.get_prefix_alphabet(service)
         available_prefixes = [
             prefix
-            for prefix in alphabet
+            for prefix in TicketService.TICKET_PREFIX_ALPHABET
             if prefix not in blocked_prefixes
         ]
 
@@ -215,16 +259,6 @@ class TicketService:
 
         offset = sum(ord(character) for character in f"{service.id}:{service.name}") % len(available_prefixes)
         return available_prefixes[offset]
-
-    @staticmethod
-    def get_prefix_alphabet(service: Service) -> str:
-        prefix = TicketService.get_service_name_prefix(service)
-        cyrillic_alphabet = "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
-
-        if prefix in cyrillic_alphabet:
-            return cyrillic_alphabet
-
-        return "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
     @staticmethod
     async def find_available_operator_for_ticket(
