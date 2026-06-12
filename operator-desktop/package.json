@@ -33,6 +33,7 @@
   "build": {
     "appId": "kz.queue.operator",
     "productName": "Queue Operator CRM",
+    "artifactName": "Queue Operator CRM.exe",
     "directories": {
       "output": "bin-electron"
     },
@@ -48,6 +49,7 @@
       }
     ],
     "win": {
+      "icon": "build/icon.png",
       "target": [
         "portable"
       ]

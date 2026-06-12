@@ -9,6 +9,8 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!operator-desktop/build/
+!operator-desktop/build/icon.png
 dist/
 downloads/
 eggs/

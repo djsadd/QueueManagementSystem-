@@ -114,6 +114,41 @@ button:disabled {
     @apply bg-slate-100 text-slate-700;
   }
 
+  .realtime-badge {
+    @apply inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-bold uppercase;
+  }
+
+  .realtime-dot {
+    @apply h-2.5 w-2.5 rounded-full;
+  }
+
+  .realtime-badge-connected {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-800;
+  }
+
+  .realtime-badge-connected .realtime-dot {
+    @apply bg-emerald-500;
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
+  }
+
+  .realtime-badge-connecting {
+    @apply border-amber-200 bg-amber-50 text-amber-800;
+  }
+
+  .realtime-badge-connecting .realtime-dot {
+    @apply bg-amber-500;
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+  }
+
+  .realtime-badge-disconnected {
+    @apply border-red-200 bg-red-50 text-red-800;
+  }
+
+  .realtime-badge-disconnected .realtime-dot {
+    @apply bg-red-500;
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.14);
+  }
+
   .section-label {
     @apply text-xs font-bold uppercase tracking-[0.12em] text-muted;
   }

@@ -64,9 +64,11 @@ function parseConfigFile(filePath: string) {
 function getConfigCandidates() {
   const appPath = app.getAppPath()
   const exeDir = path.dirname(app.getPath('exe'))
+  const portableExeDir = process.env.PORTABLE_EXECUTABLE_DIR
 
   return [
     path.join(app.getPath('userData'), 'operator.config'),
+    ...(portableExeDir ? [path.join(portableExeDir, 'operator.config')] : []),
     path.join(exeDir, 'operator.config'),
     path.join(process.resourcesPath, 'operator.config'),
     path.join(appPath, 'operator.config'),

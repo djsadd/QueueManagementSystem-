@@ -70,6 +70,7 @@ class TicketResponse(BaseModel):
     iin: str | None = None
     phone: str | None = None
     service_name: str | None = None
+    service_code: str | None = None
     service_name_kk: str | None = None
     service_name_en: str | None = None
     educational_program_name: str | None = None

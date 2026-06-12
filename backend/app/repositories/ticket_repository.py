@@ -19,6 +19,18 @@ class TicketRepository:
         return result.scalar() or 0
 
     @staticmethod
+    async def get_last_queue_number_for_service(
+        db: AsyncSession,
+        service_id: int,
+    ) -> int:
+        result = await db.execute(
+            select(func.max(Ticket.queue_number))
+            .where(Ticket.service_id == service_id)
+        )
+
+        return result.scalar() or 0
+
+    @staticmethod
     async def create(
         db: AsyncSession,
         ticket: Ticket

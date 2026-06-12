@@ -90,7 +90,7 @@ class TicketService:
         applicant_id = await TicketService.resolve_applicant_id(db, data)
 
         last_queue = await (
-            TicketRepository.get_last_queue_number(db)
+            TicketRepository.get_last_queue_number_for_service(db, data.service_id)
         )
 
         queue_number = last_queue + 1
@@ -141,7 +141,16 @@ class TicketService:
 
     @staticmethod
     def build_ticket_number_prefix(service: Service) -> str:
-        for value in (service.name, service.name_kk, service.name_en, service.code):
+        if service.code:
+            prefix = "".join(
+                character.upper()
+                for character in service.code.strip()
+                if character.isalnum()
+            )
+            if prefix:
+                return prefix
+
+        for value in (service.name, service.name_kk, service.name_en):
             if not value:
                 continue
 
@@ -191,6 +200,29 @@ class TicketService:
     ):
 
         return await TicketRepository.get_all(db)
+
+    @staticmethod
+    async def get_export_tickets(
+        db,
+        operator_id: uuid.UUID | None = None,
+    ) -> list[dict]:
+        conditions = []
+
+        if operator_id is not None:
+            await TicketService.ensure_operator_exists(db, operator_id)
+            conditions.append(Ticket.operator_id == operator_id)
+
+        result = await db.execute(
+            select(Ticket)
+            .where(*conditions)
+            .order_by(Ticket.created_at.desc(), Ticket.queue_number.desc())
+        )
+        tickets = list(result.scalars().all())
+
+        return [
+            await TicketService.build_ticket_response(db, ticket)
+            for ticket in tickets
+        ]
 
     @staticmethod
     async def get_my_window_tickets(
@@ -1697,6 +1729,7 @@ class TicketService:
             "iin": applicant.iin if applicant else None,
             "phone": applicant.phone if applicant else None,
             "service_name": service.name if service else None,
+            "service_code": service.code if service else None,
             "service_name_kk": service.name_kk if service else None,
             "service_name_en": service.name_en if service else None,
             "educational_program_name": educational_program.name if educational_program else None,

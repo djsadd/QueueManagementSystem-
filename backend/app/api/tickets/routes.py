@@ -285,6 +285,14 @@ async def get_tickets(
     return await TicketService.get_all_tickets(db)
 
 
+@tickets_router.get("/export", response_model=list[TicketResponse], dependencies=[Depends(require_admin)])
+async def export_tickets(
+    operator_id: uuid.UUID | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await TicketService.get_export_tickets(db, operator_id)
+
+
 @tickets_router.get("/{ticket_id}", response_model=TicketResponse, dependencies=[Depends(require_admin)])
 async def get_ticket(
     ticket_id: uuid.UUID,

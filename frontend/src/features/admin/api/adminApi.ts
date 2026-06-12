@@ -204,17 +204,21 @@ export type TicketItem = {
   applicant_id: string | null
   service_id: number
   educational_program_id: number | null
+  academic_degree_id?: number | null
   study_language: StudyLanguage | null
   full_name: string | null
   iin: string | null
   phone: string | null
   service_name: string | null
+  service_code?: string | null
   service_name_kk: string | null
   service_name_en: string | null
   educational_program_name: string | null
   educational_program_name_kk: string | null
   educational_program_name_en: string | null
   educational_program_code: string | null
+  academic_degree_name?: string | null
+  academic_degree_code?: string | null
   operator_id: string | null
   operator_name: string | null
   operator_email: string | null
@@ -224,6 +228,8 @@ export type TicketItem = {
   ticket_number: string
   queue_number: number
   priority: number
+  routing_key?: string | null
+  assignment_score?: number | null
   status: string
   estimated_wait: number | null
   created_at: string
@@ -271,6 +277,10 @@ export type ReceptionTicketParams = {
   service_id?: number
   page?: number
   page_size?: number
+}
+
+export type TicketExportParams = {
+  operator_id?: string
 }
 
 export type TicketServiceReassignPayload = {
@@ -329,6 +339,18 @@ export const adminApi = {
 
       const queryString = searchParams.toString()
       return request<ReceptionTickets>(`/tickets/reception${queryString ? `?${queryString}` : ''}`)
+    },
+    export: (params: TicketExportParams = {}) => {
+      const searchParams = new URLSearchParams()
+
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          searchParams.set(key, String(value))
+        }
+      })
+
+      const queryString = searchParams.toString()
+      return request<TicketItem[]>(`/tickets/export${queryString ? `?${queryString}` : ''}`)
     },
     acceptReceptionTicket: (id: string, payload: TicketAcceptPayload) =>
       request<TicketItem>(`/tickets/reception/${id}/accept`, { method: 'PATCH', body: payload }),

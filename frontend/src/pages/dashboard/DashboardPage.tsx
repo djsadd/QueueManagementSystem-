@@ -376,6 +376,7 @@ function Icon({ name }: { name: string }) {
       {name === 'history' && <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2" />}
       {name === 'chart' && <path d="M4 19V5M4 19h16M8 16V9M12 16V6M16 16v-4" />}
       {name === 'display' && <path d="M4 5h16v11H4zM8 20h8M12 16v4M8 9h3M13 9h3M8 12h8" />}
+      {name === 'download' && <path d="M12 4v10M8 10l4 4 4-4M5 20h14" />}
       {name === 'plus' && <path d="M12 5v14M5 12h14" />}
       {name === 'refresh' && <path d="M20 12a8 8 0 0 1-13.7 5.7M4 12A8 8 0 0 1 17.7 6.3M18 3v4h-4M6 21v-4h4" />}
       {name === 'sidebar-collapse' && <path d="M4 5h16v14H4zM9 5v14M15 9l-3 3 3 3" />}
@@ -743,6 +744,148 @@ function getTicketQueueWaitLabel(
 
 function getTicketStatusLabel(status: string) {
   return ticketStatusLabels[status] ?? status
+}
+
+function formatTicketExportDate(value: string | null) {
+  if (!value) {
+    return ''
+  }
+
+  const date = parseApiDate(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('ru-RU')
+}
+
+function getTicketProcessingMinutes(ticket: TicketItem) {
+  if (!ticket.called_at || !ticket.completed_at) {
+    return ''
+  }
+
+  const calledAt = parseApiDate(ticket.called_at).getTime()
+  const completedAt = parseApiDate(ticket.completed_at).getTime()
+
+  if (Number.isNaN(calledAt) || Number.isNaN(completedAt) || completedAt < calledAt) {
+    return ''
+  }
+
+  return String(Math.round((completedAt - calledAt) / 60000))
+}
+
+function getTicketWaitMinutes(ticket: TicketItem) {
+  const createdAt = parseApiDate(ticket.created_at).getTime()
+  const calledAt = ticket.called_at ? parseApiDate(ticket.called_at).getTime() : null
+
+  if (Number.isNaN(createdAt) || calledAt === null || Number.isNaN(calledAt) || calledAt < createdAt) {
+    return ''
+  }
+
+  return String(Math.round((calledAt - createdAt) / 60000))
+}
+
+function escapeCsvCell(value: string | number | null | undefined) {
+  const normalizedValue = value === null || value === undefined ? '' : String(value)
+  return `"${normalizedValue.replace(/"/g, '""')}"`
+}
+
+function downloadCsvFile(filename: string, rows: Array<Array<string | number | null | undefined>>) {
+  const csv = rows.map((row) => row.map(escapeCsvCell).join(';')).join('\r\n')
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+function sanitizeExportFilename(value: string) {
+  return value
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80) || 'tickets'
+}
+
+function downloadTicketExport(tickets: TicketItem[], scopeLabel: string) {
+  const header = [
+    'ID талона',
+    'Номер талона',
+    'Номер очереди',
+    'Статус',
+    'Статус RU',
+    'Приоритет',
+    'Ожидание, мин',
+    'Обслуживание, мин',
+    'Создан',
+    'Вызван',
+    'Начат',
+    'Завершен',
+    'Оператор ID',
+    'Оператор',
+    'Email оператора',
+    'Окно ID',
+    'Окно',
+    'Этаж',
+    'Услуга ID',
+    'Услуга',
+    'Код услуги',
+    'ОП ID',
+    'ОП',
+    'Код ОП',
+    'Степень',
+    'Код степени',
+    'Язык обучения',
+    'ИИН',
+    'ФИО',
+    'Телефон',
+    'Applicant ID',
+    'Routing key',
+    'Assignment score',
+    'Ожидание план, мин',
+  ]
+  const rows = tickets.map((ticket) => [
+    ticket.id,
+    ticket.ticket_number,
+    ticket.queue_number,
+    ticket.status,
+    getTicketStatusLabel(ticket.status),
+    ticket.priority,
+    getTicketWaitMinutes(ticket),
+    getTicketProcessingMinutes(ticket),
+    formatTicketExportDate(ticket.created_at),
+    formatTicketExportDate(ticket.called_at),
+    formatTicketExportDate(ticket.started_at),
+    formatTicketExportDate(ticket.completed_at),
+    ticket.operator_id,
+    ticket.operator_name,
+    ticket.operator_email,
+    ticket.window_id,
+    ticket.window_name,
+    ticket.window_floor,
+    ticket.service_id,
+    ticket.service_name,
+    ticket.service_code,
+    ticket.educational_program_id,
+    ticket.educational_program_name,
+    ticket.educational_program_code,
+    ticket.academic_degree_name,
+    ticket.academic_degree_code,
+    ticket.study_language ? getStudyLanguageLabel(ticket.study_language) : '',
+    ticket.iin,
+    ticket.full_name,
+    ticket.phone,
+    ticket.applicant_id,
+    ticket.routing_key,
+    ticket.assignment_score,
+    ticket.estimated_wait,
+  ])
+  const dateStamp = new Date().toISOString().slice(0, 10)
+
+  downloadCsvFile(`tickets-${sanitizeExportFilename(scopeLabel)}-${dateStamp}.csv`, [header, ...rows])
 }
 
 function getMyWindowTicketStatusClassName(status: string) {
@@ -1127,6 +1270,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [applicants, setApplicants] = useState<ApplicantItem[]>([])
   const [ticketEvents, setTicketEvents] = useState<TicketEventItem[]>([])
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
+  const [ticketExportingKey, setTicketExportingKey] = useState<string | null>(null)
   const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => getDefaultSummerDateRange().from)
   const [analyticsDateTo, setAnalyticsDateTo] = useState(() => getDefaultSummerDateRange().to)
   const [analyticsTimeGrouping, setAnalyticsTimeGrouping] = useState<AnalyticsTimeGrouping>('day')
@@ -2440,6 +2584,22 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
+  async function exportTicketsCsv(operatorId: string | null, scopeLabel: string) {
+    const exportKey = operatorId ?? 'all'
+
+    setTicketExportingKey(exportKey)
+    setError('')
+
+    try {
+      const tickets = await adminApi.tickets.export(operatorId ? { operator_id: operatorId } : {})
+      downloadTicketExport(tickets, scopeLabel)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось выгрузить талоны')
+    } finally {
+      setTicketExportingKey(null)
+    }
+  }
+
   const isEditing =
     (formModal === 'services' && editingServiceId !== null) ||
     (formModal === 'windows' && editingWindowId !== null) ||
@@ -2499,6 +2659,16 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       ? null
       : operatorAnalyticsRows[0] ?? null
   const selectedGeneralAnalytics = isAdminUser && selectedAnalyticsOperatorId === 'general'
+  const analyticsExportOperatorId =
+    selectedAnalyticsOperatorId && selectedAnalyticsOperatorId !== 'general' ? selectedAnalyticsOperatorId : null
+  const analyticsExportLabel = selectedOperatorAnalyticsRow
+    ? getAnalyticsOperatorLabel(
+        selectedOperatorAnalyticsRow.stats,
+        selectedOperatorAnalyticsRow.operator,
+        users,
+      )
+    : 'all-operators'
+  const analyticsExportKey = analyticsExportOperatorId ?? 'all'
   const selectedServiceAnalyticsRows = selectedOperatorAnalyticsRow?.stats.service_analytics ?? []
   const selectedRawDailyAnalyticsRows = selectedOperatorAnalyticsRow?.stats.daily_analytics ?? []
   const selectedDailyAnalyticsRows =
@@ -3394,6 +3564,19 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 ) : (
                   <span className="profile-label">Выберите сотрудника для детального отчета</span>
                 )}
+                <button
+                  className="secondary-action compact"
+                  type="button"
+                  disabled={ticketExportingKey !== null || loading}
+                  onClick={() => exportTicketsCsv(analyticsExportOperatorId, analyticsExportLabel)}
+                >
+                  <Icon name="download" />
+                  {ticketExportingKey === analyticsExportKey
+                    ? 'Выгрузка...'
+                    : analyticsExportOperatorId
+                      ? 'Выгрузить талоны'
+                      : 'Выгрузить все талоны'}
+                </button>
               </div>
             )}
 

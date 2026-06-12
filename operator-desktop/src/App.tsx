@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BellRing,
   CalendarClock,
@@ -20,6 +20,7 @@ import {
 import { api, ApiError } from './api/client'
 import { tokenStorage } from './api/tokenStorage'
 import type {
+  AuthTokens,
   AuthUser,
   EducationalProgramItem,
   MyWindowTickets,
@@ -31,6 +32,13 @@ import type {
 } from './types/domain'
 
 type View = 'window' | 'profile'
+type RealtimeState = 'connecting' | 'connected' | 'disconnected'
+
+const realtimeStatusLabels: Record<RealtimeState, string> = {
+  connected: 'Realtime WebSocket',
+  connecting: 'WebSocket connecting',
+  disconnected: 'WebSocket offline',
+}
 
 const windowStatusLabels: Record<WindowStatus, string> = {
   OPEN: 'Открыто',
@@ -97,6 +105,27 @@ function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
 }
 
+function getWebSocketBaseUrl(apiBaseUrl: string) {
+  const normalizedBaseUrl = apiBaseUrl.replace(/\/+$/, '')
+
+  if (normalizedBaseUrl.startsWith('ws://') || normalizedBaseUrl.startsWith('wss://')) {
+    return normalizedBaseUrl
+  }
+
+  if (normalizedBaseUrl.startsWith('http://') || normalizedBaseUrl.startsWith('https://')) {
+    return normalizedBaseUrl.replace(/^http/, 'ws')
+  }
+
+  const relativeBaseUrl = normalizedBaseUrl.startsWith('/') ? normalizedBaseUrl : `/${normalizedBaseUrl}`
+  return `${window.location.origin.replace(/^http/, 'ws')}${relativeBaseUrl}`
+}
+
+function getMyWindowWebSocketUrl(config: OperatorConfig, token: string) {
+  const url = new URL(`${getWebSocketBaseUrl(config.apiBaseUrl)}/ws/my-window`)
+  url.searchParams.set('token', token)
+  return url.toString()
+}
+
 function EmptyState({ title }: { title: string }) {
   return (
     <div className="flex min-h-[220px] items-center justify-center rounded-lg border border-dashed border-line bg-white/70 text-sm font-medium text-muted">
@@ -131,6 +160,7 @@ function App() {
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>('disconnected')
 
   const currentTicket = useMemo(
     () => myWindow?.tickets.find((ticket) => ticket.status === 'CALLED' && ticket.window_id === myWindow.window_id) ?? null,
@@ -192,6 +222,11 @@ function App() {
     },
     [search, statusFilter],
   )
+  const refreshWorkspaceRef = useRef(refreshWorkspace)
+
+  useEffect(() => {
+    refreshWorkspaceRef.current = refreshWorkspace
+  }, [refreshWorkspace])
 
   const loadProfile = useCallback(async () => {
     const [availableServices, myServices, availablePrograms, myPrograms] = await Promise.all([
@@ -235,6 +270,83 @@ function App() {
     return () => window.clearInterval(interval)
   }, [config, refreshWorkspace, user])
 
+  useEffect(() => {
+    if (!user || !config) {
+      setRealtimeState('disconnected')
+      return
+    }
+
+    const realtimeConfig = config
+    let socket: WebSocket | null = null
+    let reconnectTimer: number | undefined
+    let refreshTimer: number | undefined
+    let closed = false
+
+    async function refreshRealtimeToken() {
+      const refreshToken = tokenStorage.getRefreshToken()
+      if (!refreshToken) return null
+
+      const response = await window.operatorBridge.apiRequest<AuthTokens>({
+        path: '/auth/refresh',
+        method: 'POST',
+        body: { refresh_token: refreshToken },
+      })
+
+      if (!response.ok) {
+        tokenStorage.clearTokens()
+        return null
+      }
+
+      tokenStorage.setTokens(response.payload.access_token, response.payload.refresh_token)
+      return response.payload.access_token
+    }
+
+    async function connect(forceTokenRefresh = false) {
+      setRealtimeState('connecting')
+
+      let accessToken = tokenStorage.getAccessToken()
+      if (forceTokenRefresh || !accessToken) {
+        accessToken = await refreshRealtimeToken()
+      }
+
+      if (!accessToken || closed) {
+        setRealtimeState('disconnected')
+        return
+      }
+
+      socket = new WebSocket(getMyWindowWebSocketUrl(realtimeConfig, accessToken))
+
+      socket.onopen = () => setRealtimeState('connected')
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data) as { type?: string }
+          if (message.type !== 'my_window.updated') return
+        } catch {
+          return
+        }
+
+        window.clearTimeout(refreshTimer)
+        refreshTimer = window.setTimeout(() => void refreshWorkspaceRef.current(true), 120)
+      }
+      socket.onclose = (event) => {
+        if (closed) return
+
+        setRealtimeState('disconnected')
+        reconnectTimer = window.setTimeout(() => void connect(event.code === 1008), 2500)
+      }
+      socket.onerror = () => socket?.close()
+    }
+
+    void connect()
+
+    return () => {
+      closed = true
+      window.clearTimeout(reconnectTimer)
+      window.clearTimeout(refreshTimer)
+      socket?.close()
+    }
+  }, [config, user])
+
   async function login(event: React.FormEvent) {
     event.preventDefault()
     setSaving(true)
@@ -259,6 +371,7 @@ function App() {
   function logout() {
     tokenStorage.clearTokens()
     if (!config?.rememberEmail) tokenStorage.clearEmail()
+    setRealtimeState('disconnected')
     setUser(null)
     setMyWindow(null)
     setPassword('')
@@ -545,6 +658,10 @@ function App() {
                 Обновлено {lastRefresh.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
               </span>
             )}
+            <span className={classNames('realtime-badge', `realtime-badge-${realtimeState}`)}>
+              <span className="realtime-dot" aria-hidden="true" />
+              {realtimeStatusLabels[realtimeState]}
+            </span>
             <button className="ghost-button" onClick={() => refreshWorkspace()} disabled={saving}>
               <RefreshCw className="h-5 w-5" />
               Обновить

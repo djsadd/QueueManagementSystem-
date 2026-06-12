@@ -12,13 +12,14 @@ if errorlevel 1 (
 if not exist "node_modules" npm install
 if errorlevel 1 exit /b 1
 
-call npm run build
+call npm run package
 if errorlevel 1 exit /b 1
 
 if not exist "bin" mkdir "bin"
 if not exist "bin\operator.config" copy /Y "operator.config.example" "bin\operator.config" >nul
+if not exist "bin-electron\operator.config" copy /Y "operator.config.example" "bin-electron\operator.config" >nul
 
-echo Built: %~dp0dist and %~dp0dist-electron
-echo Run:   %~dp0start.cmd
+echo Built: %~dp0bin-electron\Queue Operator CRM.exe
+echo Config: %~dp0bin-electron\operator.config
 
 popd
