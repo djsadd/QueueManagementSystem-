@@ -898,6 +898,20 @@ function downloadTicketExport(tickets: TicketItem[], scopeLabel: string) {
   downloadCsvFile(`tickets-${sanitizeExportFilename(scopeLabel)}-${dateStamp}.csv`, [header, ...rows])
 }
 
+function downloadUserLoginExport(users: UserItem[]) {
+  const header = ['ID', 'ФИО', 'Логин / email', 'Роль', 'Активен']
+  const rows = users.map((user) => [
+    user.id,
+    user.full_name,
+    user.email,
+    user.role,
+    boolLabel(user.is_active),
+  ])
+  const dateStamp = new Date().toISOString().slice(0, 10)
+
+  downloadCsvFile(`user-logins-${dateStamp}.csv`, [header, ...rows])
+}
+
 function getMyWindowTicketStatusClassName(status: string) {
   if (status === 'WAITING') {
     return 'pill status-waiting'
@@ -3241,6 +3255,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               <Icon name="plus" />
               Создать
             </button>
+            {activeSection === 'users' && (
+              <button className="secondary-action" type="button" onClick={() => downloadUserLoginExport(users)}>
+                <Icon name="download" />
+                Выгрузить логины
+              </button>
+            )}
           </div>
         )}
 
