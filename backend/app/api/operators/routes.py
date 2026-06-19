@@ -16,6 +16,7 @@ from app.schemas.education import (
 from app.schemas.operator import (
     OperatorCreate,
     OperatorResponse,
+    OperatorServiceResponse,
     OperatorServicesUpdate,
     OperatorUpdate,
 )
@@ -60,7 +61,7 @@ async def get_my_operator(
     return await get_current_operator(db, current_user)
 
 
-@operators_router.get("/me/services", response_model=list[ServiceResponse])
+@operators_router.get("/me/services", response_model=list[OperatorServiceResponse])
 async def get_my_operator_services(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -69,14 +70,19 @@ async def get_my_operator_services(
     return await OperatorServiceTypeService.get_for_operator(db, operator.id)
 
 
-@operators_router.put("/me/services", response_model=list[ServiceResponse])
+@operators_router.put("/me/services", response_model=list[OperatorServiceResponse])
 async def replace_my_operator_services(
     data: OperatorServicesUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     operator = await get_current_operator(db, current_user)
-    return await OperatorServiceTypeService.replace_for_operator(db, operator.id, data.service_ids)
+    return await OperatorServiceTypeService.replace_for_operator(
+        db,
+        operator.id,
+        data.service_ids,
+        data.service_languages_by_service,
+    )
 
 
 @operators_router.get("/me/educational-programs", response_model=list[EducationalProgramResponse])
@@ -193,7 +199,7 @@ async def delete_operator(operator_id: uuid.UUID, db: AsyncSession = Depends(get
 
 @operators_router.get(
     "/{operator_id}/services",
-    response_model=list[ServiceResponse],
+    response_model=list[OperatorServiceResponse],
     dependencies=[Depends(require_admin)],
 )
 async def get_operator_services(operator_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
@@ -202,7 +208,7 @@ async def get_operator_services(operator_id: uuid.UUID, db: AsyncSession = Depen
 
 @operators_router.put(
     "/{operator_id}/services",
-    response_model=list[ServiceResponse],
+    response_model=list[OperatorServiceResponse],
     dependencies=[Depends(require_admin)],
 )
 async def replace_operator_services(
@@ -214,4 +220,5 @@ async def replace_operator_services(
         db,
         operator_id,
         data.service_ids,
+        data.service_languages_by_service,
     )

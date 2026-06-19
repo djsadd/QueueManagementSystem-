@@ -45,6 +45,8 @@ class Ticket(Base):
 
     study_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
+    service_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     operator_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid,
         ForeignKey("operators.id"),

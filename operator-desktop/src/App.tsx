@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react'
 import {
   BellRing,
   CalendarClock,
@@ -19,20 +20,50 @@ import {
 } from 'lucide-react'
 import { api, ApiError } from './api/client'
 import { tokenStorage } from './api/tokenStorage'
+import platonusLogoUrl from '../platonus logo.png'
 import type {
   AuthTokens,
   AuthUser,
   EducationalProgramItem,
   MyWindowTickets,
   OperatorConfig,
+  ServiceLanguage,
   ServiceItem,
   StudyLanguage,
   TicketItem,
   WindowStatus,
 } from './types/domain'
 
-type View = 'window' | 'profile'
+type View = 'window' | 'profile' | 'platonus'
 type RealtimeState = 'connecting' | 'connected' | 'disconnected'
+type PlatonusWebviewElement = HTMLElement & {
+  getURL?: () => string
+  reload?: () => void
+  loadURL?: (url: string) => void
+  capturePage?: () => Promise<PlatonusCaptureImage>
+}
+type PlatonusCaptureImage = {
+  getSize?: () => { width: number; height: number }
+  resize?: (options: { width?: number; height?: number }) => PlatonusCaptureImage
+  toJPEG?: (quality: number) => { toString: (encoding: string) => string }
+  toDataURL?: () => string
+}
+type PlatonusInputEvent =
+  | { type: 'mouseMove' | 'mouseDown' | 'mouseUp'; x: number; y: number; button?: 'left' | 'right' | 'middle'; clickCount?: number }
+  | { type: 'mouseWheel'; deltaX?: number; deltaY?: number }
+  | { type: 'keyDown' | 'keyUp' | 'char'; keyCode: string }
+
+const PLATONUS_URL = 'https://platonus.tau-edu.kz'
+const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
+  { value: 'KAZAKH', label: 'KAZ' },
+  { value: 'RUSSIAN', label: 'RUS' },
+  { value: 'ENGLISH', label: 'ENG' },
+]
+const defaultServiceLanguages: ServiceLanguage[] = serviceLanguageOptions.map((option) => option.value)
+const PLATONUS_REMOTE_PREVIEW_MS = 90
+const PLATONUS_STREAM_FRAME_MS = 33
+const PLATONUS_STREAM_MAX_WIDTH = 1920
+const PLATONUS_STREAM_JPEG_QUALITY = 92
 
 const realtimeStatusLabels: Record<RealtimeState, string> = {
   connected: 'Realtime WebSocket',
@@ -113,6 +144,25 @@ function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
 }
 
+function normalizeServiceLanguages(languages: ServiceLanguage[] | undefined) {
+  if (!languages || languages.length === 0) return defaultServiceLanguages
+
+  const selected = defaultServiceLanguages.filter((language) => languages.includes(language))
+  return selected.length > 0 ? selected : defaultServiceLanguages
+}
+
+function buildServiceLanguagesPayload(
+  serviceIds: number[],
+  serviceLanguages: Record<number, ServiceLanguage[]>,
+) {
+  return Object.fromEntries(
+    serviceIds.map((serviceId) => [
+      serviceId,
+      normalizeServiceLanguages(serviceLanguages[serviceId]),
+    ]),
+  )
+}
+
 function getWebSocketBaseUrl(apiBaseUrl: string) {
   const normalizedBaseUrl = apiBaseUrl.replace(/\/+$/, '')
 
@@ -142,12 +192,345 @@ function EmptyState({ title }: { title: string }) {
   )
 }
 
+function getKeyboardCode(event: ReactKeyboardEvent<HTMLElement>) {
+  const keyMap: Record<string, string> = {
+    ArrowDown: 'Down',
+    ArrowLeft: 'Left',
+    ArrowRight: 'Right',
+    ArrowUp: 'Up',
+    Backspace: 'Backspace',
+    Delete: 'Delete',
+    Enter: 'Enter',
+    Escape: 'Escape',
+    Tab: 'Tab',
+  }
+
+  return keyMap[event.key] ?? event.key
+}
+
+function getPointerButton(button: number): 'left' | 'right' | 'middle' {
+  if (button === 1) return 'middle'
+  if (button === 2) return 'right'
+  return 'left'
+}
+
+function getPlatonusCaptureFrame(
+  image: PlatonusCaptureImage,
+  maxWidth = 1280,
+  jpegQuality = 76,
+) {
+  const size = image.getSize?.()
+  const preview = size && size.width > maxWidth && image.resize ? image.resize({ width: maxWidth }) : image
+  if (preview.toJPEG) {
+    return `data:image/jpeg;base64,${preview.toJPEG(jpegQuality).toString('base64')}`
+  }
+  return preview.toDataURL?.() ?? null
+}
+
+function PlatonusRemoteController({ url }: { url: string }) {
+  const controllerRef = useRef<HTMLDivElement | null>(null)
+  const imageRef = useRef<HTMLImageElement | null>(null)
+  const [frame, setFrame] = useState<string | null>(null)
+
+  const sendInput = useCallback((event: PlatonusInputEvent) => {
+    window.operatorBridge.sendPlatonusInput(event).catch((err) => {
+      console.error('Platonus remote input failed', err)
+    })
+  }, [])
+
+  const getNormalizedPoint = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const controller = controllerRef.current
+    const image = imageRef.current
+    if (!controller || !image?.naturalWidth || !image.naturalHeight) return null
+
+    const rect = controller.getBoundingClientRect()
+    const imageRatio = image.naturalWidth / image.naturalHeight
+    const containerRatio = rect.width / rect.height
+    const renderWidth = containerRatio > imageRatio ? rect.height * imageRatio : rect.width
+    const renderHeight = containerRatio > imageRatio ? rect.height : rect.width / imageRatio
+    const offsetX = rect.left + (rect.width - renderWidth) / 2
+    const offsetY = rect.top + (rect.height - renderHeight) / 2
+    const x = (event.clientX - offsetX) / renderWidth
+    const y = (event.clientY - offsetY) / renderHeight
+
+    if (x < 0 || x > 1 || y < 0 || y > 1) return null
+    return { x, y }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | undefined
+
+    const capture = async () => {
+      try {
+        const result = await window.operatorBridge.capturePlatonusDisplay()
+        if (!cancelled && result.ok && result.frame) {
+          setFrame(result.frame)
+        }
+      } catch (err) {
+        console.error('Platonus remote preview failed', err)
+      } finally {
+        if (!cancelled) {
+          timer = window.setTimeout(capture, PLATONUS_REMOTE_PREVIEW_MS)
+        }
+      }
+    }
+
+    window.operatorBridge
+      .openPlatonusDisplay({ url })
+      .then(() => {
+        if (!cancelled) capture()
+      })
+      .catch((err) => {
+        console.error('Platonus remote display failed', err)
+      })
+
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [url])
+
+  const handlePointer = (type: 'mouseMove' | 'mouseDown' | 'mouseUp', event: ReactPointerEvent<HTMLElement>) => {
+    const point = getNormalizedPoint(event)
+    if (!point) return
+
+    controllerRef.current?.focus()
+    event.preventDefault()
+    sendInput({
+      type,
+      ...point,
+      button: getPointerButton(event.button),
+      clickCount: event.detail || 1,
+    })
+  }
+
+  const handleWheel = (event: ReactWheelEvent<HTMLElement>) => {
+    event.preventDefault()
+    sendInput({
+      type: 'mouseWheel',
+      deltaX: -event.deltaX,
+      deltaY: -event.deltaY,
+    })
+  }
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    event.preventDefault()
+    const keyCode = getKeyboardCode(event)
+    sendInput({ type: 'keyDown', keyCode })
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      sendInput({ type: 'char', keyCode: event.key })
+    }
+  }
+
+  const handleKeyUp = (event: ReactKeyboardEvent<HTMLElement>) => {
+    event.preventDefault()
+    sendInput({ type: 'keyUp', keyCode: getKeyboardCode(event) })
+  }
+
+  return (
+    <section
+      ref={controllerRef}
+      className="platonus-remote-controller"
+      tabIndex={0}
+      onPointerMove={(event) => handlePointer('mouseMove', event)}
+      onPointerDown={(event) => handlePointer('mouseDown', event)}
+      onPointerUp={(event) => handlePointer('mouseUp', event)}
+      onWheel={handleWheel}
+      onKeyDown={handleKeyDown}
+      onKeyUp={handleKeyUp}
+    >
+      {frame ? (
+        <img ref={imageRef} className="platonus-remote-frame" src={frame} alt="" draggable={false} />
+      ) : (
+        <div className="platonus-remote-status">Открываю Platonus на втором экране...</div>
+      )}
+    </section>
+  )
+}
+
+function PlatonusView({
+  onUrlChange,
+  streamActive,
+  visible,
+}: {
+  onUrlChange: (url: string) => void
+  streamActive: boolean
+  visible: boolean
+}) {
+  const shellRef = useRef<HTMLElement | null>(null)
+  const webviewRef = useRef<HTMLElement | null>(null)
+  const retryRef = useRef(false)
+  const visibleRef = useRef(visible)
+
+  useEffect(() => {
+    visibleRef.current = visible
+  }, [visible])
+
+  useEffect(() => {
+    const shell = shellRef.current
+    const webview = webviewRef.current
+    if (!shell || !webview) return
+
+    const syncWebviewSize = () => {
+      const { width, height } = shell.getBoundingClientRect()
+      webview.style.width = `${Math.max(1, Math.floor(width))}px`
+      webview.style.height = `${Math.max(1, Math.floor(height))}px`
+    }
+
+    syncWebviewSize()
+    const resizeObserver = new ResizeObserver(syncWebviewSize)
+    resizeObserver.observe(shell)
+    window.addEventListener('resize', syncWebviewSize)
+
+    return () => {
+      resizeObserver.disconnect()
+      window.removeEventListener('resize', syncWebviewSize)
+    }
+  }, [])
+
+  useEffect(() => {
+    const webview = webviewRef.current as PlatonusWebviewElement | null
+    if (!webview) return
+
+    const syncUrl = () => {
+      try {
+        const url = webview.getURL?.()
+        if (url) onUrlChange(url)
+      } catch {
+        onUrlChange(PLATONUS_URL)
+      }
+    }
+
+    webview.addEventListener('dom-ready', syncUrl)
+    webview.addEventListener('did-navigate', syncUrl)
+    webview.addEventListener('did-navigate-in-page', syncUrl)
+
+    return () => {
+      webview.removeEventListener('dom-ready', syncUrl)
+      webview.removeEventListener('did-navigate', syncUrl)
+      webview.removeEventListener('did-navigate-in-page', syncUrl)
+    }
+  }, [onUrlChange])
+
+  useEffect(() => {
+    const webview = webviewRef.current as PlatonusWebviewElement | null
+    if (!webview) return
+
+    const handleReady = () => {
+      retryRef.current = false
+    }
+    const handleFail = (event: Event) => {
+      const errorCode = 'errorCode' in event ? Number(event.errorCode) : 0
+      const validatedUrl = 'validatedURL' in event ? String(event.validatedURL) : ''
+
+      if (retryRef.current || errorCode === -3 || (validatedUrl && !validatedUrl.startsWith(PLATONUS_URL))) {
+        return
+      }
+
+      retryRef.current = true
+      window.setTimeout(() => {
+        webview.loadURL?.(PLATONUS_URL)
+        webview.reload?.()
+      }, 500)
+    }
+
+    webview.addEventListener('dom-ready', handleReady)
+    webview.addEventListener('did-fail-load', handleFail)
+
+    return () => {
+      webview.removeEventListener('dom-ready', handleReady)
+      webview.removeEventListener('did-fail-load', handleFail)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!streamActive) {
+      window.operatorBridge.closePlatonusStreamDisplay().catch((err) => {
+        console.error('Platonus stream close failed', err)
+      })
+      return
+    }
+
+    let cancelled = false
+    let timer: number | undefined
+
+    const capture = async () => {
+      const startedAt = performance.now()
+
+      try {
+        const shell = shellRef.current
+        const webview = webviewRef.current as PlatonusWebviewElement | null
+        const rect = shell?.getBoundingClientRect()
+
+        if (!cancelled && visibleRef.current && rect && rect.width > 1 && rect.height > 1) {
+          await window.operatorBridge.streamMainWindowArea({
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            maxWidth: PLATONUS_STREAM_MAX_WIDTH,
+            quality: PLATONUS_STREAM_JPEG_QUALITY,
+          })
+        } else if (!cancelled) {
+          const image = await webview?.capturePage?.()
+          const frame = image
+            ? getPlatonusCaptureFrame(image, PLATONUS_STREAM_MAX_WIDTH, PLATONUS_STREAM_JPEG_QUALITY)
+            : null
+
+          if (frame) {
+            window.operatorBridge.updatePlatonusStreamFrame(frame)
+          }
+        }
+      } catch (err) {
+        console.error('Platonus stream capture failed', err)
+      } finally {
+        if (!cancelled) {
+          timer = window.setTimeout(capture, Math.max(0, PLATONUS_STREAM_FRAME_MS - (performance.now() - startedAt)))
+        }
+      }
+    }
+
+    window.operatorBridge
+      .openPlatonusStreamDisplay()
+      .then(() => {
+        if (!cancelled) capture()
+      })
+      .catch((err) => {
+        console.error('Platonus stream display failed', err)
+      })
+
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+      window.operatorBridge.closePlatonusStreamDisplay().catch((err) => {
+        console.error('Platonus stream close failed', err)
+      })
+    }
+  }, [streamActive])
+
+  return (
+    <section ref={shellRef} className={classNames('platonus-shell', !visible && 'platonus-shell-parked')}>
+      <webview
+        ref={webviewRef}
+        className="platonus-webview"
+        style={{ width: '100%', height: '100%' }}
+        src={PLATONUS_URL}
+        partition="persist:platonus"
+        webpreferences="backgroundThrottling=no"
+        allowpopups={true}
+      />
+    </section>
+  )
+}
+
 function App() {
   const [config, setConfig] = useState<OperatorConfig | null>(null)
   const [user, setUser] = useState<AuthUser | null>(null)
   const [myWindow, setMyWindow] = useState<MyWindowTickets | null>(null)
   const [services, setServices] = useState<ServiceItem[]>([])
   const [selectedServices, setSelectedServices] = useState<number[]>([])
+  const [selectedServiceLanguages, setSelectedServiceLanguages] = useState<Record<number, ServiceLanguage[]>>({})
   const [programs, setPrograms] = useState<EducationalProgramItem[]>([])
   const [selectedPrograms, setSelectedPrograms] = useState<number[]>([])
   const [view, setView] = useState<View>('window')
@@ -155,11 +538,14 @@ function App() {
   const [password, setPassword] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [platonusDisplayUrl, setPlatonusDisplayUrl] = useState(PLATONUS_URL)
+  const [platonusRemoteActive, setPlatonusRemoteActive] = useState(false)
   const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null)
   const [acceptIin, setAcceptIin] = useState('')
   const [acceptStudyLanguage, setAcceptStudyLanguage] = useState<StudyLanguage | ''>('')
   const [reassignServiceId, setReassignServiceId] = useState('')
   const [reassignProgramId, setReassignProgramId] = useState('')
+  const [reassignServiceLanguage, setReassignServiceLanguage] = useState<ServiceLanguage | ''>('')
   const [reassignServiceQuery, setReassignServiceQuery] = useState('')
   const [reassignProgramQuery, setReassignProgramQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -203,6 +589,7 @@ function App() {
     )
   }, [activePrograms, reassignProgramQuery])
   const canCallNext = Boolean(myWindow && myWindow.window_status === 'OPEN')
+  const activeViewTitle = view === 'window' ? 'Мое окно' : view === 'profile' ? 'Профиль оператора' : 'Platonus'
 
   const refreshWorkspace = useCallback(
     async (silent = false) => {
@@ -246,6 +633,14 @@ function App() {
 
     setServices(availableServices)
     setSelectedServices(myServices.map((service) => service.id))
+    setSelectedServiceLanguages(
+      Object.fromEntries(
+        myServices.map((service) => [
+          service.id,
+          normalizeServiceLanguages(service.service_languages),
+        ]),
+      ),
+    )
     setPrograms(availablePrograms)
     setSelectedPrograms(myPrograms.map((program) => program.id))
   }, [])
@@ -384,6 +779,23 @@ function App() {
     setMyWindow(null)
     setPassword('')
     setView('window')
+  }
+
+  function togglePlatonusStream() {
+    if (!platonusRemoteActive) {
+      setPlatonusRemoteActive(true)
+      return
+    }
+
+    setPlatonusRemoteActive(false)
+    window.operatorBridge
+      .openDisplay({
+        accessToken: tokenStorage.getAccessToken(),
+        refreshToken: tokenStorage.getRefreshToken(),
+      })
+      .catch((err) => {
+        console.error('Queue display restore failed', err)
+      })
   }
 
   async function runAction(action: () => Promise<unknown>, successText: string) {
@@ -539,6 +951,11 @@ function App() {
       return
     }
 
+    if (selectedReassignService?.requires_service_language && !reassignServiceLanguage) {
+      setActionError('Выберите язык обслуживания')
+      return
+    }
+
     setSaving(true)
     setMessage('')
     setActionError('')
@@ -548,6 +965,9 @@ function App() {
       await api.tickets.reassignService(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
+        service_language: selectedReassignService.requires_service_language
+          ? (reassignServiceLanguage || null)
+          : null,
       })
       closeTicketDetails()
       setMessage('Услуга талона переназначена')
@@ -561,8 +981,19 @@ function App() {
 
   async function saveServices() {
     await runAction(async () => {
-      const updated = await api.operator.setServices(selectedServices)
+      const updated = await api.operator.setServices(
+        selectedServices,
+        buildServiceLanguagesPayload(selectedServices, selectedServiceLanguages),
+      )
       setSelectedServices(updated.map((service) => service.id))
+      setSelectedServiceLanguages(
+        Object.fromEntries(
+          updated.map((service) => [
+            service.id,
+            normalizeServiceLanguages(service.service_languages),
+          ]),
+        ),
+      )
     }, 'Услуги обновлены')
   }
 
@@ -623,7 +1054,7 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-shell text-ink">
+    <main className="h-screen overflow-hidden bg-shell text-ink">
       <aside className="fixed inset-y-0 left-0 z-10 flex w-[86px] flex-col items-center border-r border-line bg-white py-5">
         <div className="grid h-12 w-12 place-items-center rounded-lg bg-brand text-white">
           <DoorOpen className="h-7 w-7" />
@@ -643,17 +1074,24 @@ function App() {
           >
             <Settings2 className="h-6 w-6" />
           </button>
+          <button
+            className={classNames('rail-button', view === 'platonus' && 'rail-button-active')}
+            title="Platonus"
+            onClick={() => setView('platonus')}
+          >
+            <img className="h-7 w-7 rounded-sm bg-white object-contain p-0.5" src={platonusLogoUrl} alt="" />
+          </button>
         </nav>
         <button className="rail-button" title="Выйти" onClick={logout}>
           <LogOut className="h-6 w-6" />
         </button>
       </aside>
 
-      <section className="ml-[86px] min-h-screen">
-        <header className="sticky top-0 z-[5] flex min-h-[82px] items-center justify-between border-b border-line bg-white/95 px-8 backdrop-blur">
+      <section className="ml-[86px] flex h-screen min-w-0 flex-col">
+        <header className="z-[5] flex min-h-[82px] shrink-0 items-center justify-between border-b border-line bg-white/95 px-8 backdrop-blur">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-semibold tracking-normal">{view === 'window' ? 'Мое окно' : 'Профиль оператора'}</h1>
+              <h1 className="text-2xl font-semibold tracking-normal">{activeViewTitle}</h1>
               <span className="status-pill status-pill-neutral">{user.role}</span>
             </div>
             <p className="mt-1 text-sm text-muted">{user.full_name} · {user.email}</p>
@@ -674,6 +1112,15 @@ function App() {
               <RefreshCw className="h-5 w-5" />
               Обновить
             </button>
+            {(view === 'platonus' || platonusRemoteActive) && (
+              <button
+                className={platonusRemoteActive ? 'danger-button' : 'primary-button'}
+                onClick={togglePlatonusStream}
+              >
+                <MonitorUp className="h-5 w-5" />
+                {platonusRemoteActive ? 'Остановить трансляцию Platonus' : 'Транслировать Platonus'}
+              </button>
+            )}
             <button
               className="primary-button"
               onClick={() =>
@@ -689,8 +1136,8 @@ function App() {
           </div>
         </header>
 
-        <div className="p-8">
-          {(error || message) && (
+        <div className={classNames('relative min-h-0 flex-1', view === 'platonus' ? 'overflow-hidden p-0' : 'overflow-auto p-8')}>
+          {view !== 'platonus' && (error || message) && (
             <div
               className={classNames(
                 'mb-6 rounded-lg border px-4 py-3 text-sm font-medium',
@@ -843,16 +1290,65 @@ function App() {
                 )}
               </section>
             </div>
-          ) : (
+          ) : view === 'profile' ? (
             <div className="grid gap-6 xl:grid-cols-2">
               <ProfileList
                 title="Услуги"
                 items={services}
                 selectedIds={selectedServices}
-                onChange={setSelectedServices}
+                onChange={(nextServiceIds) => {
+                  setSelectedServices(nextServiceIds)
+                  setSelectedServiceLanguages((current) =>
+                    Object.fromEntries(
+                      nextServiceIds.map((serviceId) => [
+                        serviceId,
+                        normalizeServiceLanguages(current[serviceId]),
+                      ]),
+                    ),
+                  )
+                }}
                 onSave={saveServices}
                 saving={saving}
               />
+              {selectedServices.some((serviceId) => services.find((service) => service.id === serviceId)?.requires_service_language) ? (
+                <section className="panel p-6">
+                  <h2 className="mb-4 text-xl font-semibold tracking-normal">Языки обслуживания</h2>
+                  <div className="space-y-3">
+                    {selectedServices
+                      .map((serviceId) => services.find((service) => service.id === serviceId))
+                      .filter((service): service is ServiceItem => Boolean(service?.requires_service_language))
+                      .map((service) => (
+                        <div className="rounded-lg border border-line bg-slate-50 p-4" key={service.id}>
+                          <strong className="block">{service.name}</strong>
+                          <div className="mt-3 flex flex-wrap gap-3">
+                            {serviceLanguageOptions.map((option) => {
+                              const checked = normalizeServiceLanguages(selectedServiceLanguages[service.id]).includes(option.value)
+
+                              return (
+                                <label className="inline-flex items-center gap-2 text-sm font-semibold" key={option.value}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) => {
+                                      const current = normalizeServiceLanguages(selectedServiceLanguages[service.id])
+                                      setSelectedServiceLanguages({
+                                        ...selectedServiceLanguages,
+                                        [service.id]: event.target.checked
+                                          ? normalizeServiceLanguages([...current, option.value])
+                                          : current.filter((language) => language !== option.value),
+                                      })
+                                    }}
+                                  />
+                                  {option.label}
+                                </label>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </section>
+              ) : null}
               <ProfileList
                 title="Образовательные программы"
                 items={programs}
@@ -884,7 +1380,13 @@ function App() {
                 </div>
               </section>
             </div>
-          )}
+          ) : null}
+
+          <PlatonusView
+            onUrlChange={setPlatonusDisplayUrl}
+            streamActive={platonusRemoteActive}
+            visible={view === 'platonus'}
+          />
         </div>
       </section>
 
@@ -974,6 +1476,7 @@ function App() {
                       selectedTicket.educational_program_id === null ? '' : String(selectedTicket.educational_program_id)
 
                     setReassignServiceId(nextServiceId)
+                    setReassignServiceLanguage('')
                     setReassignProgramQuery('')
                     setReassignProgramId(service?.requires_educational_program ? reassignProgramId || currentProgramId : '')
                   }}
@@ -988,6 +1491,28 @@ function App() {
                 {activeServices.length === 0 && <div className="touch-choice-empty">Активных услуг пока нет</div>}
                 {activeServices.length > 0 && filteredReassignServices.length === 0 && (
                   <div className="touch-choice-empty">Услуги не найдены</div>
+                )}
+              </div>
+
+              <div className="touch-choice-field">
+                <span className="profile-label">Язык обслуживания</span>
+                {selectedReassignService?.requires_service_language ? (
+                  <select
+                    className="reassign-select"
+                    disabled={saving}
+                    required={selectedReassignService.requires_service_language}
+                    value={reassignServiceLanguage}
+                    onChange={(event) => setReassignServiceLanguage(event.target.value as ServiceLanguage | '')}
+                  >
+                    <option value="">Выберите язык обслуживания</option>
+                    {serviceLanguageOptions.map((option) => (
+                      <option value={option.value} key={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="touch-choice-empty">Не требуется</div>
                 )}
               </div>
 

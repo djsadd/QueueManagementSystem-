@@ -6,6 +6,7 @@ import type {
   MyWindowTickets,
   OperatorItem,
   OperatorStatus,
+  ServiceLanguage,
   ServiceItem,
   TicketItem,
   WindowStatus,
@@ -120,8 +121,11 @@ export const api = {
     me: () => request<OperatorItem>('/operators/me'),
     availableServices: () => request<ServiceItem[]>('/operators/me/available-services'),
     services: () => request<ServiceItem[]>('/operators/me/services'),
-    setServices: (serviceIds: number[]) =>
-      request<ServiceItem[]>('/operators/me/services', { method: 'PUT', body: { service_ids: serviceIds } }),
+    setServices: (serviceIds: number[], serviceLanguagesByService: Record<number, ServiceLanguage[]> = {}) =>
+      request<ServiceItem[]>('/operators/me/services', {
+        method: 'PUT',
+        body: { service_ids: serviceIds, service_languages_by_service: serviceLanguagesByService },
+      }),
     availablePrograms: () => request<EducationalProgramItem[]>('/operators/me/available-educational-programs'),
     programs: () => request<EducationalProgramItem[]>('/operators/me/educational-programs'),
     setPrograms: (educationalProgramIds: number[]) =>
@@ -154,7 +158,10 @@ export const api = {
         method: 'PATCH',
         body: { study_language },
       }),
-    reassignService: (id: string, payload: { service_id: number; educational_program_id: number | null }) =>
+    reassignService: (
+      id: string,
+      payload: { service_id: number; educational_program_id: number | null; service_language?: ServiceLanguage | null },
+    ) =>
       request<TicketItem>(`/tickets/my-window/${id}/service`, { method: 'PATCH', body: payload }),
   },
 }

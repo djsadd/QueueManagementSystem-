@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -24,6 +24,8 @@ class Service(Base):
 
     requires_reception_desk: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    requires_service_language: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 class OperatorService(Base):
     __tablename__ = "operator_services"
@@ -40,3 +42,4 @@ class OperatorService(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    service_languages: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

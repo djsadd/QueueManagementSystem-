@@ -14,14 +14,20 @@ import {
   X,
 } from 'lucide-react'
 import logoUrl from '../../frontend/src/assets/Logo+RGB.png'
-import type { TerminalConfig, TerminalLanguage, TerminalProgram, TerminalService, TerminalTicket } from './types'
+import type { ServiceLanguage, TerminalConfig, TerminalLanguage, TerminalProgram, TerminalService, TerminalTicket } from './types'
 
-type ModalKind = 'programs' | null
+type ModalKind = 'programs' | 'service-language' | null
 
 const languages: Array<{ value: TerminalLanguage; label: string }> = [
   { value: 'kk', label: 'Қаз' },
   { value: 'ru', label: 'Рус' },
   { value: 'en', label: 'Eng' },
+]
+
+const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
+  { value: 'KAZAKH', label: 'KAZ' },
+  { value: 'RUSSIAN', label: 'RUS' },
+  { value: 'ENGLISH', label: 'ENG' },
 ]
 
 const translations = {
@@ -168,6 +174,7 @@ function App() {
   const [programs, setPrograms] = useState<TerminalProgram[]>([])
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null)
   const [selectedProgramId, setSelectedProgramId] = useState<number | null>(null)
+  const [selectedServiceLanguage, setSelectedServiceLanguage] = useState<ServiceLanguage | null>(null)
   const [programQuery, setProgramQuery] = useState('')
   const [modal, setModal] = useState<ModalKind>(null)
   const [lastTicket, setLastTicket] = useState<TerminalTicket | null>(null)
@@ -186,6 +193,7 @@ function App() {
     [programs, selectedProgramId],
   )
   const mustSelectProgram = Boolean(selectedService?.requires_educational_program)
+  const mustSelectServiceLanguage = Boolean(selectedService?.requires_service_language)
   const filteredPrograms = useMemo(() => {
     const query = programQuery.trim().toLowerCase()
     if (!query) return programs
@@ -245,10 +253,12 @@ function App() {
   function selectService(service: TerminalService) {
     setSelectedServiceId(service.id)
     setSelectedProgramId(null)
+    setSelectedServiceLanguage(null)
     setLastTicket(null)
     setMessage('')
     setError('')
-    if (service.requires_educational_program) setModal('programs')
+    if (service.requires_service_language) setModal('service-language')
+    else if (service.requires_educational_program) setModal('programs')
   }
 
   async function createTicket() {
@@ -266,6 +276,12 @@ function App() {
       return
     }
 
+    if (mustSelectServiceLanguage && !selectedServiceLanguage) {
+      setError('Выберите язык обслуживания')
+      setModal('service-language')
+      return
+    }
+
     setBusy(true)
 
     try {
@@ -275,6 +291,7 @@ function App() {
         body: {
           service_id: selectedService.id,
           educational_program_id: mustSelectProgram ? selectedProgram?.id ?? null : null,
+          service_language: mustSelectServiceLanguage ? selectedServiceLanguage : null,
         },
       })
 
@@ -411,6 +428,11 @@ function App() {
                 {selectedProgram ? getLocalizedName(selectedProgram, language) : t.chooseProgram}
               </button>
             ) : null}
+            {mustSelectServiceLanguage ? (
+              <button type="button" disabled={busy} onClick={() => setModal('service-language')}>
+                {selectedServiceLanguage ?? 'Выберите язык обслуживания'}
+              </button>
+            ) : null}
           </div>
 
           {error ? <div className="notice error">{error}</div> : null}
@@ -469,6 +491,34 @@ function App() {
                     {program.code}
                   </span>
                   <strong>{getLocalizedName(program, language)}</strong>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {modal === 'service-language' ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setModal(null)}>
+          <section className="choice-modal" role="dialog" aria-modal="true" aria-label="Service language" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <h2>Выберите язык обслуживания</h2>
+              <button type="button" aria-label="Close" onClick={() => setModal(null)}>
+                <X size={26} />
+              </button>
+            </header>
+            <div className="program-list">
+              {serviceLanguageOptions.map((option) => (
+                <button
+                  className={selectedServiceLanguage === option.value ? 'selected' : ''}
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    setSelectedServiceLanguage(option.value)
+                    setModal(selectedService?.requires_educational_program ? 'programs' : null)
+                  }}
+                >
+                  <strong>{option.label}</strong>
                 </button>
               ))}
             </div>

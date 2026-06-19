@@ -1,4 +1,5 @@
 export type TerminalLanguage = 'kk' | 'ru' | 'en'
+export type ServiceLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
 
 export type TerminalConfig = {
   apiBaseUrl: string
@@ -19,6 +20,8 @@ export type TerminalService = {
   priority: number
   is_active: boolean
   requires_educational_program: boolean
+  requires_service_language: boolean
+  requires_reception_desk: boolean
 }
 
 export type TerminalProgram = {
@@ -35,6 +38,7 @@ export type TerminalTicket = {
   id: string
   service_id: number
   educational_program_id: number | null
+  service_language: ServiceLanguage | null
   service_name: string | null
   service_name_kk: string | null
   service_name_en: string | null

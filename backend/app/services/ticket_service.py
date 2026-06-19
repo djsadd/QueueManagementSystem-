@@ -20,7 +20,7 @@ from app.repositories.ticket_repository import (
     TicketRepository
 )
 from app.realtime import realtime_manager
-from app.schemas.ticket import StudyLanguage, TicketServiceReassign, TicketUpdate
+from app.schemas.ticket import ServiceLanguage, StudyLanguage, TicketServiceReassign, TicketUpdate
 from app.services.assignment_service import AssignmentService
 from app.services.kafka_event_service import KafkaEventService
 from app.services.service_service import ServiceService
@@ -77,6 +77,7 @@ class TicketService:
         TicketStatus.WAITING.value,
         TicketStatus.CALLED.value,
     }
+    SERVICE_LANGUAGES = {"KAZAKH", "RUSSIAN", "ENGLISH"}
 
     STATUS_EVENT_TYPES = {
         TicketStatus.CALLED.value: "TICKET_CALLED",
@@ -90,6 +91,7 @@ class TicketService:
         "educational_program_id",
         "academic_degree_id",
         "study_language",
+        "service_language",
         "operator_id",
         "window_id",
         "ticket_number",
@@ -145,6 +147,7 @@ class TicketService:
             service_id=data.service_id,
             educational_program_id=data.educational_program_id,
             academic_degree_id=academic_degree_id,
+            service_language=service_language,
             routing_key=routing_key,
             priority=service.priority,
             estimated_wait=15
@@ -265,6 +268,7 @@ class TicketService:
         db,
         service_id: int,
         educational_program_id: int | None,
+        service_language: ServiceLanguage | None = None,
     ) -> Operator | None:
         academic_degree_id, routing_key = await AssignmentService.prepare_ticket_routing(
             db,
@@ -275,6 +279,7 @@ class TicketService:
             service_id=service_id,
             educational_program_id=educational_program_id,
             academic_degree_id=academic_degree_id,
+            service_language=service_language,
             routing_key=routing_key,
             ticket_number="",
             queue_number=0,
@@ -1154,10 +1159,12 @@ class TicketService:
         previous_window_id = ticket.window_id
 
         await TicketService.validate_educational_program(db, service, data.educational_program_id)
+        service_language = TicketService.validate_service_language(service, data.service_language)
 
         old_status = ticket.status
         ticket.service_id = data.service_id
         ticket.educational_program_id = data.educational_program_id
+        ticket.service_language = service_language
         ticket.priority = service.priority
         ticket.status = TicketStatus.WAITING.value
         ticket.called_at = None
@@ -1211,10 +1218,12 @@ class TicketService:
         previous_window_id = ticket.window_id
 
         await TicketService.validate_educational_program(db, service, data.educational_program_id)
+        service_language = TicketService.validate_service_language(service, data.service_language)
 
         old_status = ticket.status
         ticket.service_id = data.service_id
         ticket.educational_program_id = data.educational_program_id
+        ticket.service_language = service_language
         ticket.priority = service.priority
         ticket.status = TicketStatus.WAITING.value
         ticket.called_at = None
@@ -1621,6 +1630,31 @@ class TicketService:
             )
 
     @staticmethod
+    def validate_service_language(
+        service: Service | None,
+        service_language: ServiceLanguage | None,
+    ) -> str | None:
+        if service is None:
+            return None
+
+        if service.requires_service_language and service_language is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Для этой услуги нужно выбрать язык обслуживания",
+            )
+
+        if service_language is None:
+            return None
+
+        if service_language not in TicketService.SERVICE_LANGUAGES:
+            raise HTTPException(
+                status_code=422,
+                detail="Некорректный язык обслуживания",
+            )
+
+        return service_language if service.requires_service_language else None
+
+    @staticmethod
     async def create_ticket_event(
         db,
         ticket_id: uuid.UUID,
@@ -1825,6 +1859,7 @@ class TicketService:
             "service_id": ticket.service_id,
             "educational_program_id": ticket.educational_program_id,
             "study_language": ticket.study_language,
+            "service_language": ticket.service_language,
             "full_name": applicant.full_name if applicant else None,
             "iin": applicant.iin if applicant else None,
             "phone": applicant.phone if applicant else None,

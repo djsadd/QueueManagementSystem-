@@ -7,10 +7,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.models.operator import OperatorStatus
 
 
+StudyLanguage = Literal["KAZAKH", "RUSSIAN", "ENGLISH"]
+ServiceLanguage = Literal["KAZAKH", "RUSSIAN", "ENGLISH"]
+
+
 class TicketCreate(BaseModel):
     applicant_id: uuid.UUID | None = None
     service_id: int = Field(gt=0, examples=[1])
     educational_program_id: int | None = Field(default=None, gt=0)
+    service_language: ServiceLanguage | None = None
     full_name: str | None = Field(default=None, min_length=1, max_length=255)
     iin: str | None = Field(default=None, min_length=12, max_length=12)
     phone: str | None = Field(default=None, min_length=1, max_length=20)
@@ -46,13 +51,11 @@ class TicketUpdate(BaseModel):
 class TicketServiceReassign(BaseModel):
     service_id: int = Field(gt=0)
     educational_program_id: int | None = Field(default=None, gt=0)
+    service_language: ServiceLanguage | None = None
 
 
 class TicketAccept(BaseModel):
     iin: str | None = Field(default=None, min_length=12, max_length=12, pattern=r"^[0-9]{12}$")
-
-
-StudyLanguage = Literal["KAZAKH", "RUSSIAN", "ENGLISH"]
 
 
 class TicketStudyLanguageUpdate(BaseModel):
@@ -66,6 +69,7 @@ class TicketResponse(BaseModel):
     educational_program_id: int | None
     academic_degree_id: int | None = None
     study_language: StudyLanguage | None = None
+    service_language: ServiceLanguage | None = None
     full_name: str | None = None
     iin: str | None = None
     phone: str | None = None

@@ -11,6 +11,7 @@ import {
   type OperatorItem,
   type OperatorPayload,
   type OperatorStatus,
+  type ServiceLanguage,
   type StudyLanguage,
   type ServiceItem,
   type ServicePayload,
@@ -89,6 +90,12 @@ const ANALYTICS_STATUS_COLORS = {
   active: '#2563eb',
 }
 const languages = ['ru', 'kk', 'en'] as const
+const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
+  { value: 'KAZAKH', label: 'KAZ' },
+  { value: 'RUSSIAN', label: 'RUS' },
+  { value: 'ENGLISH', label: 'ENG' },
+]
+const defaultServiceLanguages: ServiceLanguage[] = serviceLanguageOptions.map((option) => option.value)
 const emptyService: ServicePayload = {
   name: '',
   name_kk: '',
@@ -98,6 +105,7 @@ const emptyService: ServicePayload = {
   is_active: true,
   requires_educational_program: false,
   requires_reception_desk: false,
+  requires_service_language: false,
 }
 const emptyWindow: WindowPayload = { name: '', floor: '', status: 'OPEN', current_operator_id: null }
 const emptyUser: UserPayload = {
@@ -1150,7 +1158,6 @@ function buildMonthlyAnalyticsRange(days: OperatorDailyAnalyticsItem[], from: st
       monthStats.completed += dayStats.completed
       monthStats.skipped += dayStats.skipped
       monthStats.tickets_count += dayStats.tickets_count
-      return
     }
 
     monthsByDate.set(monthKey, {
@@ -1218,6 +1225,27 @@ function getServiceLabels(services: ServiceItem[], serviceIds: number[]) {
       return service ? service.code : String(serviceId)
     })
     .join(', ')
+}
+
+function normalizeServiceLanguages(languages: ServiceLanguage[] | undefined) {
+  if (!languages || languages.length === 0) {
+    return defaultServiceLanguages
+  }
+
+  const selected = defaultServiceLanguages.filter((language) => languages.includes(language))
+  return selected.length > 0 ? selected : defaultServiceLanguages
+}
+
+function buildServiceLanguagesPayload(
+  serviceIds: number[],
+  serviceLanguages: Record<number, ServiceLanguage[]>,
+) {
+  return Object.fromEntries(
+    serviceIds.map((serviceId) => [
+      serviceId,
+      normalizeServiceLanguages(serviceLanguages[serviceId]),
+    ]),
+  )
 }
 
 function getCurrentUserIdFromToken() {
@@ -1300,12 +1328,16 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [ticketActionSaving, setTicketActionSaving] = useState(false)
   const [reassignServiceId, setReassignServiceId] = useState('')
   const [reassignProgramId, setReassignProgramId] = useState('')
+  const [reassignServiceLanguage, setReassignServiceLanguage] = useState<ServiceLanguage | ''>('')
   const [reassignServiceQuery, setReassignServiceQuery] = useState('')
   const [reassignProgramQuery, setReassignProgramQuery] = useState('')
   const [reassignServiceListOpen, setReassignServiceListOpen] = useState(false)
   const [reassignProgramListOpen, setReassignProgramListOpen] = useState(false)
   const [operatorProgramIds, setOperatorProgramIds] = useState<Record<string, number[]>>({})
   const [operatorServiceIds, setOperatorServiceIds] = useState<Record<string, number[]>>({})
+  const [operatorServiceLanguages, setOperatorServiceLanguages] = useState<
+    Record<string, Record<number, ServiceLanguage[]>>
+  >({})
   const [serviceForm, setServiceForm] = useState<ServicePayload>(emptyService)
   const [windowForm, setWindowForm] = useState<WindowPayload>(emptyWindow)
   const [selectedWindowOperatorId, setSelectedWindowOperatorId] = useState('')
@@ -1319,8 +1351,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [ticketEventMetadataText, setTicketEventMetadataText] = useState('')
   const [selectedOperatorProgramIds, setSelectedOperatorProgramIds] = useState<number[]>([])
   const [selectedOperatorServiceIds, setSelectedOperatorServiceIds] = useState<number[]>([])
+  const [selectedOperatorServiceLanguages, setSelectedOperatorServiceLanguages] = useState<
+    Record<number, ServiceLanguage[]>
+  >({})
   const [profileProgramIds, setProfileProgramIds] = useState<number[]>([])
   const [profileServiceIds, setProfileServiceIds] = useState<number[]>([])
+  const [profileServiceLanguages, setProfileServiceLanguages] = useState<Record<number, ServiceLanguage[]>>({})
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileMessage, setProfileMessage] = useState('')
   const [windowStatusSaving, setWindowStatusSaving] = useState(false)
@@ -1562,11 +1598,32 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           ]),
         ),
       )
+      setOperatorServiceLanguages(
+        Object.fromEntries(
+          operatorServicesRows.map((row) => [
+            row.operatorId,
+            Object.fromEntries(
+              row.services.map((service) => [
+                service.id,
+                normalizeServiceLanguages(service.service_languages),
+              ]),
+            ),
+          ]),
+        ),
+      )
       const currentOperator = operatorRows.find((operator) => operator.user_id === currentUserId)
       const currentOperatorPrograms = operatorProgramsRows.find((row) => row.operatorId === currentOperator?.id)
       const currentOperatorServices = operatorServicesRows.find((row) => row.operatorId === currentOperator?.id)
       setProfileProgramIds(currentOperatorPrograms?.programs.map((program) => program.id) ?? [])
       setProfileServiceIds(currentOperatorServices?.services.map((service) => service.id) ?? [])
+      setProfileServiceLanguages(
+        Object.fromEntries(
+          currentOperatorServices?.services.map((service) => [
+            service.id,
+            normalizeServiceLanguages(service.service_languages),
+          ]) ?? [],
+        ),
+      )
       try {
         applyMyWindowData(await adminApi.tickets.myWindow())
       } catch (requestError) {
@@ -1625,6 +1682,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     } else {
       setLoading(true)
     }
+
     setError('')
     setReceptionError('')
 
@@ -1859,6 +1917,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setSelectedWindowOperatorId('')
     setSelectedOperatorProgramIds([])
     setSelectedOperatorServiceIds([])
+    setSelectedOperatorServiceLanguages({})
   }
 
   function openCreateModal(section: CrudSection) {
@@ -1972,7 +2031,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
       if (operatorId !== null) {
         await adminApi.operators.setPrograms(operatorId, selectedOperatorProgramIds)
-        await adminApi.operators.setServices(operatorId, selectedOperatorServiceIds)
+        await adminApi.operators.setServices(
+          operatorId,
+          selectedOperatorServiceIds,
+          buildServiceLanguagesPayload(selectedOperatorServiceIds, selectedOperatorServiceLanguages),
+        )
       }
 
       closeFormModal()
@@ -2129,13 +2192,37 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
     try {
       const savedServices = isAdminUser
-        ? await adminApi.operators.setServices(currentOperator.id, profileServiceIds)
-        : await adminApi.operators.setMyServices(profileServiceIds)
+        ? await adminApi.operators.setServices(
+            currentOperator.id,
+            profileServiceIds,
+            buildServiceLanguagesPayload(profileServiceIds, profileServiceLanguages),
+          )
+        : await adminApi.operators.setMyServices(
+            profileServiceIds,
+            buildServiceLanguagesPayload(profileServiceIds, profileServiceLanguages),
+          )
       setOperatorServiceIds({
         ...operatorServiceIds,
         [currentOperator.id]: savedServices.map((service) => service.id),
       })
+      setOperatorServiceLanguages({
+        ...operatorServiceLanguages,
+        [currentOperator.id]: Object.fromEntries(
+          savedServices.map((service) => [
+            service.id,
+            normalizeServiceLanguages(service.service_languages),
+          ]),
+        ),
+      })
       setProfileServiceIds(savedServices.map((service) => service.id))
+      setProfileServiceLanguages(
+        Object.fromEntries(
+          savedServices.map((service) => [
+            service.id,
+            normalizeServiceLanguages(service.service_languages),
+          ]),
+        ),
+      )
       setProfileMessage('Типы услуг сохранены')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить типы услуг')
@@ -2361,6 +2448,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       return
     }
 
+    if (serviceToReassign?.requires_service_language && !reassignServiceLanguage) {
+      setMyWindowError('Выберите язык обслуживания')
+      return
+    }
+
     setError('')
     setMyWindowError('')
     setTicketActionSaving(true)
@@ -2370,6 +2462,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await adminApi.tickets.reassignMyTicketService(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
+        service_language: serviceToReassign?.requires_service_language ? reassignServiceLanguage || null : null,
       })
       closeMyWindowTicketDetails()
       await loadMyWindowData({ animate: true, silent: true })
@@ -2527,6 +2620,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await adminApi.tickets.reassignReceptionTicketService(selectedReceptionTicket.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
+        service_language: serviceToReassign?.requires_service_language ? reassignServiceLanguage || null : null,
       })
       closeReceptionTicketDetails()
       await loadReceptionData({ silent: true })
@@ -3290,10 +3384,21 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                             onChange={(event) => {
                               if (event.target.checked) {
                                 setProfileServiceIds([...profileServiceIds, service.id])
+                                setProfileServiceLanguages({
+                                  ...profileServiceLanguages,
+                                  [service.id]: normalizeServiceLanguages(profileServiceLanguages[service.id]),
+                                })
                                 return
                               }
 
                               setProfileServiceIds(profileServiceIds.filter((serviceId) => serviceId !== service.id))
+                              setProfileServiceLanguages(
+                                Object.fromEntries(
+                                  Object.entries(profileServiceLanguages)
+                                    .filter(([serviceId]) => Number(serviceId) !== service.id)
+                                    .map(([serviceId, languages]) => [Number(serviceId), languages]),
+                                ),
+                              )
                             }}
                           />
                           <span>
@@ -3397,6 +3502,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 service.code,
                 service.priority,
                 boolLabel(service.requires_educational_program),
+                boolLabel(service.requires_service_language),
                 boolLabel(service.requires_reception_desk),
                 boolLabel(service.is_active),
                 <RowActions
@@ -3412,6 +3518,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       is_active: service.is_active,
                       requires_educational_program: service.requires_educational_program,
                       requires_reception_desk: service.requires_reception_desk,
+                      requires_service_language: service.requires_service_language,
                     })
                     setFormModal('services')
                   }}
@@ -3524,6 +3631,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       })
                       setSelectedOperatorProgramIds(operatorProgramIds[operator.id] ?? [])
                       setSelectedOperatorServiceIds(operatorServiceIds[operator.id] ?? [])
+                      setSelectedOperatorServiceLanguages(operatorServiceLanguages[operator.id] ?? {})
                       setFormModal('operators')
                     }}
                   >
@@ -4135,6 +4243,21 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             </form>
           )}
 
+          {formModal === 'services' && (
+              <label className="check-field">
+                <input
+                  type="checkbox"
+                  checked={serviceForm.requires_service_language}
+                  onChange={(event) =>
+                    setServiceForm({
+                      ...serviceForm,
+                      requires_service_language: event.target.checked,
+                    })
+                  }
+                />
+                Требовать выбор языка обслуживания
+              </label>
+          )}
           {formModal === 'windows' && (
             <form className="admin-form modal-form" onSubmit={submitWindow}>
               <input
@@ -4262,11 +4385,18 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 multiple
                 className="multi-select"
                 value={selectedOperatorServiceIds.map(String)}
-                onChange={(event) =>
-                  setSelectedOperatorServiceIds(
-                    Array.from(event.target.selectedOptions, (option) => Number(option.value)),
+                onChange={(event) => {
+                  const nextServiceIds = Array.from(event.target.selectedOptions, (option) => Number(option.value))
+                  setSelectedOperatorServiceIds(nextServiceIds)
+                  setSelectedOperatorServiceLanguages((current) =>
+                    Object.fromEntries(
+                      nextServiceIds.map((serviceId) => [
+                        serviceId,
+                        normalizeServiceLanguages(current[serviceId]),
+                      ]),
+                    ),
                   )
-                }
+                }}
               >
                 {services.map((service) => (
                   <option value={service.id} key={service.id}>
@@ -4274,6 +4404,51 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                   </option>
                 ))}
               </select>
+              {selectedOperatorServiceIds.some((serviceId) =>
+                services.find((service) => service.id === serviceId)?.requires_service_language,
+              ) && (
+                <div className="program-choice-grid">
+                  {selectedOperatorServiceIds
+                    .map((serviceId) => services.find((service) => service.id === serviceId))
+                    .filter((service): service is ServiceItem => Boolean(service?.requires_service_language))
+                    .map((service) => (
+                      <div className="program-choice" key={service.id}>
+                        <span>
+                          <strong>{service.name}</strong>
+                          <small>{service.code} - языки обслуживания</small>
+                        </span>
+                        <span className="language-option-row">
+                          {serviceLanguageOptions.map((option) => {
+                            const checked = normalizeServiceLanguages(
+                              selectedOperatorServiceLanguages[service.id],
+                            ).includes(option.value)
+
+                            return (
+                              <label className="check-field inline-check" key={option.value}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(event) => {
+                                    const current = normalizeServiceLanguages(
+                                      selectedOperatorServiceLanguages[service.id],
+                                    )
+                                    setSelectedOperatorServiceLanguages({
+                                      ...selectedOperatorServiceLanguages,
+                                      [service.id]: event.target.checked
+                                        ? normalizeServiceLanguages([...current, option.value])
+                                        : current.filter((language) => language !== option.value),
+                                    })
+                                  }}
+                                />
+                                {option.label}
+                              </label>
+                            )
+                          })}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
               <select
                 multiple
                 className="multi-select"
@@ -4635,6 +4810,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                                 : String(selectedMyWindowTicket.educational_program_id)
 
                             setReassignServiceId(nextServiceId)
+                            setReassignServiceLanguage('')
                             setReassignProgramQuery('')
                             setReassignProgramListOpen(false)
                             setReassignServiceListOpen(false)
@@ -4723,6 +4899,25 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 <div className="touch-choice-empty">ОП не требуется</div>
               )}
             </div>
+            {selectedReassignService?.requires_service_language ? (
+              <div className="touch-choice-field">
+                <span className="profile-label">Язык обслуживания</span>
+                <select
+                  className="reassign-select"
+                  disabled={ticketActionSaving}
+                  required={selectedReassignService.requires_service_language}
+                  value={reassignServiceLanguage}
+                  onChange={(event) => setReassignServiceLanguage(event.target.value as ServiceLanguage | '')}
+                >
+                  <option value="">Выберите язык обслуживания</option>
+                  {serviceLanguageOptions.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="modal-actions">
               <button
                 className="primary-action compact"
@@ -4861,6 +5056,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                                 : String(selectedReceptionTicket.educational_program_id)
 
                             setReassignServiceId(String(service.id))
+                            setReassignServiceLanguage('')
                             setReassignProgramQuery('')
                             setReassignProgramListOpen(false)
                             setReassignServiceListOpen(false)
@@ -4956,6 +5152,25 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             </div>
           </form>
 
+          {selectedReassignService?.requires_service_language ? (
+            <div className="touch-choice-field">
+              <span className="profile-label">Язык обслуживания</span>
+              <select
+                className="reassign-select"
+                disabled={ticketActionSaving}
+                required={selectedReassignService.requires_service_language}
+                value={reassignServiceLanguage}
+                onChange={(event) => setReassignServiceLanguage(event.target.value as ServiceLanguage | '')}
+              >
+                <option value="">Выберите язык обслуживания</option>
+                {serviceLanguageOptions.map((option) => (
+                  <option value={option.value} key={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div className="modal-actions">
             <button
               className="primary-action compact"

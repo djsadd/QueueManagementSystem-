@@ -1,6 +1,7 @@
 export type OperatorStatus = 'ONLINE' | 'OFFLINE' | 'BUSY' | 'BREAK'
 export type WindowStatus = 'OPEN' | 'BUSY' | 'CLOSED'
 export type StudyLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
+export type ServiceLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
 
 export type OperatorConfig = {
   apiBaseUrl: string
@@ -46,6 +47,8 @@ export type ServiceItem = {
   is_active: boolean
   requires_educational_program: boolean
   requires_reception_desk: boolean
+  requires_service_language: boolean
+  service_languages?: ServiceLanguage[]
 }
 
 export type EducationalProgramItem = {
@@ -66,6 +69,7 @@ export type TicketItem = {
   educational_program_id: number | null
   academic_degree_id?: number | null
   study_language: StudyLanguage | null
+  service_language: ServiceLanguage | null
   full_name: string | null
   iin: string | null
   phone: string | null

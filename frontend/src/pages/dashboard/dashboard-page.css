@@ -2771,3 +2771,19 @@
     grid-template-columns: 1fr;
   }
 }
+.language-option-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.inline-check {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+}
+
+.inline-check input {
+  margin: 0;
+}

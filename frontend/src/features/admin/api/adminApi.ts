@@ -10,6 +10,7 @@ export type ServiceItem = {
   is_active: boolean
   requires_educational_program: boolean
   requires_reception_desk: boolean
+  requires_service_language: boolean
 }
 
 export type ServicePayload = Omit<ServiceItem, 'id'>
@@ -46,6 +47,10 @@ export type UserPayload = {
 
 export type OperatorStatus = 'ONLINE' | 'OFFLINE' | 'BUSY' | 'BREAK'
 export type StudyLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
+export type ServiceLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
+export type OperatorServiceItem = ServiceItem & {
+  service_languages: ServiceLanguage[]
+}
 
 export type OperatorItem = {
   id: string
@@ -206,6 +211,7 @@ export type TicketItem = {
   educational_program_id: number | null
   academic_degree_id?: number | null
   study_language: StudyLanguage | null
+  service_language: ServiceLanguage | null
   full_name: string | null
   iin: string | null
   phone: string | null
@@ -286,6 +292,7 @@ export type TicketExportParams = {
 export type TicketServiceReassignPayload = {
   service_id: number
   educational_program_id: number | null
+  service_language?: ServiceLanguage | null
 }
 
 export type TicketStudyLanguagePayload = {
@@ -394,11 +401,11 @@ export const adminApi = {
         method: 'PUT',
         body: { educational_program_ids: educationalProgramIds },
       }),
-    myServices: () => request<ServiceItem[]>('/operators/me/services'),
-    setMyServices: (serviceIds: number[]) =>
-      request<ServiceItem[]>('/operators/me/services', {
+    myServices: () => request<OperatorServiceItem[]>('/operators/me/services'),
+    setMyServices: (serviceIds: number[], serviceLanguagesByService: Record<number, ServiceLanguage[]> = {}) =>
+      request<OperatorServiceItem[]>('/operators/me/services', {
         method: 'PUT',
-        body: { service_ids: serviceIds },
+        body: { service_ids: serviceIds, service_languages_by_service: serviceLanguagesByService },
       }),
     availableServices: () => request<ServiceItem[]>('/operators/me/available-services'),
     availablePrograms: () =>
@@ -415,11 +422,11 @@ export const adminApi = {
         method: 'PUT',
         body: { educational_program_ids: educationalProgramIds },
       }),
-    services: (id: string) => request<ServiceItem[]>(`/operators/${id}/services`),
-    setServices: (id: string, serviceIds: number[]) =>
-      request<ServiceItem[]>(`/operators/${id}/services`, {
+    services: (id: string) => request<OperatorServiceItem[]>(`/operators/${id}/services`),
+    setServices: (id: string, serviceIds: number[], serviceLanguagesByService: Record<number, ServiceLanguage[]> = {}) =>
+      request<OperatorServiceItem[]>(`/operators/${id}/services`, {
         method: 'PUT',
-        body: { service_ids: serviceIds },
+        body: { service_ids: serviceIds, service_languages_by_service: serviceLanguagesByService },
       }),
   },
   academicDegrees: {

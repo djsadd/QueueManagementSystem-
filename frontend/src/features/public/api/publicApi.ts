@@ -10,11 +10,13 @@ export type PublicServiceItem = {
   is_active: boolean
   requires_educational_program: boolean
   requires_reception_desk: boolean
+  requires_service_language: boolean
 }
 
 export type TicketCreatePayload = {
   service_id: number
   educational_program_id?: number | null
+  service_language?: 'KAZAKH' | 'RUSSIAN' | 'ENGLISH' | null
 }
 
 export type PublicEducationalProgramItem = {
@@ -34,6 +36,7 @@ export type PublicTicketItem = {
   service_id: number
   educational_program_id: number | null
   study_language: 'KAZAKH' | 'RUSSIAN' | 'ENGLISH' | null
+  service_language: 'KAZAKH' | 'RUSSIAN' | 'ENGLISH' | null
   full_name: string | null
   iin: string | null
   phone: string | null

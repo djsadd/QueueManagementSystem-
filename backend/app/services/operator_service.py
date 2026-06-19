@@ -12,6 +12,9 @@ from app.models.user import User
 from app.schemas.operator import OperatorCreate, OperatorUpdate
 
 
+DEFAULT_SERVICE_LANGUAGES = ["KAZAKH", "RUSSIAN", "ENGLISH"]
+
+
 class OperatorService:
     @staticmethod
     async def create(db: AsyncSession, data: OperatorCreate) -> Operator:
@@ -97,36 +100,67 @@ class OperatorService:
 
 class OperatorServiceTypeService:
     @staticmethod
-    async def get_for_operator(db: AsyncSession, operator_id: uuid.UUID) -> list[Service]:
+    async def get_for_operator(db: AsyncSession, operator_id: uuid.UUID) -> list[dict]:
         await OperatorServiceTypeService.ensure_operator_exists(db, operator_id)
 
         result = await db.execute(
-            select(Service)
+            select(Service, OperatorServiceLink.service_languages)
             .join(OperatorServiceLink, OperatorServiceLink.service_id == Service.id)
             .where(OperatorServiceLink.operator_id == operator_id)
             .order_by(Service.id)
         )
-        return list(result.scalars().all())
+        return [
+            {
+                **{
+                    column.name: getattr(service, column.name)
+                    for column in Service.__table__.columns
+                },
+                "service_languages": OperatorServiceTypeService.normalize_service_languages(service_languages),
+            }
+            for service, service_languages in result.all()
+        ]
 
     @staticmethod
     async def replace_for_operator(
         db: AsyncSession,
         operator_id: uuid.UUID,
         service_ids: list[int],
-    ) -> list[Service]:
+        service_languages_by_service: dict[int, list[str]] | None = None,
+    ) -> list[dict]:
         await OperatorServiceTypeService.ensure_operator_exists(db, operator_id)
         unique_service_ids = list(dict.fromkeys(service_ids))
         await OperatorServiceTypeService.ensure_services_exist(db, unique_service_ids)
+        service_languages_by_service = service_languages_by_service or {}
 
         await db.execute(
             delete(OperatorServiceLink).where(OperatorServiceLink.operator_id == operator_id)
         )
 
         for service_id in unique_service_ids:
-            db.add(OperatorServiceLink(operator_id=operator_id, service_id=service_id))
+            db.add(
+                OperatorServiceLink(
+                    operator_id=operator_id,
+                    service_id=service_id,
+                    service_languages=OperatorServiceTypeService.normalize_service_languages(
+                        service_languages_by_service.get(service_id)
+                    ),
+                )
+            )
 
         await db.commit()
         return await OperatorServiceTypeService.get_for_operator(db, operator_id)
+
+    @staticmethod
+    def normalize_service_languages(service_languages: list[str] | None) -> list[str]:
+        if not service_languages:
+            return DEFAULT_SERVICE_LANGUAGES.copy()
+
+        normalized = [
+            language
+            for language in DEFAULT_SERVICE_LANGUAGES
+            if language in set(service_languages)
+        ]
+        return normalized or DEFAULT_SERVICE_LANGUAGES.copy()
 
     @staticmethod
     async def ensure_operator_exists(db: AsyncSession, operator_id: uuid.UUID) -> None:

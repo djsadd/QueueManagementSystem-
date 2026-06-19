@@ -13,8 +13,9 @@ import {
 import './public-ticket-page.css'
 
 type Lang = 'kk' | 'ru' | 'en'
+type ServiceLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
 type TicketFormState = TicketCreatePayload
-type ChoiceModalKind = 'services' | 'programs' | null
+type ChoiceModalKind = 'services' | 'programs' | 'service-language' | null
 
 const LANG_STORAGE_KEY = 'public-ticket-language'
 const languages: Array<{ value: Lang; label: string }> = [
@@ -22,10 +23,16 @@ const languages: Array<{ value: Lang; label: string }> = [
   { value: 'ru', label: 'Рус' },
   { value: 'en', label: 'Eng' },
 ]
+const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
+  { value: 'KAZAKH', label: 'KAZ' },
+  { value: 'RUSSIAN', label: 'RUS' },
+  { value: 'ENGLISH', label: 'ENG' },
+]
 
 const initialForm: TicketFormState = {
   service_id: 0,
   educational_program_id: null,
+  service_language: null,
 }
 
 const translations = {
@@ -180,6 +187,10 @@ function requiresEducationalProgram(service: PublicServiceItem | undefined) {
   return Boolean(service?.requires_educational_program)
 }
 
+function requiresServiceLanguage(service: PublicServiceItem | undefined) {
+  return Boolean(service?.requires_service_language)
+}
+
 function getLocalizedName(item: { name: string; name_kk: string; name_en: string }, lang: Lang) {
   return lang === 'kk' ? item.name_kk : lang === 'en' ? item.name_en : item.name
 }
@@ -297,14 +308,19 @@ export function PublicTicketPage() {
     [educationalPrograms, form.educational_program_id],
   )
   const mustSelectEducationalProgram = requiresEducationalProgram(selectedService)
+  const mustSelectServiceLanguage = requiresServiceLanguage(selectedService)
 
   function selectService(service: PublicServiceItem) {
     setForm((current) => ({
       ...current,
       service_id: service.id,
       educational_program_id: null,
+      service_language: null,
     }))
     setChoiceModal(null)
+    if (service.requires_service_language) {
+      setChoiceModal('service-language')
+    }
   }
 
   function selectEducationalProgram(program: PublicEducationalProgramItem) {
@@ -334,6 +350,11 @@ export function PublicTicketPage() {
       return
     }
 
+    if (mustSelectServiceLanguage && !form.service_language) {
+      setError('Выберите язык обслуживания')
+      return
+    }
+
     if (!form.service_id) {
       setError(t.selectService)
       return
@@ -345,6 +366,7 @@ export function PublicTicketPage() {
       const createdTicket = await publicApi.tickets.create({
         service_id: form.service_id,
         educational_program_id: mustSelectEducationalProgram ? form.educational_program_id : null,
+        service_language: mustSelectServiceLanguage ? form.service_language : null,
       })
 
       setTicket(createdTicket)
@@ -451,6 +473,19 @@ export function PublicTicketPage() {
               </div>
             ) : null}
 
+            {mustSelectServiceLanguage ? (
+              <div className="ticket-choice-field">
+                <span>Язык обслуживания</span>
+                <button
+                  className="ticket-choice-trigger"
+                  type="button"
+                  onClick={() => setChoiceModal('service-language')}
+                >
+                  <strong>{form.service_language ?? 'Выберите язык обслуживания'}</strong>
+                </button>
+              </div>
+            ) : null}
+
             {error ? <div className="ticket-alert">{error}</div> : null}
 
             <Button disabled={isSubmitting || isLoadingServices || services.length === 0} type="submit">
@@ -506,6 +541,23 @@ export function PublicTicketPage() {
           onSelect={selectEducationalProgram}
           selectedId={form.educational_program_id ?? null}
           title={t.selectEducationalProgram}
+        />
+      ) : null}
+
+      {choiceModal === 'service-language' ? (
+        <TicketChoiceModal
+          emptyLabel="Выберите язык обслуживания"
+          getLabel={(item) => item.label}
+          items={serviceLanguageOptions.map((item, index) => ({ ...item, id: index + 1 }))}
+          onClose={() => setChoiceModal(null)}
+          onSelect={(item) => {
+            setForm((current) => ({ ...current, service_language: item.value }))
+            setChoiceModal(mustSelectEducationalProgram ? 'programs' : null)
+          }}
+          selectedId={
+            serviceLanguageOptions.findIndex((item) => item.value === form.service_language) + 1 || null
+          }
+          title="Выберите язык обслуживания"
         />
       ) : null}
     </main>

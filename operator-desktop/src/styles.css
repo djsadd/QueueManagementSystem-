@@ -335,6 +335,35 @@ button:disabled {
   .error-dialog p {
     @apply m-0 text-base leading-relaxed text-slate-600;
   }
+
+  .platonus-shell {
+    @apply flex h-full min-h-0 w-full overflow-hidden bg-white;
+  }
+
+  .platonus-shell-parked {
+    @apply pointer-events-none fixed left-0 top-0 h-[900px] w-[1600px];
+    transform: translateX(-200vw);
+  }
+
+  .platonus-webview {
+    @apply h-full min-h-0 w-full min-w-0 flex-1 bg-white;
+    display: flex;
+  }
+
+  .platonus-remote-controller {
+    @apply grid h-full min-h-0 w-full cursor-crosshair place-items-center overflow-hidden bg-black outline-none;
+    user-select: none;
+    touch-action: none;
+  }
+
+  .platonus-remote-frame {
+    @apply h-full w-full object-contain;
+    pointer-events: none;
+  }
+
+  .platonus-remote-status {
+    @apply text-base font-semibold text-white/80;
+  }
 }
 
 @keyframes modal-backdrop-in {

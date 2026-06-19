@@ -12,6 +12,7 @@ class ServiceBase(BaseModel):
     is_active: bool = True
     requires_educational_program: bool = False
     requires_reception_desk: bool = False
+    requires_service_language: bool = False
 
 
 class ServiceCreate(ServiceBase):
@@ -27,6 +28,7 @@ class ServiceUpdate(BaseModel):
     is_active: bool | None = None
     requires_educational_program: bool | None = None
     requires_reception_desk: bool | None = None
+    requires_service_language: bool | None = None
 
 
 class ServiceResponse(ServiceBase):
