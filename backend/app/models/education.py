@@ -17,7 +17,6 @@ class AcademicDegree(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
-    study_languages: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
 
 class EducationalProgram(Base):
@@ -68,3 +67,4 @@ class OperatorEducationalProgram(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    study_languages: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
