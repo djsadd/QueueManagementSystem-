@@ -1957,6 +1957,108 @@
   padding: 24px 28px 28px;
 }
 
+.profile-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #e6e9ee;
+  border-radius: 8px;
+}
+
+.profile-selection-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  background: #ffffff;
+}
+
+.profile-selection-table th {
+  background: #fbfcfd;
+  color: #758195;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.profile-selection-table th,
+.profile-selection-table td {
+  border-bottom: 1px solid #e6e9ee;
+  padding: 14px 16px;
+  vertical-align: middle;
+}
+
+.profile-selection-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.profile-selection-table tbody tr.is-selected td {
+  background: #fff8fa;
+}
+
+.profile-selection-table td {
+  color: #101b33;
+  font-size: 15px;
+}
+
+.profile-selection-table td span,
+.profile-selection-table td strong,
+.profile-selection-table td small {
+  display: block;
+}
+
+.profile-selection-table td small {
+  margin-top: 4px;
+  color: #667085;
+  line-height: 1.35;
+}
+
+.profile-language-head,
+.profile-language-cell {
+  width: 92px;
+  text-align: center;
+}
+
+.profile-row-check,
+.profile-language-check {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.profile-row-check input,
+.profile-language-check input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: #9a002d;
+}
+
+.profile-language-check {
+  align-items: center;
+  justify-content: center;
+}
+
+.profile-language-check span {
+  color: #101b33;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.profile-row-check input:disabled,
+.profile-language-check input:disabled,
+.profile-row-check input:disabled + span,
+.profile-language-check input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.profile-muted {
+  color: #98a2b3;
+  font-weight: 800;
+  text-align: center;
+}
+
 .program-choice-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

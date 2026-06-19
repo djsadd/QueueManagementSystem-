@@ -1472,6 +1472,78 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
+  function selectProfileService(serviceId: number, checked: boolean) {
+    if (checked) {
+      setProfileServiceIds([...profileServiceIds, serviceId])
+      setProfileServiceLanguages({
+        ...profileServiceLanguages,
+        [serviceId]: normalizeServiceLanguages(profileServiceLanguages[serviceId]),
+      })
+      return
+    }
+
+    setProfileServiceIds(profileServiceIds.filter((selectedServiceId) => selectedServiceId !== serviceId))
+    setProfileServiceLanguages(
+      Object.fromEntries(
+        Object.entries(profileServiceLanguages)
+          .filter(([selectedServiceId]) => Number(selectedServiceId) !== serviceId)
+          .map(([selectedServiceId, languages]) => [Number(selectedServiceId), languages]),
+      ),
+    )
+  }
+
+  function toggleProfileServiceLanguage(serviceId: number, language: ServiceLanguage, checked: boolean) {
+    const currentLanguages = normalizeServiceLanguages(profileServiceLanguages[serviceId])
+    const nextLanguages = checked
+      ? normalizeServiceLanguages([...currentLanguages, language])
+      : currentLanguages.filter((selectedLanguage) => selectedLanguage !== language)
+
+    if (nextLanguages.length === 0) {
+      return
+    }
+
+    setProfileServiceLanguages({
+      ...profileServiceLanguages,
+      [serviceId]: nextLanguages,
+    })
+  }
+
+  function selectProfileProgram(programId: number, checked: boolean) {
+    if (checked) {
+      setProfileProgramIds([...profileProgramIds, programId])
+      setProfileProgramLanguages({
+        ...profileProgramLanguages,
+        [programId]: normalizeStudyLanguages(profileProgramLanguages[programId]),
+      })
+      return
+    }
+
+    setProfileProgramIds(profileProgramIds.filter((selectedProgramId) => selectedProgramId !== programId))
+    setProfileProgramLanguages(
+      Object.fromEntries(
+        Object.entries(profileProgramLanguages)
+          .filter(([selectedProgramId]) => Number(selectedProgramId) !== programId)
+          .map(([selectedProgramId, languages]) => [Number(selectedProgramId), languages]),
+      ),
+    )
+  }
+
+  function toggleProfileProgramLanguage(programId: number, language: StudyLanguage, checked: boolean) {
+    const currentLanguages = normalizeStudyLanguages(profileProgramLanguages[programId])
+    const nextLanguages = checked
+      ? normalizeStudyLanguages([...currentLanguages, language])
+      : currentLanguages.filter((selectedLanguage) => selectedLanguage !== language)
+
+    if (nextLanguages.length === 0) {
+      return
+    }
+
+    setProfileProgramLanguages({
+      ...profileProgramLanguages,
+      [programId]: nextLanguages,
+    })
+  }
+
   async function openSecondDisplay() {
     setError('')
     const launchError = await openOperatorDisplayOnSecondScreen(buildOperatorDisplayPath(lang))
@@ -3468,45 +3540,70 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 )}
 
                 {activeServices.length > 0 && (
-                  <div className="program-choice-grid">
+                  <div className="profile-table-wrap">
+                    <table className="profile-selection-table">
+                      <thead>
+                        <tr>
+                          <th>Услуга</th>
+                          <th>Параметры</th>
+                          {serviceLanguageOptions.map((option) => (
+                            <th className="profile-language-head" key={option.value}>
+                              {option.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
                     {activeServices.map((service) => {
                       const checked = profileServiceIds.includes(service.id)
+                      const selectedLanguages = normalizeServiceLanguages(profileServiceLanguages[service.id])
 
                       return (
-                        <label className="program-choice" key={service.id}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={!currentOperator || profileSaving}
-                            onChange={(event) => {
-                              if (event.target.checked) {
-                                setProfileServiceIds([...profileServiceIds, service.id])
-                                setProfileServiceLanguages({
-                                  ...profileServiceLanguages,
-                                  [service.id]: normalizeServiceLanguages(profileServiceLanguages[service.id]),
-                                })
-                                return
-                              }
-
-                              setProfileServiceIds(profileServiceIds.filter((serviceId) => serviceId !== service.id))
-                              setProfileServiceLanguages(
-                                Object.fromEntries(
-                                  Object.entries(profileServiceLanguages)
-                                    .filter(([serviceId]) => Number(serviceId) !== service.id)
-                                    .map(([serviceId, languages]) => [Number(serviceId), languages]),
-                                ),
-                              )
-                            }}
-                          />
-                          <span>
-                            <strong>{service.name}</strong>
+                        <tr className={checked ? 'is-selected' : ''} key={service.id}>
+                          <td>
+                            <label className="profile-row-check">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={!currentOperator || profileSaving}
+                                onChange={(event) => selectProfileService(service.id, event.target.checked)}
+                              />
+                              <span>
+                                <strong>{service.name}</strong>
+                                <small>{service.code}</small>
+                              </span>
+                            </label>
+                          </td>
+                          <td>
+                            <span>Приоритет {service.priority}</span>
                             <small>
-                              {service.code} - приоритет {service.priority}
+                              {service.requires_service_language ? 'Нужен язык обслуживания' : 'Язык не требуется'}
                             </small>
-                          </span>
-                        </label>
+                          </td>
+                          {serviceLanguageOptions.map((option) => (
+                            <td className="profile-language-cell" key={option.value}>
+                              {service.requires_service_language ? (
+                                <label className="profile-language-check">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked && selectedLanguages.includes(option.value)}
+                                    disabled={!currentOperator || profileSaving || !checked}
+                                    onChange={(event) =>
+                                      toggleProfileServiceLanguage(service.id, option.value, event.target.checked)
+                                    }
+                                  />
+                                  <span>{option.label}</span>
+                                </label>
+                              ) : (
+                                <span className="profile-muted">-</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
                       )
                     })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
 
@@ -3539,34 +3636,70 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 )}
 
                 {activeEducationalPrograms.length > 0 && (
-                  <div className="program-choice-grid">
+                  <div className="profile-table-wrap">
+                    <table className="profile-selection-table">
+                      <thead>
+                        <tr>
+                          <th>ОП</th>
+                          <th>Степень</th>
+                          {serviceLanguageOptions.map((option) => (
+                            <th className="profile-language-head" key={option.value}>
+                              {option.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
                     {activeEducationalPrograms.map((program) => {
                       const checked = profileProgramIds.includes(program.id)
+                      const selectedLanguages = normalizeStudyLanguages(profileProgramLanguages[program.id])
 
                       return (
-                        <label className="program-choice" key={program.id}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={!currentOperator || profileSaving}
-                            onChange={(event) => {
-                              if (event.target.checked) {
-                                setProfileProgramIds([...profileProgramIds, program.id])
-                                return
-                              }
-
-                              setProfileProgramIds(profileProgramIds.filter((programId) => programId !== program.id))
-                            }}
-                          />
-                          <span>
-                            <strong>{program.name}</strong>
+                        <tr className={checked ? 'is-selected' : ''} key={program.id}>
+                          <td>
+                            <label className="profile-row-check">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={!currentOperator || profileSaving}
+                                onChange={(event) => selectProfileProgram(program.id, event.target.checked)}
+                              />
+                              <span>
+                                <strong>{program.name}</strong>
+                                <small>{program.code}</small>
+                              </span>
+                            </label>
+                          </td>
+                          <td>
+                            <span>{getDegreeLabel(academicDegrees, program.academic_degree_id)}</span>
                             <small>
-                              {program.code} - {getDegreeLabel(academicDegrees, program.academic_degree_id)}
+                              {program.requires_service_language ? 'Нужен язык ОП' : 'Язык не требуется'}
                             </small>
-                          </span>
-                        </label>
+                          </td>
+                          {serviceLanguageOptions.map((option) => (
+                            <td className="profile-language-cell" key={option.value}>
+                              {program.requires_service_language ? (
+                                <label className="profile-language-check">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked && selectedLanguages.includes(option.value)}
+                                    disabled={!currentOperator || profileSaving || !checked}
+                                    onChange={(event) =>
+                                      toggleProfileProgramLanguage(program.id, option.value, event.target.checked)
+                                    }
+                                  />
+                                  <span>{option.label}</span>
+                                </label>
+                              ) : (
+                                <span className="profile-muted">-</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
                       )
                     })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
 
