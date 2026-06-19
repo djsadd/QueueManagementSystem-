@@ -13,6 +13,7 @@ from app.schemas.education import (
     EducationalProgramResponse,
     EducationalProgramUpdate,
     OperatorAcademicDegreesUpdate,
+    OperatorEducationalProgramResponse,
     OperatorEducationalProgramsUpdate,
 )
 from app.services.education_service import (
@@ -137,7 +138,7 @@ async def delete_educational_program(program_id: int, db: AsyncSession = Depends
 
 @operator_programs_router.get(
     "/{operator_id}/educational-programs",
-    response_model=list[EducationalProgramResponse],
+    response_model=list[OperatorEducationalProgramResponse],
     dependencies=[Depends(require_admin)],
 )
 async def get_operator_educational_programs(
@@ -149,7 +150,7 @@ async def get_operator_educational_programs(
 
 @operator_programs_router.put(
     "/{operator_id}/educational-programs",
-    response_model=list[EducationalProgramResponse],
+    response_model=list[OperatorEducationalProgramResponse],
     dependencies=[Depends(require_admin)],
 )
 async def replace_operator_educational_programs(
@@ -161,6 +162,7 @@ async def replace_operator_educational_programs(
         db,
         operator_id,
         data.educational_program_ids,
+        data.study_languages_by_program,
     )
 
 

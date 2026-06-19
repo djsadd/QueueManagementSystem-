@@ -123,6 +123,8 @@ class TicketService:
             )
 
         await TicketService.validate_educational_program(db, service, data.educational_program_id)
+        study_language = TicketService.validate_study_language(service, data.educational_program_id, data.study_language)
+        service_language = TicketService.validate_service_language(service, data.service_language)
 
         applicant_id = await TicketService.resolve_applicant_id(db, data)
 
@@ -147,6 +149,7 @@ class TicketService:
             service_id=data.service_id,
             educational_program_id=data.educational_program_id,
             academic_degree_id=academic_degree_id,
+            study_language=study_language,
             service_language=service_language,
             routing_key=routing_key,
             priority=service.priority,
@@ -268,6 +271,7 @@ class TicketService:
         db,
         service_id: int,
         educational_program_id: int | None,
+        study_language: StudyLanguage | None = None,
         service_language: ServiceLanguage | None = None,
     ) -> Operator | None:
         academic_degree_id, routing_key = await AssignmentService.prepare_ticket_routing(
@@ -279,6 +283,7 @@ class TicketService:
             service_id=service_id,
             educational_program_id=educational_program_id,
             academic_degree_id=academic_degree_id,
+            study_language=study_language,
             service_language=service_language,
             routing_key=routing_key,
             ticket_number="",
@@ -1159,11 +1164,13 @@ class TicketService:
         previous_window_id = ticket.window_id
 
         await TicketService.validate_educational_program(db, service, data.educational_program_id)
+        study_language = TicketService.validate_study_language(service, data.educational_program_id, data.study_language)
         service_language = TicketService.validate_service_language(service, data.service_language)
 
         old_status = ticket.status
         ticket.service_id = data.service_id
         ticket.educational_program_id = data.educational_program_id
+        ticket.study_language = study_language
         ticket.service_language = service_language
         ticket.priority = service.priority
         ticket.status = TicketStatus.WAITING.value
@@ -1218,11 +1225,13 @@ class TicketService:
         previous_window_id = ticket.window_id
 
         await TicketService.validate_educational_program(db, service, data.educational_program_id)
+        study_language = TicketService.validate_study_language(service, data.educational_program_id, data.study_language)
         service_language = TicketService.validate_service_language(service, data.service_language)
 
         old_status = ticket.status
         ticket.service_id = data.service_id
         ticket.educational_program_id = data.educational_program_id
+        ticket.study_language = study_language
         ticket.service_language = service_language
         ticket.priority = service.priority
         ticket.status = TicketStatus.WAITING.value
@@ -1628,6 +1637,32 @@ class TicketService:
                 status_code=404,
                 detail="ОП не найдена",
             )
+
+    @staticmethod
+    def validate_study_language(
+        service: Service | None,
+        educational_program_id: int | None,
+        study_language: StudyLanguage | None,
+    ) -> str | None:
+        if service is None or educational_program_id is None:
+            return None
+
+        if service.requires_educational_program and study_language is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Для выбранной ОП нужно выбрать язык обучения",
+            )
+
+        if study_language is None:
+            return None
+
+        if study_language not in TicketService.SERVICE_LANGUAGES:
+            raise HTTPException(
+                status_code=422,
+                detail="Некорректный язык обучения",
+            )
+
+        return study_language
 
     @staticmethod
     def validate_service_language(

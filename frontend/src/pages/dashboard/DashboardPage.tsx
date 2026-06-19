@@ -96,6 +96,7 @@ const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> =
   { value: 'ENGLISH', label: 'ENG' },
 ]
 const defaultServiceLanguages: ServiceLanguage[] = serviceLanguageOptions.map((option) => option.value)
+const defaultStudyLanguages: StudyLanguage[] = serviceLanguageOptions.map((option) => option.value)
 const emptyService: ServicePayload = {
   name: '',
   name_kk: '',
@@ -1248,6 +1249,27 @@ function buildServiceLanguagesPayload(
   )
 }
 
+function normalizeStudyLanguages(languages: StudyLanguage[] | undefined) {
+  if (!languages || languages.length === 0) {
+    return defaultStudyLanguages
+  }
+
+  const selected = defaultStudyLanguages.filter((language) => languages.includes(language))
+  return selected.length > 0 ? selected : defaultStudyLanguages
+}
+
+function buildStudyLanguagesPayload(
+  programIds: number[],
+  programLanguages: Record<number, StudyLanguage[]>,
+) {
+  return Object.fromEntries(
+    programIds.map((programId) => [
+      programId,
+      normalizeStudyLanguages(programLanguages[programId]),
+    ]),
+  )
+}
+
 function getCurrentUserIdFromToken() {
   const token = tokenStorage.getAccessToken()
 
@@ -1334,6 +1356,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [reassignServiceListOpen, setReassignServiceListOpen] = useState(false)
   const [reassignProgramListOpen, setReassignProgramListOpen] = useState(false)
   const [operatorProgramIds, setOperatorProgramIds] = useState<Record<string, number[]>>({})
+  const [operatorProgramLanguages, setOperatorProgramLanguages] = useState<
+    Record<string, Record<number, StudyLanguage[]>>
+  >({})
   const [operatorServiceIds, setOperatorServiceIds] = useState<Record<string, number[]>>({})
   const [operatorServiceLanguages, setOperatorServiceLanguages] = useState<
     Record<string, Record<number, ServiceLanguage[]>>
@@ -1350,11 +1375,15 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [ticketEventForm, setTicketEventForm] = useState<TicketEventPayload>(emptyTicketEvent)
   const [ticketEventMetadataText, setTicketEventMetadataText] = useState('')
   const [selectedOperatorProgramIds, setSelectedOperatorProgramIds] = useState<number[]>([])
+  const [selectedOperatorProgramLanguages, setSelectedOperatorProgramLanguages] = useState<
+    Record<number, StudyLanguage[]>
+  >({})
   const [selectedOperatorServiceIds, setSelectedOperatorServiceIds] = useState<number[]>([])
   const [selectedOperatorServiceLanguages, setSelectedOperatorServiceLanguages] = useState<
     Record<number, ServiceLanguage[]>
   >({})
   const [profileProgramIds, setProfileProgramIds] = useState<number[]>([])
+  const [profileProgramLanguages, setProfileProgramLanguages] = useState<Record<number, StudyLanguage[]>>({})
   const [profileServiceIds, setProfileServiceIds] = useState<number[]>([])
   const [profileServiceLanguages, setProfileServiceLanguages] = useState<Record<number, ServiceLanguage[]>>({})
   const [profileSaving, setProfileSaving] = useState(false)
@@ -1590,6 +1619,19 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           ]),
         ),
       )
+      setOperatorProgramLanguages(
+        Object.fromEntries(
+          operatorProgramsRows.map((row) => [
+            row.operatorId,
+            Object.fromEntries(
+              row.programs.map((program) => [
+                program.id,
+                normalizeStudyLanguages(program.study_languages),
+              ]),
+            ),
+          ]),
+        ),
+      )
       setOperatorServiceIds(
         Object.fromEntries(
           operatorServicesRows.map((row) => [
@@ -1615,6 +1657,14 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       const currentOperatorPrograms = operatorProgramsRows.find((row) => row.operatorId === currentOperator?.id)
       const currentOperatorServices = operatorServicesRows.find((row) => row.operatorId === currentOperator?.id)
       setProfileProgramIds(currentOperatorPrograms?.programs.map((program) => program.id) ?? [])
+      setProfileProgramLanguages(
+        Object.fromEntries(
+          currentOperatorPrograms?.programs.map((program) => [
+            program.id,
+            normalizeStudyLanguages(program.study_languages),
+          ]) ?? [],
+        ),
+      )
       setProfileServiceIds(currentOperatorServices?.services.map((service) => service.id) ?? [])
       setProfileServiceLanguages(
         Object.fromEntries(
@@ -1916,6 +1966,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setTicketEventMetadataText('')
     setSelectedWindowOperatorId('')
     setSelectedOperatorProgramIds([])
+    setSelectedOperatorProgramLanguages({})
     setSelectedOperatorServiceIds([])
     setSelectedOperatorServiceLanguages({})
   }
@@ -2030,7 +2081,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       if (operatorId !== null) {
-        await adminApi.operators.setPrograms(operatorId, selectedOperatorProgramIds)
+        await adminApi.operators.setPrograms(
+          operatorId,
+          selectedOperatorProgramIds,
+          buildStudyLanguagesPayload(selectedOperatorProgramIds, selectedOperatorProgramLanguages),
+        )
         await adminApi.operators.setServices(
           operatorId,
           selectedOperatorServiceIds,
@@ -2162,13 +2217,37 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
     try {
       const savedPrograms = isAdminUser
-        ? await adminApi.operators.setPrograms(currentOperator.id, profileProgramIds)
-        : await adminApi.operators.setMyPrograms(profileProgramIds)
+        ? await adminApi.operators.setPrograms(
+            currentOperator.id,
+            profileProgramIds,
+            buildStudyLanguagesPayload(profileProgramIds, profileProgramLanguages),
+          )
+        : await adminApi.operators.setMyPrograms(
+            profileProgramIds,
+            buildStudyLanguagesPayload(profileProgramIds, profileProgramLanguages),
+          )
       setOperatorProgramIds({
         ...operatorProgramIds,
         [currentOperator.id]: savedPrograms.map((program) => program.id),
       })
+      setOperatorProgramLanguages({
+        ...operatorProgramLanguages,
+        [currentOperator.id]: Object.fromEntries(
+          savedPrograms.map((program) => [
+            program.id,
+            normalizeStudyLanguages(program.study_languages),
+          ]),
+        ),
+      })
       setProfileProgramIds(savedPrograms.map((program) => program.id))
+      setProfileProgramLanguages(
+        Object.fromEntries(
+          savedPrograms.map((program) => [
+            program.id,
+            normalizeStudyLanguages(program.study_languages),
+          ]),
+        ),
+      )
       setProfileMessage('Образовательные программы сохранены')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить образовательные программы')
@@ -2462,6 +2541,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await adminApi.tickets.reassignMyTicketService(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
+        study_language: serviceToReassign?.requires_educational_program
+          ? acceptStudyLanguage || ticketToReassign.study_language
+          : null,
         service_language: serviceToReassign?.requires_service_language ? reassignServiceLanguage || null : null,
       })
       closeMyWindowTicketDetails()
@@ -2620,6 +2702,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await adminApi.tickets.reassignReceptionTicketService(selectedReceptionTicket.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
+        study_language: serviceToReassign?.requires_educational_program
+          ? acceptStudyLanguage || selectedReceptionTicket.study_language
+          : null,
         service_language: serviceToReassign?.requires_service_language ? reassignServiceLanguage || null : null,
       })
       closeReceptionTicketDetails()
@@ -3630,6 +3715,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         status: operator.status,
                       })
                       setSelectedOperatorProgramIds(operatorProgramIds[operator.id] ?? [])
+                      setSelectedOperatorProgramLanguages(operatorProgramLanguages[operator.id] ?? {})
                       setSelectedOperatorServiceIds(operatorServiceIds[operator.id] ?? [])
                       setSelectedOperatorServiceLanguages(operatorServiceLanguages[operator.id] ?? {})
                       setFormModal('operators')
@@ -4453,11 +4539,18 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 multiple
                 className="multi-select"
                 value={selectedOperatorProgramIds.map(String)}
-                onChange={(event) =>
-                  setSelectedOperatorProgramIds(
-                    Array.from(event.target.selectedOptions, (option) => Number(option.value)),
+                onChange={(event) => {
+                  const nextProgramIds = Array.from(event.target.selectedOptions, (option) => Number(option.value))
+                  setSelectedOperatorProgramIds(nextProgramIds)
+                  setSelectedOperatorProgramLanguages((current) =>
+                    Object.fromEntries(
+                      nextProgramIds.map((programId) => [
+                        programId,
+                        normalizeStudyLanguages(current[programId]),
+                      ]),
+                    ),
                   )
-                }
+                }}
               >
                 {educationalPrograms.map((program) => (
                   <option value={program.id} key={program.id}>
@@ -4467,6 +4560,50 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               </select>
               <ModalActions onCancel={closeFormModal} submitText={editingOperatorId === null ? 'Создать' : 'Сохранить'} />
             </form>
+          )}
+
+          {formModal === 'operators' && selectedOperatorProgramIds.length > 0 && (
+            <div className="program-choice-grid">
+              {selectedOperatorProgramIds
+                .map((programId) => educationalPrograms.find((program) => program.id === programId))
+                .filter((program): program is EducationalProgramItem => Boolean(program))
+                .map((program) => (
+                  <div className="program-choice" key={program.id}>
+                    <span>
+                      <strong>{program.name}</strong>
+                      <small>{program.code} - языки ОП</small>
+                    </span>
+                    <span className="language-option-row">
+                      {serviceLanguageOptions.map((option) => {
+                        const checked = normalizeStudyLanguages(
+                          selectedOperatorProgramLanguages[program.id],
+                        ).includes(option.value)
+
+                        return (
+                          <label className="check-field inline-check" key={option.value}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => {
+                                const current = normalizeStudyLanguages(
+                                  selectedOperatorProgramLanguages[program.id],
+                                )
+                                setSelectedOperatorProgramLanguages({
+                                  ...selectedOperatorProgramLanguages,
+                                  [program.id]: event.target.checked
+                                    ? normalizeStudyLanguages([...current, option.value])
+                                    : current.filter((language) => language !== option.value),
+                                })
+                              }}
+                            />
+                            {option.label}
+                          </label>
+                        )
+                      })}
+                    </span>
+                  </div>
+                ))}
+            </div>
           )}
 
           {formModal === 'academicDegrees' && (

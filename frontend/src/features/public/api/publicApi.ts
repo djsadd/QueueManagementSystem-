@@ -16,6 +16,7 @@ export type PublicServiceItem = {
 export type TicketCreatePayload = {
   service_id: number
   educational_program_id?: number | null
+  study_language?: 'KAZAKH' | 'RUSSIAN' | 'ENGLISH' | null
   service_language?: 'KAZAKH' | 'RUSSIAN' | 'ENGLISH' | null
 }
 

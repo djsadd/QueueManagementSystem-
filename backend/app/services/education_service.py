@@ -20,6 +20,9 @@ from app.schemas.education import (
 )
 
 
+DEFAULT_STUDY_LANGUAGES = ["KAZAKH", "RUSSIAN", "ENGLISH"]
+
+
 class AcademicDegreeService:
     @staticmethod
     async def create(db: AsyncSession, data: AcademicDegreeCreate) -> AcademicDegree:
@@ -138,11 +141,11 @@ class EducationalProgramService:
 
 class OperatorEducationalProgramService:
     @staticmethod
-    async def get_for_operator(db: AsyncSession, operator_id: uuid.UUID) -> list[EducationalProgram]:
+    async def get_for_operator(db: AsyncSession, operator_id: uuid.UUID) -> list[dict]:
         await OperatorEducationalProgramService.ensure_operator_exists(db, operator_id)
 
         result = await db.execute(
-            select(EducationalProgram)
+            select(EducationalProgram, OperatorEducationalProgram.study_languages)
             .join(
                 OperatorEducationalProgram,
                 OperatorEducationalProgram.educational_program_id == EducationalProgram.id,
@@ -150,17 +153,28 @@ class OperatorEducationalProgramService:
             .where(OperatorEducationalProgram.operator_id == operator_id)
             .order_by(EducationalProgram.id)
         )
-        return list(result.scalars().all())
+        return [
+            {
+                **{
+                    column.name: getattr(program, column.name)
+                    for column in EducationalProgram.__table__.columns
+                },
+                "study_languages": OperatorEducationalProgramService.normalize_study_languages(study_languages),
+            }
+            for program, study_languages in result.all()
+        ]
 
     @staticmethod
     async def replace_for_operator(
         db: AsyncSession,
         operator_id: uuid.UUID,
         educational_program_ids: list[int],
-    ) -> list[EducationalProgram]:
+        study_languages_by_program: dict[int, list[str]] | None = None,
+    ) -> list[dict]:
         await OperatorEducationalProgramService.ensure_operator_exists(db, operator_id)
         unique_program_ids = list(dict.fromkeys(educational_program_ids))
         await OperatorEducationalProgramService.ensure_programs_exist(db, unique_program_ids)
+        study_languages_by_program = study_languages_by_program or {}
 
         await db.execute(
             delete(OperatorEducationalProgram).where(
@@ -173,11 +187,26 @@ class OperatorEducationalProgramService:
                 OperatorEducationalProgram(
                     operator_id=operator_id,
                     educational_program_id=program_id,
+                    study_languages=OperatorEducationalProgramService.normalize_study_languages(
+                        study_languages_by_program.get(program_id)
+                    ),
                 )
             )
 
         await db.commit()
         return await OperatorEducationalProgramService.get_for_operator(db, operator_id)
+
+    @staticmethod
+    def normalize_study_languages(study_languages: list[str] | None) -> list[str]:
+        if not study_languages:
+            return DEFAULT_STUDY_LANGUAGES.copy()
+
+        selected = [
+            language
+            for language in DEFAULT_STUDY_LANGUAGES
+            if language in set(study_languages)
+        ]
+        return selected or DEFAULT_STUDY_LANGUAGES.copy()
 
     @staticmethod
     async def ensure_operator_exists(db: AsyncSession, operator_id: uuid.UUID) -> None:

@@ -24,6 +24,7 @@ from app.models.window import Window
 ASSIGNABLE_WINDOW_STATUSES = {"OPEN", "AVAILABLE"}
 ACTIVE_TICKET_STATUSES = {TicketStatus.WAITING.value, TicketStatus.CALLED.value}
 DEFAULT_SERVICE_LANGUAGES = {"KAZAKH", "RUSSIAN", "ENGLISH"}
+DEFAULT_STUDY_LANGUAGES = {"KAZAKH", "RUSSIAN", "ENGLISH"}
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class OperatorProfile:
     service_ids: set[int]
     service_languages_by_service: dict[int, set[str]]
     program_ids: set[int]
+    study_languages_by_program: dict[int, set[str]]
     degree_ids: set[int]
 
 
@@ -220,11 +222,16 @@ class AssignmentService:
         }
 
         result = await db.execute(
-            select(OperatorEducationalProgram.educational_program_id).where(
+            select(OperatorEducationalProgram).where(
                 OperatorEducationalProgram.operator_id == operator.id
             )
         )
-        program_ids = set(result.scalars().all())
+        program_links = list(result.scalars().all())
+        program_ids = {link.educational_program_id for link in program_links}
+        study_languages_by_program = {
+            link.educational_program_id: AssignmentService.normalize_study_languages(link.study_languages)
+            for link in program_links
+        }
 
         result = await db.execute(
             select(OperatorAcademicDegree.academic_degree_id).where(
@@ -239,6 +246,7 @@ class AssignmentService:
             service_ids=service_ids,
             service_languages_by_service=service_languages_by_service,
             program_ids=program_ids,
+            study_languages_by_program=study_languages_by_program,
             degree_ids=degree_ids,
         )
 
@@ -253,6 +261,16 @@ class AssignmentService:
                 return False
 
         if ticket.educational_program_id is not None:
+            if ticket.educational_program_id not in profile.program_ids:
+                return False
+
+            if ticket.study_language is not None:
+                study_languages = profile.study_languages_by_program.get(
+                    ticket.educational_program_id,
+                    DEFAULT_STUDY_LANGUAGES,
+                )
+                return ticket.study_language in study_languages
+
             return ticket.educational_program_id in profile.program_ids
 
         if ticket.academic_degree_id is not None:
@@ -267,6 +285,14 @@ class AssignmentService:
 
         normalized = DEFAULT_SERVICE_LANGUAGES.intersection(service_languages)
         return normalized or DEFAULT_SERVICE_LANGUAGES.copy()
+
+    @staticmethod
+    def normalize_study_languages(study_languages: list[str] | None) -> set[str]:
+        if not study_languages:
+            return DEFAULT_STUDY_LANGUAGES.copy()
+
+        normalized = DEFAULT_STUDY_LANGUAGES.intersection(study_languages)
+        return normalized or DEFAULT_STUDY_LANGUAGES.copy()
 
     @staticmethod
     def score_operator_for_ticket(profile: OperatorProfile, ticket: Ticket) -> int:

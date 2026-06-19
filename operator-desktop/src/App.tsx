@@ -60,6 +60,7 @@ const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> =
   { value: 'ENGLISH', label: 'ENG' },
 ]
 const defaultServiceLanguages: ServiceLanguage[] = serviceLanguageOptions.map((option) => option.value)
+const defaultStudyLanguages: StudyLanguage[] = serviceLanguageOptions.map((option) => option.value)
 const PLATONUS_REMOTE_PREVIEW_MS = 90
 const PLATONUS_STREAM_FRAME_MS = 33
 const PLATONUS_STREAM_MAX_WIDTH = 1920
@@ -159,6 +160,25 @@ function buildServiceLanguagesPayload(
     serviceIds.map((serviceId) => [
       serviceId,
       normalizeServiceLanguages(serviceLanguages[serviceId]),
+    ]),
+  )
+}
+
+function normalizeStudyLanguages(languages: StudyLanguage[] | undefined) {
+  if (!languages || languages.length === 0) return defaultStudyLanguages
+
+  const selected = defaultStudyLanguages.filter((language) => languages.includes(language))
+  return selected.length > 0 ? selected : defaultStudyLanguages
+}
+
+function buildStudyLanguagesPayload(
+  programIds: number[],
+  programLanguages: Record<number, StudyLanguage[]>,
+) {
+  return Object.fromEntries(
+    programIds.map((programId) => [
+      programId,
+      normalizeStudyLanguages(programLanguages[programId]),
     ]),
   )
 }
@@ -533,6 +553,7 @@ function App() {
   const [selectedServiceLanguages, setSelectedServiceLanguages] = useState<Record<number, ServiceLanguage[]>>({})
   const [programs, setPrograms] = useState<EducationalProgramItem[]>([])
   const [selectedPrograms, setSelectedPrograms] = useState<number[]>([])
+  const [selectedProgramLanguages, setSelectedProgramLanguages] = useState<Record<number, StudyLanguage[]>>({})
   const [view, setView] = useState<View>('window')
   const [email, setEmail] = useState(tokenStorage.getEmail())
   const [password, setPassword] = useState('')
@@ -643,6 +664,14 @@ function App() {
     )
     setPrograms(availablePrograms)
     setSelectedPrograms(myPrograms.map((program) => program.id))
+    setSelectedProgramLanguages(
+      Object.fromEntries(
+        myPrograms.map((program) => [
+          program.id,
+          normalizeStudyLanguages(program.study_languages),
+        ]),
+      ),
+    )
   }, [])
 
   const restoreSession = useCallback(async () => {
@@ -965,6 +994,9 @@ function App() {
       await api.tickets.reassignService(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
+        study_language: selectedReassignService.requires_educational_program
+          ? acceptStudyLanguage || ticketToReassign.study_language
+          : null,
         service_language: selectedReassignService.requires_service_language
           ? (reassignServiceLanguage || null)
           : null,
@@ -999,8 +1031,19 @@ function App() {
 
   async function savePrograms() {
     await runAction(async () => {
-      const updated = await api.operator.setPrograms(selectedPrograms)
+      const updated = await api.operator.setPrograms(
+        selectedPrograms,
+        buildStudyLanguagesPayload(selectedPrograms, selectedProgramLanguages),
+      )
       setSelectedPrograms(updated.map((program) => program.id))
+      setSelectedProgramLanguages(
+        Object.fromEntries(
+          updated.map((program) => [
+            program.id,
+            normalizeStudyLanguages(program.study_languages),
+          ]),
+        ),
+      )
     }, 'Образовательные программы обновлены')
   }
 
@@ -1353,10 +1396,59 @@ function App() {
                 title="Образовательные программы"
                 items={programs}
                 selectedIds={selectedPrograms}
-                onChange={setSelectedPrograms}
+                onChange={(nextProgramIds) => {
+                  setSelectedPrograms(nextProgramIds)
+                  setSelectedProgramLanguages((current) =>
+                    Object.fromEntries(
+                      nextProgramIds.map((programId) => [
+                        programId,
+                        normalizeStudyLanguages(current[programId]),
+                      ]),
+                    ),
+                  )
+                }}
                 onSave={savePrograms}
                 saving={saving}
               />
+              {selectedPrograms.length > 0 ? (
+                <section className="panel p-6">
+                  <h2 className="mb-4 text-xl font-semibold tracking-normal">Языки ОП</h2>
+                  <div className="space-y-3">
+                    {selectedPrograms
+                      .map((programId) => programs.find((program) => program.id === programId))
+                      .filter((program): program is EducationalProgramItem => Boolean(program))
+                      .map((program) => (
+                        <div className="rounded-lg border border-line bg-slate-50 p-4" key={program.id}>
+                          <strong className="block">{program.name}</strong>
+                          <div className="mt-3 flex flex-wrap gap-3">
+                            {serviceLanguageOptions.map((option) => {
+                              const checked = normalizeStudyLanguages(selectedProgramLanguages[program.id]).includes(option.value)
+
+                              return (
+                                <label className="inline-flex items-center gap-2 text-sm font-semibold" key={option.value}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) => {
+                                      const current = normalizeStudyLanguages(selectedProgramLanguages[program.id])
+                                      setSelectedProgramLanguages({
+                                        ...selectedProgramLanguages,
+                                        [program.id]: event.target.checked
+                                          ? normalizeStudyLanguages([...current, option.value])
+                                          : current.filter((language) => language !== option.value),
+                                      })
+                                    }}
+                                  />
+                                  {option.label}
+                                </label>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </section>
+              ) : null}
               <section className="panel p-6 xl:col-span-2">
                 <div className="grid gap-4 md:grid-cols-3">
                   <div className="info-line">

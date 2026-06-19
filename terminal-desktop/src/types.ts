@@ -1,5 +1,6 @@
 export type TerminalLanguage = 'kk' | 'ru' | 'en'
 export type ServiceLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
+export type StudyLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
 
 export type TerminalConfig = {
   apiBaseUrl: string
@@ -38,6 +39,7 @@ export type TerminalTicket = {
   id: string
   service_id: number
   educational_program_id: number | null
+  study_language: StudyLanguage | null
   service_language: ServiceLanguage | null
   service_name: string | null
   service_name_kk: string | null

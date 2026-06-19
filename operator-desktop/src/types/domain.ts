@@ -60,6 +60,7 @@ export type EducationalProgramItem = {
   academic_degree_id: number
   is_active: boolean
   created_at: string
+  study_languages?: StudyLanguage[]
 }
 
 export type TicketItem = {

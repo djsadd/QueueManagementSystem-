@@ -14,9 +14,9 @@ import {
   X,
 } from 'lucide-react'
 import logoUrl from '../../frontend/src/assets/Logo+RGB.png'
-import type { ServiceLanguage, TerminalConfig, TerminalLanguage, TerminalProgram, TerminalService, TerminalTicket } from './types'
+import type { ServiceLanguage, StudyLanguage, TerminalConfig, TerminalLanguage, TerminalProgram, TerminalService, TerminalTicket } from './types'
 
-type ModalKind = 'programs' | 'service-language' | null
+type ModalKind = 'programs' | 'service-language' | 'study-language' | null
 
 const languages: Array<{ value: TerminalLanguage; label: string }> = [
   { value: 'kk', label: 'Қаз' },
@@ -174,6 +174,7 @@ function App() {
   const [programs, setPrograms] = useState<TerminalProgram[]>([])
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null)
   const [selectedProgramId, setSelectedProgramId] = useState<number | null>(null)
+  const [selectedStudyLanguage, setSelectedStudyLanguage] = useState<StudyLanguage | null>(null)
   const [selectedServiceLanguage, setSelectedServiceLanguage] = useState<ServiceLanguage | null>(null)
   const [programQuery, setProgramQuery] = useState('')
   const [modal, setModal] = useState<ModalKind>(null)
@@ -253,6 +254,7 @@ function App() {
   function selectService(service: TerminalService) {
     setSelectedServiceId(service.id)
     setSelectedProgramId(null)
+    setSelectedStudyLanguage(null)
     setSelectedServiceLanguage(null)
     setLastTicket(null)
     setMessage('')
@@ -276,6 +278,12 @@ function App() {
       return
     }
 
+    if (mustSelectProgram && !selectedStudyLanguage) {
+      setError('Выберите язык ОП')
+      setModal('study-language')
+      return
+    }
+
     if (mustSelectServiceLanguage && !selectedServiceLanguage) {
       setError('Выберите язык обслуживания')
       setModal('service-language')
@@ -291,6 +299,7 @@ function App() {
         body: {
           service_id: selectedService.id,
           educational_program_id: mustSelectProgram ? selectedProgram?.id ?? null : null,
+          study_language: mustSelectProgram ? selectedStudyLanguage : null,
           service_language: mustSelectServiceLanguage ? selectedServiceLanguage : null,
         },
       })
@@ -428,6 +437,11 @@ function App() {
                 {selectedProgram ? getLocalizedName(selectedProgram, language) : t.chooseProgram}
               </button>
             ) : null}
+            {mustSelectProgram ? (
+              <button type="button" disabled={busy} onClick={() => setModal('study-language')}>
+                {selectedStudyLanguage ?? 'Выберите язык ОП'}
+              </button>
+            ) : null}
             {mustSelectServiceLanguage ? (
               <button type="button" disabled={busy} onClick={() => setModal('service-language')}>
                 {selectedServiceLanguage ?? 'Выберите язык обслуживания'}
@@ -481,9 +495,10 @@ function App() {
                   key={program.id}
                   type="button"
                   onClick={() => {
-                    setSelectedProgramId(program.id)
-                    setModal(null)
-                    setProgramQuery('')
+                                setSelectedProgramId(program.id)
+                                setSelectedStudyLanguage(null)
+                                setModal('study-language')
+                                setProgramQuery('')
                   }}
                 >
                   <span>
@@ -516,6 +531,33 @@ function App() {
                   onClick={() => {
                     setSelectedServiceLanguage(option.value)
                     setModal(selectedService?.requires_educational_program ? 'programs' : null)
+                  }}
+                >
+                  <strong>{option.label}</strong>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {modal === 'study-language' ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setModal(null)}>
+          <section className="choice-modal" role="dialog" aria-modal="true" aria-label="Study language" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <h2>Выберите язык ОП</h2>
+              <button type="button" aria-label="Close" onClick={() => setModal(null)}>
+                <X size={26} />
+              </button>
+            </header>
+            <div className="program-list">
+              {serviceLanguageOptions.map((option) => (
+                <button
+                  className={selectedStudyLanguage === option.value ? 'selected' : ''}
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    setSelectedStudyLanguage(option.value)
+                    setModal(null)
                   }}
                 >
                   <strong>{option.label}</strong>

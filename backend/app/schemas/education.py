@@ -1,6 +1,10 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+StudyLanguage = Literal["KAZAKH", "RUSSIAN", "ENGLISH"]
 
 
 class AcademicDegreeBase(BaseModel):
@@ -57,6 +61,11 @@ class EducationalProgramResponse(EducationalProgramBase):
 
 class OperatorEducationalProgramsUpdate(BaseModel):
     educational_program_ids: list[int]
+    study_languages_by_program: dict[int, list[StudyLanguage]] = Field(default_factory=dict)
+
+
+class OperatorEducationalProgramResponse(EducationalProgramResponse):
+    study_languages: list[StudyLanguage]
 
 
 class OperatorAcademicDegreesUpdate(BaseModel):

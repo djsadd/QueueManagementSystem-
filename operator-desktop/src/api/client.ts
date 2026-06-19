@@ -8,6 +8,7 @@ import type {
   OperatorStatus,
   ServiceLanguage,
   ServiceItem,
+  StudyLanguage,
   TicketItem,
   WindowStatus,
 } from '../types/domain'
@@ -128,10 +129,10 @@ export const api = {
       }),
     availablePrograms: () => request<EducationalProgramItem[]>('/operators/me/available-educational-programs'),
     programs: () => request<EducationalProgramItem[]>('/operators/me/educational-programs'),
-    setPrograms: (educationalProgramIds: number[]) =>
+    setPrograms: (educationalProgramIds: number[], studyLanguagesByProgram: Record<number, StudyLanguage[]> = {}) =>
       request<EducationalProgramItem[]>('/operators/me/educational-programs', {
         method: 'PUT',
-        body: { educational_program_ids: educationalProgramIds },
+        body: { educational_program_ids: educationalProgramIds, study_languages_by_program: studyLanguagesByProgram },
       }),
   },
   tickets: {
@@ -160,7 +161,12 @@ export const api = {
       }),
     reassignService: (
       id: string,
-      payload: { service_id: number; educational_program_id: number | null; service_language?: ServiceLanguage | null },
+      payload: {
+        service_id: number
+        educational_program_id: number | null
+        study_language?: StudyLanguage | null
+        service_language?: ServiceLanguage | null
+      },
     ) =>
       request<TicketItem>(`/tickets/my-window/${id}/service`, { method: 'PATCH', body: payload }),
   },

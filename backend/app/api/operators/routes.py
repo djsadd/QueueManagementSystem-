@@ -9,6 +9,7 @@ from app.models.operator import Operator
 from app.models.user import User
 from app.schemas.education import (
     AcademicDegreeResponse,
+    OperatorEducationalProgramResponse,
     EducationalProgramResponse,
     OperatorAcademicDegreesUpdate,
     OperatorEducationalProgramsUpdate,
@@ -85,7 +86,7 @@ async def replace_my_operator_services(
     )
 
 
-@operators_router.get("/me/educational-programs", response_model=list[EducationalProgramResponse])
+@operators_router.get("/me/educational-programs", response_model=list[OperatorEducationalProgramResponse])
 async def get_my_operator_educational_programs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -94,7 +95,7 @@ async def get_my_operator_educational_programs(
     return await OperatorEducationalProgramService.get_for_operator(db, operator.id)
 
 
-@operators_router.put("/me/educational-programs", response_model=list[EducationalProgramResponse])
+@operators_router.put("/me/educational-programs", response_model=list[OperatorEducationalProgramResponse])
 async def replace_my_operator_educational_programs(
     data: OperatorEducationalProgramsUpdate,
     db: AsyncSession = Depends(get_db),
@@ -105,6 +106,7 @@ async def replace_my_operator_educational_programs(
         db,
         operator.id,
         data.educational_program_ids,
+        data.study_languages_by_program,
     )
 
 

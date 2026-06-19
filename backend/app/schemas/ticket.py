@@ -15,6 +15,7 @@ class TicketCreate(BaseModel):
     applicant_id: uuid.UUID | None = None
     service_id: int = Field(gt=0, examples=[1])
     educational_program_id: int | None = Field(default=None, gt=0)
+    study_language: StudyLanguage | None = None
     service_language: ServiceLanguage | None = None
     full_name: str | None = Field(default=None, min_length=1, max_length=255)
     iin: str | None = Field(default=None, min_length=12, max_length=12)
@@ -51,6 +52,7 @@ class TicketUpdate(BaseModel):
 class TicketServiceReassign(BaseModel):
     service_id: int = Field(gt=0)
     educational_program_id: int | None = Field(default=None, gt=0)
+    study_language: StudyLanguage | None = None
     service_language: ServiceLanguage | None = None
 
 

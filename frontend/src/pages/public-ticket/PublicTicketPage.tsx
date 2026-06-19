@@ -15,7 +15,7 @@ import './public-ticket-page.css'
 type Lang = 'kk' | 'ru' | 'en'
 type ServiceLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
 type TicketFormState = TicketCreatePayload
-type ChoiceModalKind = 'services' | 'programs' | 'service-language' | null
+type ChoiceModalKind = 'services' | 'programs' | 'service-language' | 'study-language' | null
 
 const LANG_STORAGE_KEY = 'public-ticket-language'
 const languages: Array<{ value: Lang; label: string }> = [
@@ -32,6 +32,7 @@ const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> =
 const initialForm: TicketFormState = {
   service_id: 0,
   educational_program_id: null,
+  study_language: null,
   service_language: null,
 }
 
@@ -315,6 +316,7 @@ export function PublicTicketPage() {
       ...current,
       service_id: service.id,
       educational_program_id: null,
+      study_language: null,
       service_language: null,
     }))
     setChoiceModal(null)
@@ -327,6 +329,7 @@ export function PublicTicketPage() {
     setForm((current) => ({
       ...current,
       educational_program_id: program.id,
+      study_language: null,
     }))
     setChoiceModal(null)
   }
@@ -350,6 +353,11 @@ export function PublicTicketPage() {
       return
     }
 
+    if (mustSelectEducationalProgram && !form.study_language) {
+      setError('Выберите язык ОП')
+      return
+    }
+
     if (mustSelectServiceLanguage && !form.service_language) {
       setError('Выберите язык обслуживания')
       return
@@ -366,6 +374,7 @@ export function PublicTicketPage() {
       const createdTicket = await publicApi.tickets.create({
         service_id: form.service_id,
         educational_program_id: mustSelectEducationalProgram ? form.educational_program_id : null,
+        study_language: mustSelectEducationalProgram ? form.study_language : null,
         service_language: mustSelectServiceLanguage ? form.service_language : null,
       })
 
@@ -473,6 +482,19 @@ export function PublicTicketPage() {
               </div>
             ) : null}
 
+            {mustSelectEducationalProgram ? (
+              <div className="ticket-choice-field">
+                <span>Язык ОП</span>
+                <button
+                  className="ticket-choice-trigger"
+                  type="button"
+                  onClick={() => setChoiceModal('study-language')}
+                >
+                  <strong>{form.study_language ?? 'Выберите язык ОП'}</strong>
+                </button>
+              </div>
+            ) : null}
+
             {mustSelectServiceLanguage ? (
               <div className="ticket-choice-field">
                 <span>Язык обслуживания</span>
@@ -558,6 +580,21 @@ export function PublicTicketPage() {
             serviceLanguageOptions.findIndex((item) => item.value === form.service_language) + 1 || null
           }
           title="Выберите язык обслуживания"
+        />
+      ) : null}
+
+      {choiceModal === 'study-language' ? (
+        <TicketChoiceModal
+          emptyLabel="Выберите язык ОП"
+          getLabel={(item) => item.label}
+          items={serviceLanguageOptions.map((item, index) => ({ ...item, id: index + 1 }))}
+          onClose={() => setChoiceModal(null)}
+          onSelect={(item) => {
+            setForm((current) => ({ ...current, study_language: item.value }))
+            setChoiceModal(null)
+          }}
+          selectedId={serviceLanguageOptions.findIndex((item) => item.value === form.study_language) + 1 || null}
+          title="Выберите язык ОП"
         />
       ) : null}
     </main>

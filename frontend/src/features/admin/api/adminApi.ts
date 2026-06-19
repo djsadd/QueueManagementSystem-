@@ -91,6 +91,10 @@ export type EducationalProgramItem = {
   created_at: string
 }
 
+export type OperatorEducationalProgramItem = EducationalProgramItem & {
+  study_languages: StudyLanguage[]
+}
+
 export type EducationalProgramPayload = {
   name: string
   name_kk: string
@@ -292,6 +296,7 @@ export type TicketExportParams = {
 export type TicketServiceReassignPayload = {
   service_id: number
   educational_program_id: number | null
+  study_language?: StudyLanguage | null
   service_language?: ServiceLanguage | null
 }
 
@@ -395,11 +400,11 @@ export const adminApi = {
   operators: {
     list: () => request<OperatorItem[]>('/operators/'),
     me: () => request<OperatorItem>('/operators/me'),
-    myPrograms: () => request<EducationalProgramItem[]>('/operators/me/educational-programs'),
-    setMyPrograms: (educationalProgramIds: number[]) =>
-      request<EducationalProgramItem[]>('/operators/me/educational-programs', {
+    myPrograms: () => request<OperatorEducationalProgramItem[]>('/operators/me/educational-programs'),
+    setMyPrograms: (educationalProgramIds: number[], studyLanguagesByProgram: Record<number, StudyLanguage[]> = {}) =>
+      request<OperatorEducationalProgramItem[]>('/operators/me/educational-programs', {
         method: 'PUT',
-        body: { educational_program_ids: educationalProgramIds },
+        body: { educational_program_ids: educationalProgramIds, study_languages_by_program: studyLanguagesByProgram },
       }),
     myServices: () => request<OperatorServiceItem[]>('/operators/me/services'),
     setMyServices: (serviceIds: number[], serviceLanguagesByService: Record<number, ServiceLanguage[]> = {}) =>
@@ -416,11 +421,11 @@ export const adminApi = {
     update: (id: string, payload: Partial<OperatorPayload>) =>
       request<OperatorItem>(`/operators/${id}`, { method: 'PATCH', body: payload }),
     delete: (id: string) => request<void>(`/operators/${id}`, { method: 'DELETE' }),
-    programs: (id: string) => request<EducationalProgramItem[]>(`/operators/${id}/educational-programs`),
-    setPrograms: (id: string, educationalProgramIds: number[]) =>
-      request<EducationalProgramItem[]>(`/operators/${id}/educational-programs`, {
+    programs: (id: string) => request<OperatorEducationalProgramItem[]>(`/operators/${id}/educational-programs`),
+    setPrograms: (id: string, educationalProgramIds: number[], studyLanguagesByProgram: Record<number, StudyLanguage[]> = {}) =>
+      request<OperatorEducationalProgramItem[]>(`/operators/${id}/educational-programs`, {
         method: 'PUT',
-        body: { educational_program_ids: educationalProgramIds },
+        body: { educational_program_ids: educationalProgramIds, study_languages_by_program: studyLanguagesByProgram },
       }),
     services: (id: string) => request<OperatorServiceItem[]>(`/operators/${id}/services`),
     setServices: (id: string, serviceIds: number[], serviceLanguagesByService: Record<number, ServiceLanguage[]> = {}) =>
