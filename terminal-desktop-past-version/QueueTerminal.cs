@@ -99,6 +99,7 @@ namespace QueueTerminal
         public int priority { get; set; }
         public bool is_active { get; set; }
         public bool requires_educational_program { get; set; }
+        public bool requires_service_language { get; set; }
 
         public override string ToString()
         {
@@ -114,6 +115,7 @@ namespace QueueTerminal
         public string name_en { get; set; }
         public string code { get; set; }
         public bool is_active { get; set; }
+        public bool requires_service_language { get; set; }
         public string display_name { get; set; }
 
         public override string ToString()
@@ -133,6 +135,8 @@ namespace QueueTerminal
         public string educational_program_name { get; set; }
         public string educational_program_name_kk { get; set; }
         public string educational_program_name_en { get; set; }
+        public string study_language { get; set; }
+        public string service_language { get; set; }
         public string ticket_number { get; set; }
         public string created_at { get; set; }
     }
@@ -157,11 +161,13 @@ namespace QueueTerminal
             return serializer.Deserialize<List<ProgramItem>>(Request("GET", "/public/educational-programs", null));
         }
 
-        public TicketItem CreateTicket(int serviceId, int? programId)
+        public TicketItem CreateTicket(int serviceId, int? programId, string studyLanguage, string serviceLanguage)
         {
             Dictionary<string, object> body = new Dictionary<string, object>();
             body["service_id"] = serviceId;
             body["educational_program_id"] = programId.HasValue ? (object)programId.Value : null;
+            body["study_language"] = !String.IsNullOrEmpty(studyLanguage) ? (object)studyLanguage : null;
+            body["service_language"] = !String.IsNullOrEmpty(serviceLanguage) ? (object)serviceLanguage : null;
             string json = serializer.Serialize(body);
             return serializer.Deserialize<TicketItem>(Request("POST", "/public/tickets", json));
         }
@@ -602,6 +608,15 @@ namespace QueueTerminal
             return language == UiLanguage.English ? english : russian;
         }
 
+        private string CurrentServiceLanguage()
+        {
+            if (language == UiLanguage.Kazakh)
+            {
+                return "KAZAKH";
+            }
+            return language == UiLanguage.English ? "ENGLISH" : "RUSSIAN";
+        }
+
         private void UpdateClock()
         {
             timeLabel.Text = DateTime.Now.ToString("dd.MM.yyyy  HH:mm:ss");
@@ -840,12 +855,19 @@ namespace QueueTerminal
             }
 
             int? programId = selectedService.requires_educational_program ? (int?)selectedProgram.id : null;
+            string selectedLanguage = CurrentServiceLanguage();
+            string studyLanguage = selectedService.requires_educational_program
+                && selectedProgram != null
+                && selectedProgram.requires_service_language
+                    ? selectedLanguage
+                    : null;
+            string serviceLanguage = selectedService.requires_service_language ? selectedLanguage : null;
             SetBusy(true, T("Талон тіркелуде...", "Регистрация талона...", "Registering ticket..."));
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
-                    TicketItem ticket = api.CreateTicket(selectedService.id, programId);
+                    TicketItem ticket = api.CreateTicket(selectedService.id, programId, studyLanguage, serviceLanguage);
                     OnUi(delegate
                     {
                         lastTicket = ticket;
