@@ -122,8 +122,8 @@ class TicketService:
                 detail="Услуга не найдена"
             )
 
-        await TicketService.validate_educational_program(db, service, data.educational_program_id)
-        study_language = TicketService.validate_study_language(service, data.educational_program_id, data.study_language)
+        educational_program = await TicketService.validate_educational_program(db, service, data.educational_program_id)
+        study_language = TicketService.validate_study_language(educational_program, data.study_language)
         service_language = TicketService.validate_service_language(service, data.service_language)
 
         applicant_id = await TicketService.resolve_applicant_id(db, data)
@@ -1163,8 +1163,8 @@ class TicketService:
 
         previous_window_id = ticket.window_id
 
-        await TicketService.validate_educational_program(db, service, data.educational_program_id)
-        study_language = TicketService.validate_study_language(service, data.educational_program_id, data.study_language)
+        educational_program = await TicketService.validate_educational_program(db, service, data.educational_program_id)
+        study_language = TicketService.validate_study_language(educational_program, data.study_language)
         service_language = TicketService.validate_service_language(service, data.service_language)
 
         old_status = ticket.status
@@ -1224,8 +1224,8 @@ class TicketService:
 
         previous_window_id = ticket.window_id
 
-        await TicketService.validate_educational_program(db, service, data.educational_program_id)
-        study_language = TicketService.validate_study_language(service, data.educational_program_id, data.study_language)
+        educational_program = await TicketService.validate_educational_program(db, service, data.educational_program_id)
+        study_language = TicketService.validate_study_language(educational_program, data.study_language)
         service_language = TicketService.validate_service_language(service, data.service_language)
 
         old_status = ticket.status
@@ -1610,9 +1610,9 @@ class TicketService:
         db,
         service: Service | None,
         educational_program_id: int | None,
-    ) -> None:
+    ) -> EducationalProgram | None:
         if service is None:
-            return
+            return None
 
         requires_program = service.requires_educational_program
 
@@ -1623,31 +1623,34 @@ class TicketService:
             )
 
         if educational_program_id is None:
-            return
+            return None
 
         result = await db.execute(
-            select(EducationalProgram.id).where(
+            select(EducationalProgram).where(
                 EducationalProgram.id == educational_program_id,
                 EducationalProgram.is_active.is_(True),
             )
         )
 
-        if result.scalar_one_or_none() is None:
+        educational_program = result.scalar_one_or_none()
+
+        if educational_program is None:
             raise HTTPException(
                 status_code=404,
                 detail="ОП не найдена",
             )
 
+        return educational_program
+
     @staticmethod
     def validate_study_language(
-        service: Service | None,
-        educational_program_id: int | None,
+        educational_program: EducationalProgram | None,
         study_language: StudyLanguage | None,
     ) -> str | None:
-        if service is None or educational_program_id is None:
+        if educational_program is None:
             return None
 
-        if service.requires_educational_program and study_language is None:
+        if educational_program.requires_service_language and study_language is None:
             raise HTTPException(
                 status_code=422,
                 detail="Для выбранной ОП нужно выбрать язык обучения",
@@ -1662,7 +1665,7 @@ class TicketService:
                 detail="Некорректный язык обучения",
             )
 
-        return study_language
+        return study_language if educational_program.requires_service_language else None
 
     @staticmethod
     def validate_service_language(

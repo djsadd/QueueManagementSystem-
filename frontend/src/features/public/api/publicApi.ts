@@ -27,6 +27,7 @@ export type PublicEducationalProgramItem = {
   name_en: string
   code: string
   academic_degree_id: number
+  requires_service_language: boolean
   is_active: boolean
   created_at: string
 }

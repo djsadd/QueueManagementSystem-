@@ -192,6 +192,10 @@ function requiresServiceLanguage(service: PublicServiceItem | undefined) {
   return Boolean(service?.requires_service_language)
 }
 
+function requiresEducationalProgramLanguage(program: PublicEducationalProgramItem | undefined) {
+  return Boolean(program?.requires_service_language)
+}
+
 function getLocalizedName(item: { name: string; name_kk: string; name_en: string }, lang: Lang) {
   return lang === 'kk' ? item.name_kk : lang === 'en' ? item.name_en : item.name
 }
@@ -309,6 +313,8 @@ export function PublicTicketPage() {
     [educationalPrograms, form.educational_program_id],
   )
   const mustSelectEducationalProgram = requiresEducationalProgram(selectedService)
+  const mustSelectEducationalProgramLanguage =
+    mustSelectEducationalProgram && requiresEducationalProgramLanguage(selectedEducationalProgram)
   const mustSelectServiceLanguage = requiresServiceLanguage(selectedService)
 
   function selectService(service: PublicServiceItem) {
@@ -322,6 +328,8 @@ export function PublicTicketPage() {
     setChoiceModal(null)
     if (service.requires_service_language) {
       setChoiceModal('service-language')
+    } else if (service.requires_educational_program) {
+      setChoiceModal('programs')
     }
   }
 
@@ -331,7 +339,7 @@ export function PublicTicketPage() {
       educational_program_id: program.id,
       study_language: null,
     }))
-    setChoiceModal(null)
+    setChoiceModal(program.requires_service_language ? 'study-language' : null)
   }
 
   useEffect(() => {
@@ -353,7 +361,7 @@ export function PublicTicketPage() {
       return
     }
 
-    if (mustSelectEducationalProgram && !form.study_language) {
+    if (mustSelectEducationalProgramLanguage && !form.study_language) {
       setError('Выберите язык ОП')
       return
     }
@@ -374,7 +382,7 @@ export function PublicTicketPage() {
       const createdTicket = await publicApi.tickets.create({
         service_id: form.service_id,
         educational_program_id: mustSelectEducationalProgram ? form.educational_program_id : null,
-        study_language: mustSelectEducationalProgram ? form.study_language : null,
+        study_language: mustSelectEducationalProgramLanguage ? form.study_language : null,
         service_language: mustSelectServiceLanguage ? form.service_language : null,
       })
 
@@ -482,7 +490,7 @@ export function PublicTicketPage() {
               </div>
             ) : null}
 
-            {mustSelectEducationalProgram ? (
+            {mustSelectEducationalProgramLanguage ? (
               <div className="ticket-choice-field">
                 <span>Язык ОП</span>
                 <button

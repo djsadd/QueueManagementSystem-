@@ -128,6 +128,7 @@ const emptyEducationalProgram: EducationalProgramPayload = {
   name_en: '',
   code: '',
   academic_degree_id: 0,
+  requires_service_language: true,
   is_active: true,
 }
 const emptyApplicant: ApplicantPayload = {
@@ -2527,6 +2528,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       return
     }
 
+    if (selectedReassignProgramRequiresLanguage && !acceptStudyLanguage && !selectedMyWindowTicket.study_language) {
+      setMyWindowError('Выберите язык ОП')
+      return
+    }
+
     if (serviceToReassign?.requires_service_language && !reassignServiceLanguage) {
       setMyWindowError('Выберите язык обслуживания')
       return
@@ -2541,7 +2547,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await adminApi.tickets.reassignMyTicketService(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
-        study_language: serviceToReassign?.requires_educational_program
+        study_language: selectedReassignProgramRequiresLanguage
           ? acceptStudyLanguage || ticketToReassign.study_language
           : null,
         service_language: serviceToReassign?.requires_service_language ? reassignServiceLanguage || null : null,
@@ -2694,6 +2700,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       return
     }
 
+    if (selectedReassignProgramRequiresLanguage && !acceptStudyLanguage && !selectedReceptionTicket.study_language) {
+      setReceptionError('Выберите язык ОП')
+      return
+    }
+
     setError('')
     setReceptionError('')
     setTicketActionSaving(true)
@@ -2702,7 +2713,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await adminApi.tickets.reassignReceptionTicketService(selectedReceptionTicket.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
-        study_language: serviceToReassign?.requires_educational_program
+        study_language: selectedReassignProgramRequiresLanguage
           ? acceptStudyLanguage || selectedReceptionTicket.study_language
           : null,
         service_language: serviceToReassign?.requires_service_language ? reassignServiceLanguage || null : null,
@@ -2959,6 +2970,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const activeEducationalPrograms = educationalPrograms.filter((program) => program.is_active)
   const selectedReassignService = services.find((service) => String(service.id) === reassignServiceId)
   const selectedReassignProgram = educationalPrograms.find((program) => String(program.id) === reassignProgramId)
+  const selectedReassignProgramRequiresLanguage = Boolean(selectedReassignProgram?.requires_service_language)
   const normalizedReassignServiceQuery = normalizeChoiceSearch(reassignServiceQuery)
   const normalizedReassignProgramQuery = normalizeChoiceSearch(reassignProgramQuery)
   const filteredReassignServices = activeServices.filter((service) => {
@@ -4136,7 +4148,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         {activeSection === 'educationalPrograms' && (
           <section className="admin-panel tab-panel" key="educationalPrograms">
             <CrudTable
-              columns={['ID', 'Название (RU)', 'Название (KZ)', 'Название (EN)', 'Код', 'Степень', 'Статус', 'Действия']}
+              columns={['ID', 'Название (RU)', 'Название (KZ)', 'Название (EN)', 'Код', 'Степень', 'Требовать язык обслуживания', 'Статус', 'Действия']}
               loading={loading}
               rows={educationalPrograms.map((program) => [
                 program.id,
@@ -4145,6 +4157,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 program.name_en,
                 program.code,
                 getDegreeLabel(academicDegrees, program.academic_degree_id),
+                boolLabel(program.requires_service_language),
                 boolLabel(program.is_active),
                 <RowActions
                   key={program.id}
@@ -4156,6 +4169,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       name_en: program.name_en,
                       code: program.code,
                       academic_degree_id: program.academic_degree_id,
+                      requires_service_language: program.requires_service_language,
                       is_active: program.is_active,
                     })
                     setFormModal('educationalPrograms')
@@ -4691,6 +4705,19 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                   </option>
                 ))}
               </select>
+              <label className="check-field">
+                <input
+                  type="checkbox"
+                  checked={educationalProgramForm.requires_service_language}
+                  onChange={(event) =>
+                    setEducationalProgramForm({
+                      ...educationalProgramForm,
+                      requires_service_language: event.target.checked,
+                    })
+                  }
+                />
+                Требовать выбор языка обслуживания
+              </label>
               <label className="check-field">
                 <input
                   type="checkbox"

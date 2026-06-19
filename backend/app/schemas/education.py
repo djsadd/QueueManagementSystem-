@@ -36,6 +36,7 @@ class EducationalProgramBase(BaseModel):
     name_en: str = Field(min_length=1, max_length=255)
     code: str = Field(min_length=1, max_length=50)
     academic_degree_id: int = Field(gt=0)
+    requires_service_language: bool = True
     is_active: bool = True
 
 
@@ -49,6 +50,7 @@ class EducationalProgramUpdate(BaseModel):
     name_en: str | None = Field(default=None, min_length=1, max_length=255)
     code: str | None = Field(default=None, min_length=1, max_length=50)
     academic_degree_id: int | None = Field(default=None, gt=0)
+    requires_service_language: bool | None = None
     is_active: bool | None = None
 
 

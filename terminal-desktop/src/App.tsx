@@ -194,6 +194,7 @@ function App() {
     [programs, selectedProgramId],
   )
   const mustSelectProgram = Boolean(selectedService?.requires_educational_program)
+  const mustSelectStudyLanguage = mustSelectProgram && Boolean(selectedProgram?.requires_service_language)
   const mustSelectServiceLanguage = Boolean(selectedService?.requires_service_language)
   const filteredPrograms = useMemo(() => {
     const query = programQuery.trim().toLowerCase()
@@ -278,7 +279,7 @@ function App() {
       return
     }
 
-    if (mustSelectProgram && !selectedStudyLanguage) {
+    if (mustSelectStudyLanguage && !selectedStudyLanguage) {
       setError('Выберите язык ОП')
       setModal('study-language')
       return
@@ -299,7 +300,7 @@ function App() {
         body: {
           service_id: selectedService.id,
           educational_program_id: mustSelectProgram ? selectedProgram?.id ?? null : null,
-          study_language: mustSelectProgram ? selectedStudyLanguage : null,
+          study_language: mustSelectStudyLanguage ? selectedStudyLanguage : null,
           service_language: mustSelectServiceLanguage ? selectedServiceLanguage : null,
         },
       })
@@ -437,7 +438,7 @@ function App() {
                 {selectedProgram ? getLocalizedName(selectedProgram, language) : t.chooseProgram}
               </button>
             ) : null}
-            {mustSelectProgram ? (
+            {mustSelectStudyLanguage ? (
               <button type="button" disabled={busy} onClick={() => setModal('study-language')}>
                 {selectedStudyLanguage ?? 'Выберите язык ОП'}
               </button>
@@ -495,10 +496,10 @@ function App() {
                   key={program.id}
                   type="button"
                   onClick={() => {
-                                setSelectedProgramId(program.id)
-                                setSelectedStudyLanguage(null)
-                                setModal('study-language')
-                                setProgramQuery('')
+                    setSelectedProgramId(program.id)
+                    setSelectedStudyLanguage(null)
+                    setModal(program.requires_service_language ? 'study-language' : null)
+                    setProgramQuery('')
                   }}
                 >
                   <span>

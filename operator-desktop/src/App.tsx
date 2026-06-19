@@ -595,6 +595,7 @@ function App() {
     () => activePrograms.find((program) => String(program.id) === reassignProgramId) ?? null,
     [activePrograms, reassignProgramId],
   )
+  const selectedReassignProgramRequiresLanguage = Boolean(selectedReassignProgram?.requires_service_language)
   const filteredReassignServices = useMemo(() => {
     const query = reassignServiceQuery.trim().toLowerCase()
     if (!query) return activeServices
@@ -980,6 +981,11 @@ function App() {
       return
     }
 
+    if (selectedReassignProgramRequiresLanguage && !acceptStudyLanguage && !selectedTicket.study_language) {
+      setActionError('Выберите язык ОП')
+      return
+    }
+
     if (selectedReassignService?.requires_service_language && !reassignServiceLanguage) {
       setActionError('Выберите язык обслуживания')
       return
@@ -994,7 +1000,7 @@ function App() {
       await api.tickets.reassignService(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
-        study_language: selectedReassignService.requires_educational_program
+        study_language: selectedReassignProgramRequiresLanguage
           ? acceptStudyLanguage || ticketToReassign.study_language
           : null,
         service_language: selectedReassignService.requires_service_language

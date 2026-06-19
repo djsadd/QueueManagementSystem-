@@ -32,6 +32,7 @@ export type TerminalProgram = {
   name_en: string | null
   code: string
   display_name?: string | null
+  requires_service_language: boolean
   is_active: boolean
 }
 

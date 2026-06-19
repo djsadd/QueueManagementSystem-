@@ -28,6 +28,7 @@ class EducationalProgram(Base):
     name_en: Mapped[str] = mapped_column(String(255), nullable=False)
     code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     academic_degree_id: Mapped[int] = mapped_column(ForeignKey("academic_degrees.id"), nullable=False)
+    requires_service_language: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True),
