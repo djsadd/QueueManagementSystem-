@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clock3,
   GraduationCap,
   Languages,
@@ -183,6 +185,7 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const modalListRef = useRef<HTMLDivElement | null>(null)
   const t = translations[language]
 
   const selectedService = useMemo(
@@ -222,6 +225,20 @@ function App() {
 
     return () => window.clearTimeout(timeout)
   }, [config.autoResetSeconds, lastTicket])
+
+  useEffect(() => {
+    modalListRef.current?.scrollTo({ top: 0 })
+  }, [modal, programQuery])
+
+  function scrollModalList(direction: -1 | 1) {
+    const list = modalListRef.current
+    if (!list) return
+
+    list.scrollBy({
+      top: direction * Math.max(280, Math.floor(list.clientHeight * 0.72)),
+      behavior: 'smooth',
+    })
+  }
 
   async function loadCatalogs() {
     setLoading(true)
@@ -488,27 +505,37 @@ function App() {
               <input value={programQuery} placeholder={t.searchProgram} onChange={(event) => setProgramQuery(event.target.value)} autoFocus />
             </div>
 
-            <div className="program-list">
-              {filteredPrograms.length === 0 ? <div className="empty-state small">{t.noPrograms}</div> : null}
-              {filteredPrograms.map((program) => (
-                <button
-                  className={selectedProgramId === program.id ? 'selected' : ''}
-                  key={program.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedProgramId(program.id)
-                    setSelectedStudyLanguage(null)
-                    setModal(program.requires_service_language ? 'study-language' : null)
-                    setProgramQuery('')
-                  }}
-                >
-                  <span>
-                    <GraduationCap size={20} />
-                    {program.code}
-                  </span>
-                  <strong>{getLocalizedName(program, language)}</strong>
+            <div className="modal-scroll-shell">
+              <div className="program-list" ref={modalListRef}>
+                {filteredPrograms.length === 0 ? <div className="empty-state small">{t.noPrograms}</div> : null}
+                {filteredPrograms.map((program) => (
+                  <button
+                    className={selectedProgramId === program.id ? 'selected' : ''}
+                    key={program.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedProgramId(program.id)
+                      setSelectedStudyLanguage(null)
+                      setModal(program.requires_service_language ? 'study-language' : null)
+                      setProgramQuery('')
+                    }}
+                  >
+                    <span>
+                      <GraduationCap size={20} />
+                      {program.code}
+                    </span>
+                    <strong>{getLocalizedName(program, language)}</strong>
+                  </button>
+                ))}
+              </div>
+              <div className="modal-scroll-controls" aria-label="Прокрутка списка">
+                <button type="button" aria-label="Прокрутить вверх" onClick={() => scrollModalList(-1)}>
+                  <ChevronUp size={42} />
                 </button>
-              ))}
+                <button type="button" aria-label="Прокрутить вниз" onClick={() => scrollModalList(1)}>
+                  <ChevronDown size={42} />
+                </button>
+              </div>
             </div>
           </section>
         </div>

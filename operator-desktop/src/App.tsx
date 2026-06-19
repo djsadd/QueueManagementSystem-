@@ -596,6 +596,9 @@ function App() {
     [activePrograms, reassignProgramId],
   )
   const selectedReassignProgramRequiresLanguage = Boolean(selectedReassignProgram?.requires_service_language)
+  const mustChooseReassignStudyLanguage = Boolean(
+    selectedReassignService?.requires_educational_program && selectedReassignProgramRequiresLanguage,
+  )
   const filteredReassignServices = useMemo(() => {
     const query = reassignServiceQuery.trim().toLowerCase()
     if (!query) return activeServices
@@ -877,19 +880,21 @@ function App() {
     setReassignProgramQuery('')
   }
 
-  async function persistTicketApplicantData(ticket: TicketItem) {
+  async function persistTicketApplicantData(ticket: TicketItem, requireStudyLanguage = true) {
     const normalizedIin = acceptIin.trim()
 
     if (!/^\d{12}$/.test(normalizedIin)) {
       throw new Error('ИИН должен состоять из 12 цифр')
     }
 
-    if (!acceptStudyLanguage) {
+    if (requireStudyLanguage && !acceptStudyLanguage) {
       throw new Error('Выберите язык обучения')
     }
 
     let updatedTicket = await api.tickets.accept(ticket.id, normalizedIin)
-    updatedTicket = await api.tickets.updateStudyLanguage(updatedTicket.id, acceptStudyLanguage)
+    if (acceptStudyLanguage) {
+      updatedTicket = await api.tickets.updateStudyLanguage(updatedTicket.id, acceptStudyLanguage)
+    }
     updateTicketInState(updatedTicket)
     return updatedTicket
   }
@@ -981,7 +986,7 @@ function App() {
       return
     }
 
-    if (selectedReassignProgramRequiresLanguage && !acceptStudyLanguage && !selectedTicket.study_language) {
+    if (mustChooseReassignStudyLanguage && !acceptStudyLanguage) {
       setActionError('Выберите язык ОП')
       return
     }
@@ -996,12 +1001,12 @@ function App() {
     setActionError('')
 
     try {
-      const ticketToReassign = await persistTicketApplicantData(selectedTicket)
+      const ticketToReassign = await persistTicketApplicantData(selectedTicket, mustChooseReassignStudyLanguage)
       await api.tickets.reassignService(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
-        study_language: selectedReassignProgramRequiresLanguage
-          ? acceptStudyLanguage || ticketToReassign.study_language
+        study_language: mustChooseReassignStudyLanguage
+          ? acceptStudyLanguage || null
           : null,
         service_language: selectedReassignService.requires_service_language
           ? (reassignServiceLanguage || null)

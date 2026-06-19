@@ -583,6 +583,48 @@ button:disabled {
   box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
 }
 
+.modal-scroll-shell {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 86px;
+  gap: 12px;
+  padding: 14px;
+}
+
+.modal-scroll-shell .program-list {
+  padding: 0;
+}
+
+.modal-scroll-controls {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: 1fr 1fr;
+  gap: 12px;
+}
+
+.modal-scroll-controls button {
+  display: grid;
+  min-height: 112px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: #0f766e;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(15, 118, 110, 0.18);
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.modal-scroll-controls button:hover,
+.modal-scroll-controls button:focus-visible {
+  outline: 0;
+  background: #0d665f;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.24);
+}
+
 .program-list {
   display: grid;
   min-height: 0;
