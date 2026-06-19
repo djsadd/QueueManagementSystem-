@@ -1403,63 +1403,15 @@ function App() {
                   </div>
                 </section>
               ) : null}
-              <ProfileList
-                title="Образовательные программы"
-                items={programs}
+              <ProgramLanguageTable
+                programs={programs}
                 selectedIds={selectedPrograms}
-                onChange={(nextProgramIds) => {
-                  setSelectedPrograms(nextProgramIds)
-                  setSelectedProgramLanguages((current) =>
-                    Object.fromEntries(
-                      nextProgramIds.map((programId) => [
-                        programId,
-                        normalizeStudyLanguages(current[programId]),
-                      ]),
-                    ),
-                  )
-                }}
+                selectedLanguages={selectedProgramLanguages}
+                onSelectedIdsChange={setSelectedPrograms}
+                onSelectedLanguagesChange={setSelectedProgramLanguages}
                 onSave={savePrograms}
                 saving={saving}
               />
-              {selectedPrograms.length > 0 ? (
-                <section className="panel p-6">
-                  <h2 className="mb-4 text-xl font-semibold tracking-normal">Языки ОП</h2>
-                  <div className="space-y-3">
-                    {selectedPrograms
-                      .map((programId) => programs.find((program) => program.id === programId))
-                      .filter((program): program is EducationalProgramItem => Boolean(program))
-                      .map((program) => (
-                        <div className="rounded-lg border border-line bg-slate-50 p-4" key={program.id}>
-                          <strong className="block">{program.name}</strong>
-                          <div className="mt-3 flex flex-wrap gap-3">
-                            {serviceLanguageOptions.map((option) => {
-                              const checked = normalizeStudyLanguages(selectedProgramLanguages[program.id]).includes(option.value)
-
-                              return (
-                                <label className="inline-flex items-center gap-2 text-sm font-semibold" key={option.value}>
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(event) => {
-                                      const current = normalizeStudyLanguages(selectedProgramLanguages[program.id])
-                                      setSelectedProgramLanguages({
-                                        ...selectedProgramLanguages,
-                                        [program.id]: event.target.checked
-                                          ? normalizeStudyLanguages([...current, option.value])
-                                          : current.filter((language) => language !== option.value),
-                                      })
-                                    }}
-                                  />
-                                  {option.label}
-                                </label>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </section>
-              ) : null}
               <section className="panel p-6 xl:col-span-2">
                 <div className="grid gap-4 md:grid-cols-3">
                   <div className="info-line">
@@ -1701,6 +1653,141 @@ function App() {
         </AdminModal>
       )}
     </main>
+  )
+}
+
+function ProgramLanguageTable({
+  onSave,
+  onSelectedIdsChange,
+  onSelectedLanguagesChange,
+  programs,
+  saving,
+  selectedIds,
+  selectedLanguages,
+}: {
+  programs: EducationalProgramItem[]
+  selectedIds: number[]
+  selectedLanguages: Record<number, StudyLanguage[]>
+  onSelectedIdsChange: (ids: number[]) => void
+  onSelectedLanguagesChange: (languages: Record<number, StudyLanguage[]>) => void
+  onSave: () => void
+  saving: boolean
+}) {
+  function setProgramSelected(programId: number, selected: boolean) {
+    const nextSelectedIds = selected
+      ? [...selectedIds, programId].filter((id, index, ids) => ids.indexOf(id) === index)
+      : selectedIds.filter((id) => id !== programId)
+
+    onSelectedIdsChange(nextSelectedIds)
+    onSelectedLanguagesChange(
+      Object.fromEntries(
+        nextSelectedIds.map((id) => [
+          id,
+          normalizeStudyLanguages(selectedLanguages[id]),
+        ]),
+      ),
+    )
+  }
+
+  function setProgramLanguage(programId: number, language: StudyLanguage, selected: boolean) {
+    const programWasSelected = selectedIds.includes(programId)
+    const currentLanguages = programWasSelected ? normalizeStudyLanguages(selectedLanguages[programId]) : []
+    const nextLanguages = selected
+      ? [...currentLanguages, language].filter((item, index, languages) => languages.indexOf(item) === index)
+      : currentLanguages.filter((item) => item !== language)
+    const nextSelectedIds = nextLanguages.length > 0
+      ? (programWasSelected ? selectedIds : [...selectedIds, programId])
+      : selectedIds.filter((id) => id !== programId)
+
+    onSelectedIdsChange(nextSelectedIds)
+    onSelectedLanguagesChange(
+      Object.fromEntries(
+        nextSelectedIds.map((id) => [
+          id,
+          id === programId ? nextLanguages : normalizeStudyLanguages(selectedLanguages[id]),
+        ]),
+      ),
+    )
+  }
+
+  return (
+    <section className="panel overflow-hidden xl:col-span-2">
+      <div className="flex items-center justify-between gap-4 border-b border-line p-5">
+        <div>
+          <span className="section-label">Назначения</span>
+          <h2 className="mt-1 text-xl font-semibold tracking-normal">Образовательные программы</h2>
+        </div>
+        <button className="primary-button" disabled={saving} onClick={onSave}>
+          <Check className="h-5 w-5" />
+          Сохранить
+        </button>
+      </div>
+
+      <div className="program-language-table-wrap">
+        <table className="program-language-table">
+          <thead>
+            <tr>
+              <th>ОП</th>
+              <th>Статус</th>
+              <th>Назначить</th>
+              {serviceLanguageOptions.map((option) => (
+                <th key={option.value}>{option.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {programs.map((program) => {
+              const selected = selectedIds.includes(program.id)
+              const languages = normalizeStudyLanguages(selectedLanguages[program.id])
+
+              return (
+                <tr className={selected ? 'program-language-row-selected' : ''} key={program.id}>
+                  <td>
+                    <strong>{program.name}</strong>
+                    <span>{program.code}</span>
+                  </td>
+                  <td>
+                    <span className={classNames('program-status-chip', program.is_active ? 'program-status-active' : 'program-status-disabled')}>
+                      {program.is_active ? 'Активно' : 'Отключено'}
+                    </span>
+                  </td>
+                  <td>
+                    <label className="program-table-check" aria-label={`Назначить ${program.name}`}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={(event) => setProgramSelected(program.id, event.target.checked)}
+                      />
+                      <span />
+                    </label>
+                  </td>
+                  {serviceLanguageOptions.map((option) => (
+                    <td key={option.value}>
+                      <label className="program-table-check" aria-label={`${program.name}: ${option.label}`}>
+                        <input
+                          type="checkbox"
+                          checked={selected && languages.includes(option.value)}
+                          disabled={!program.is_active}
+                          onChange={(event) => setProgramLanguage(program.id, option.value, event.target.checked)}
+                        />
+                        <span />
+                      </label>
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+            {programs.length === 0 ? (
+              <tr>
+                <td colSpan={6}>
+                  <EmptyState title="Нет доступных записей" />
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 

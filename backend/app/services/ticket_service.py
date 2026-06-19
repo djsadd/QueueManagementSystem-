@@ -128,38 +128,50 @@ class TicketService:
 
         applicant_id = await TicketService.resolve_applicant_id(db, data)
 
-        last_queue = await (
-            TicketRepository.get_last_queue_number_for_service(db, data.service_id)
-        )
-
-        queue_number = last_queue + 1
-
         ticket_prefix = await TicketService.build_ticket_number_prefix(db, service)
-        ticket_number = f"{ticket_prefix}-{queue_number}"
         academic_degree_id, routing_key = await AssignmentService.prepare_ticket_routing(
             db,
             data.service_id,
             data.educational_program_id,
         )
 
-        ticket = Ticket(
-            ticket_number=ticket_number,
-            queue_number=queue_number,
-            applicant_id=applicant_id,
-            service_id=data.service_id,
-            educational_program_id=data.educational_program_id,
-            academic_degree_id=academic_degree_id,
-            study_language=study_language,
-            service_language=service_language,
-            routing_key=routing_key,
-            priority=service.priority,
-            estimated_wait=15
-        )
+        ticket = None
+        for attempt in range(5):
+            queue_number = await TicketService.build_next_queue_number(
+                db,
+                data.service_id,
+                ticket_prefix,
+                offset=attempt,
+            )
+            ticket = Ticket(
+                ticket_number=f"{ticket_prefix}-{queue_number}",
+                queue_number=queue_number,
+                applicant_id=applicant_id,
+                service_id=data.service_id,
+                educational_program_id=data.educational_program_id,
+                academic_degree_id=academic_degree_id,
+                study_language=study_language,
+                service_language=service_language,
+                routing_key=routing_key,
+                priority=service.priority,
+                estimated_wait=15
+            )
 
-        ticket = await TicketRepository.create(
-            db,
-            ticket
-        )
+            try:
+                ticket = await TicketRepository.create(
+                    db,
+                    ticket
+                )
+                break
+            except IntegrityError:
+                await db.rollback()
+                ticket = None
+
+        if ticket is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Не удалось создать уникальный номер талона. Повторите попытку.",
+            )
 
         await TicketService.create_ticket_event(
             db,
@@ -180,6 +192,17 @@ class TicketService:
         )
 
         return await TicketService.build_ticket_response(db, ticket)
+
+    @staticmethod
+    async def build_next_queue_number(
+        db,
+        service_id: int,
+        ticket_prefix: str,
+        offset: int = 0,
+    ) -> int:
+        last_service_queue = await TicketRepository.get_last_queue_number_for_service(db, service_id)
+        last_prefix_queue = await TicketRepository.get_last_queue_number_for_ticket_prefix(db, ticket_prefix)
+        return max(last_service_queue, last_prefix_queue) + 1 + offset
 
     @staticmethod
     async def build_ticket_number_prefix(db, service: Service) -> str:

@@ -31,6 +31,24 @@ class TicketRepository:
         return result.scalar() or 0
 
     @staticmethod
+    async def get_last_queue_number_for_ticket_prefix(
+        db: AsyncSession,
+        prefix: str,
+    ) -> int:
+        result = await db.execute(
+            select(Ticket.ticket_number)
+            .where(Ticket.ticket_number.like(f"{prefix}-%"))
+        )
+
+        max_queue_number = 0
+        for ticket_number in result.scalars().all():
+            suffix = ticket_number.rsplit("-", 1)[-1]
+            if suffix.isdigit():
+                max_queue_number = max(max_queue_number, int(suffix))
+
+        return max_queue_number
+
+    @staticmethod
     async def create(
         db: AsyncSession,
         ticket: Ticket

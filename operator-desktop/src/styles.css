@@ -214,6 +214,89 @@ button:disabled {
     @apply h-5 w-5 accent-teal-700;
   }
 
+  .program-language-table-wrap {
+    @apply max-h-[620px] overflow-auto;
+  }
+
+  .program-language-table {
+    @apply w-full min-w-[820px] border-separate border-spacing-0 text-left;
+  }
+
+  .program-language-table th {
+    @apply sticky top-0 z-10 border-b border-line bg-slate-50 px-5 py-4 text-xs font-bold uppercase tracking-[0.12em] text-muted;
+  }
+
+  .program-language-table th:nth-child(n + 3),
+  .program-language-table td:nth-child(n + 3) {
+    @apply text-center;
+  }
+
+  .program-language-table td {
+    @apply border-b border-line bg-white px-5 py-4 align-middle transition;
+  }
+
+  .program-language-table tr:hover td {
+    @apply bg-slate-50;
+  }
+
+  .program-language-row-selected td {
+    @apply bg-teal-50/60;
+  }
+
+  .program-language-table td strong {
+    @apply block max-w-[520px] truncate text-sm font-semibold text-ink;
+  }
+
+  .program-language-table td span {
+    @apply mt-1 block text-xs font-semibold text-muted;
+  }
+
+  .program-status-chip {
+    @apply mt-0 inline-flex h-8 items-center rounded-lg px-3 text-xs font-bold;
+  }
+
+  .program-status-active {
+    @apply bg-emerald-100 text-emerald-800;
+  }
+
+  .program-status-disabled {
+    @apply bg-slate-100 text-slate-600;
+  }
+
+  .program-table-check {
+    @apply inline-grid h-11 w-11 cursor-pointer place-items-center rounded-lg border border-line bg-white transition hover:border-brand hover:bg-teal-50;
+  }
+
+  .program-table-check input {
+    @apply sr-only;
+  }
+
+  .program-table-check span {
+    @apply m-0 grid h-6 w-6 place-items-center rounded-md border-2 border-slate-300 bg-white transition;
+  }
+
+  .program-table-check span::after {
+    content: "";
+    width: 8px;
+    height: 13px;
+    border: solid white;
+    border-width: 0 3px 3px 0;
+    opacity: 0;
+    transform: rotate(45deg) translate(-1px, -1px);
+  }
+
+  .program-table-check input:checked + span {
+    @apply border-brand bg-brand;
+  }
+
+  .program-table-check input:checked + span::after {
+    opacity: 1;
+  }
+
+  .program-table-check:has(input:disabled) {
+    @apply cursor-not-allowed opacity-50 hover:border-line hover:bg-white;
+  }
+
   .info-line {
     @apply rounded-lg border border-line bg-slate-50 p-4;
   }
