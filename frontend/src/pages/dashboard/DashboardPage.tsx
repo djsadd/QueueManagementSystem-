@@ -1331,6 +1331,14 @@ function isUnsupportedSpreadsheetFile(fileName: string, buffer: ArrayBuffer) {
   )
 }
 
+function getApplicantFunnelStepWidth(value: number, total: number) {
+  if (value <= 0 || total <= 0) {
+    return 0
+  }
+
+  return Math.max(6, Math.round((value / total) * 100))
+}
+
 function getMyWindowTicketStatusClassName(status: string) {
   if (status === 'WAITING') {
     return 'pill status-waiting'
@@ -3576,6 +3584,34 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       value: selectedStatusActive,
     },
   ]
+  const applicantReportFunnelItems = applicantReportAnalysis
+    ? [
+        {
+          color: '#b8bec8',
+          detail: `${applicantReportAnalysis.ticketsWithIinCount} талонов с ИИН`,
+          id: 'ticket-iin-total',
+          label: 'Уникальные ИИН по талонам',
+          value: applicantReportAnalysis.uniqueTicketIinCount,
+        },
+        {
+          color: '#6fac95',
+          detail: `${applicantReportAnalysis.matchPercent}% от уникальных ИИН по талонам`,
+          id: 'matched-iin',
+          label: 'Сопоставлено по ИИН',
+          value: applicantReportAnalysis.matchedIinCount,
+        },
+        ...applicantReportAnalysis.stages.map((stage) => ({
+          color: stage.color,
+          detail: `${stage.percentOfTickets}% от уникальных ИИН по талонам`,
+          id: stage.id,
+          label: stage.label,
+          value: stage.value,
+        })),
+      ].map((item) => ({
+        ...item,
+        widthPercent: getApplicantFunnelStepWidth(item.value, applicantReportAnalysis.uniqueTicketIinCount),
+      }))
+    : []
   const operatorAnalyticsProcessedTotal = operatorAnalyticsRows.reduce(
     (total, row) => total + row.stats.processed,
     0,
@@ -4567,53 +4603,26 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
                       {applicantReportAnalysis ? (
                         <>
-                          <div className="applicant-report-summary">
-                            <div>
-                              <span className="profile-label">Абитуриентов по талонам</span>
-                              <strong>{applicantReportAnalysis.uniqueTicketIinCount}</strong>
-                              <p>{applicantReportAnalysis.ticketsWithIinCount} талонов с ИИН</p>
-                            </div>
-                            <div>
-                              <span className="profile-label">Сопоставлено по ИИН</span>
-                              <strong>{applicantReportAnalysis.matchedIinCount}</strong>
-                              <p>{applicantReportAnalysis.matchPercent}% от абитуриентов по талонам</p>
-                            </div>
-                            <div>
-                              <span className="profile-label">Не найдено в отчете</span>
-                              <strong>{applicantReportAnalysis.unmatchedTicketIinCount}</strong>
-                              <p>ИИН из талонов без совпадения</p>
-                            </div>
-                            <div>
-                              <span className="profile-label">ИИН в отчете</span>
-                              <strong>{applicantReportAnalysis.reportIinCount}</strong>
-                              <p>{applicantReportAnalysis.rowCount} строк отчета</p>
-                            </div>
-                          </div>
-
                           {applicantReportAnalysis.reportIinCount === 0 && (
                             <div className="admin-alert">В отчете не найден ИИН для сопоставления с талонами</div>
                           )}
 
-                          <div className="applicant-funnel">
-                            {applicantReportAnalysis.stages.map((stage) => (
-                              <div className="applicant-funnel-row" key={stage.id}>
-                                <div className="applicant-funnel-label">
-                                  <strong>{stage.label}</strong>
-                                  <span>
-                                    {stage.percentOfMatched}% от сопоставленных · {stage.percentOfTickets}% от талонов
-                                  </span>
+                          <div className="applicant-funnel-visual">
+                            {applicantReportFunnelItems.map((item) => (
+                              <div className="applicant-funnel-step" key={item.id}>
+                                <div
+                                  className={`applicant-funnel-block${item.value === 0 ? ' empty' : ''}`}
+                                  style={{
+                                    background: item.color,
+                                    width: item.value > 0 ? `${item.widthPercent}%` : '52px',
+                                  }}
+                                >
+                                  <strong>{item.value}</strong>
                                 </div>
-                                <div className="applicant-funnel-bar" aria-hidden="true">
-                                  <span
-                                    style={{
-                                      background: stage.color,
-                                      width: `${
-                                        stage.value > 0 ? Math.max(4, stage.percentOfTickets) : 0
-                                      }%`,
-                                    }}
-                                  />
+                                <div className="applicant-funnel-caption">
+                                  <strong>{item.label}</strong>
+                                  <span>{item.detail}</span>
                                 </div>
-                                <strong className="applicant-funnel-value">{stage.value}</strong>
                               </div>
                             ))}
                           </div>
