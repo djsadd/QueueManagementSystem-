@@ -22,6 +22,7 @@ npm run dev
 Edit `operator-desktop\bin\operator.config`:
 
 ```ini
+ServerUrl=http://192.168.115.12
 ApiBaseUrl=http://192.168.115.12/api
 DisplayUrl=http://192.168.115.12/ru/admin/operator-display?fullscreen=1
 MonitorIndex=2
@@ -34,6 +35,8 @@ Browser=Auto
 RememberEmail=true
 ```
 
+`ServerUrl` is the server address shown in desktop settings. When it is saved
+from the app, `ApiBaseUrl` and `DisplayUrl` are updated from that address.
 `ApiBaseUrl` points to FastAPI. `DisplayUrl` points to the frontend operator
 display page used on the customer monitor.
 

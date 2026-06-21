@@ -40,6 +40,10 @@ function getPayloadMessage(payload: unknown) {
   return 'Не удалось выполнить запрос'
 }
 
+function isAuthFailureStatus(status: number) {
+  return status === 401 || status === 403
+}
+
 let refreshPromise: Promise<AuthTokens | null> | null = null
 
 async function refreshTokens() {
@@ -59,9 +63,14 @@ async function refreshTokens() {
         tokenStorage.setTokens(response.payload.access_token, response.payload.refresh_token)
         return response.payload
       })
-      .catch(() => {
-        tokenStorage.clearTokens()
-        return null
+      .catch((err) => {
+        if (err instanceof ApiError && isAuthFailureStatus(err.status)) {
+          tokenStorage.clearTokens()
+          tokenStorage.clearUser()
+          return null
+        }
+
+        throw err
       })
       .finally(() => {
         refreshPromise = null

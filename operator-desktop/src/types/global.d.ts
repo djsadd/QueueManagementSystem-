@@ -17,6 +17,8 @@ declare global {
     operatorBridge: {
       getConfig: () => Promise<OperatorConfig>
       reloadConfig: () => Promise<OperatorConfig>
+      verifyAdminPassword: (value: string) => Promise<{ ok: boolean; token?: string }>
+      saveServerUrl: (value: string, adminToken: string | null) => Promise<OperatorConfig>
       apiRequest: <T>(request: {
         path: string
         method?: string

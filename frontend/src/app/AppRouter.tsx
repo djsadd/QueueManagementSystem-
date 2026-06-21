@@ -5,6 +5,7 @@ import { OperatorSecondDisplayPage } from '../pages/operator-second-display/Oper
 import { QueueDisplayPage } from '../pages/queue-display/QueueDisplayPage'
 import { authApi } from '../features/auth/api/authApi'
 import type { AuthUser } from '../features/auth/model/types'
+import { ApiError } from '../shared/api/httpClient'
 import { tokenStorage } from '../shared/lib/tokenStorage'
 
 function consumeAuthTokensFromUrl() {
@@ -28,6 +29,14 @@ function consumeAuthTokensFromUrl() {
   )
 }
 
+function isStaffUser(user: AuthUser) {
+  return user.role === 'ADMIN' || user.role === 'OPERATOR' || user.role === 'MANAGER'
+}
+
+function isAuthFailure(error: unknown) {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403)
+}
+
 export function AppRouter() {
   consumeAuthTokensFromUrl()
 
@@ -36,10 +45,11 @@ export function AppRouter() {
   const isOperatorDisplayPath = pathParts.includes('operator-display')
   const isQueueDisplayPath = pathParts.includes('queue-display')
   const requiresStaffAuth = isAdminPath || isOperatorDisplayPath
+  const cachedStaffUser = requiresStaffAuth && tokenStorage.hasTokens() ? tokenStorage.getUser() : null
   const [isCheckingAdmin, setIsCheckingAdmin] = useState(
-    () => requiresStaffAuth && tokenStorage.hasTokens(),
+    () => requiresStaffAuth && tokenStorage.hasTokens() && !cachedStaffUser,
   )
-  const [staffUser, setStaffUser] = useState<AuthUser | null>(null)
+  const [staffUser, setStaffUser] = useState<AuthUser | null>(cachedStaffUser)
 
   useEffect(() => {
     if (!requiresStaffAuth) {
@@ -55,7 +65,13 @@ export function AppRouter() {
     }
 
     let isMounted = true
-    setIsCheckingAdmin(true)
+    const cachedUser = tokenStorage.getUser()
+    if (cachedUser) {
+      setStaffUser(cachedUser)
+      setIsCheckingAdmin(false)
+    } else {
+      setIsCheckingAdmin(true)
+    }
 
     authApi
       .me()
@@ -64,7 +80,8 @@ export function AppRouter() {
           return
         }
 
-        if (user.role === 'ADMIN' || user.role === 'OPERATOR' || user.role === 'MANAGER') {
+        if (isStaffUser(user)) {
+          tokenStorage.setUser(user)
           setStaffUser(user)
           return
         }
@@ -72,10 +89,12 @@ export function AppRouter() {
         tokenStorage.clear()
         setStaffUser(null)
       })
-      .catch(() => {
-        tokenStorage.clear()
-        if (isMounted) {
-          setStaffUser(null)
+      .catch((error) => {
+        if (isAuthFailure(error)) {
+          tokenStorage.clear()
+          if (isMounted) {
+            setStaffUser(null)
+          }
         }
       })
       .finally(() => {

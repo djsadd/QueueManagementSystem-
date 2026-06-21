@@ -3,6 +3,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 contextBridge.exposeInMainWorld('operatorBridge', {
   getConfig: () => ipcRenderer.invoke('operator:get-config'),
   reloadConfig: () => ipcRenderer.invoke('operator:reload-config'),
+  verifyAdminPassword: (value: string) => ipcRenderer.invoke('operator:verify-admin-password', value),
+  saveServerUrl: (value: string, adminToken: string | null) => ipcRenderer.invoke('operator:save-server-url', value, adminToken),
   apiRequest: (request: unknown) => ipcRenderer.invoke('operator:api-request', request),
   openDisplay: (authTokens?: unknown) => ipcRenderer.invoke('operator:open-display', authTokens),
   openPlatonusDisplay: (options?: unknown) => ipcRenderer.invoke('operator:open-platonus-display', options),

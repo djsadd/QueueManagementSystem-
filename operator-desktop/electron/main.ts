@@ -1,8 +1,11 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, session, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import crypto from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 
 type OperatorConfig = {
+  serverUrl: string
   apiBaseUrl: string
   displayUrl: string
   monitorIndex: number
@@ -53,6 +56,9 @@ function isKeyboardInputEvent(event: PlatonusInputEvent): event is Extract<Plato
 }
 
 const PLATONUS_URL = 'https://platonus.tau-edu.kz'
+const PLATONUS_PARTITION = 'persist:platonus'
+const DEFAULT_SERVER_URL = 'http://192.168.115.12'
+const ADMIN_SETTINGS_PASSWORD = 'TuranTAU1998!@#$%'
 const isDev = !app.isPackaged && process.env.npm_lifecycle_event === 'dev'
 const devServerUrl = process.env.OPERATOR_DEV_URL ?? 'http://192.168.115.12'
 
@@ -62,6 +68,8 @@ let displayWindowMode: 'queue' | 'platonus' | 'platonus-stream' | null = null
 let platonusStreamReady = false
 let lastPlatonusStreamFrame: string | null = null
 let config: OperatorConfig = readConfig()
+let adminSettingsTokens = new Set<string>()
+let platonusDownloadPrintHandlerInstalled = false
 
 function parseBool(value: string | undefined, fallback: boolean) {
   if (!value) return fallback
@@ -108,14 +116,94 @@ function getConfigCandidates() {
   ]
 }
 
+function getUserConfigPath() {
+  return path.join(app.getPath('userData'), 'operator.config')
+}
+
+function getMergedConfigValues() {
+  const values = new Map<string, string>()
+
+  getConfigCandidates()
+    .slice()
+    .reverse()
+    .forEach((candidate) => {
+      if (!fs.existsSync(candidate)) return
+
+      parseConfigFile(candidate).forEach((value, key) => {
+        values.set(key, value)
+      })
+    })
+
+  return values
+}
+
+function normalizeServerUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error('Server URL is empty')
+
+  const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
+  const url = new URL(withProtocol)
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Server URL must use http or https')
+  }
+
+  const pathname = url.pathname.replace(/\/+$/, '')
+  if (pathname === '/api') {
+    url.pathname = '/'
+  }
+
+  url.search = ''
+  url.hash = ''
+
+  return url.toString().replace(/\/+$/, '')
+}
+
+function getServerUrlFromApiBaseUrl(apiBaseUrl: string) {
+  const normalized = normalizeServerUrl(apiBaseUrl)
+  return normalized.endsWith('/api') ? normalized.slice(0, -4) : normalized
+}
+
+function buildApiBaseUrl(serverUrl: string) {
+  return `${serverUrl.replace(/\/+$/, '')}/api`
+}
+
+function buildDisplayUrl(serverUrl: string) {
+  return `${serverUrl.replace(/\/+$/, '')}/ru/admin/operator-display?fullscreen=1`
+}
+
+function writeConfigValues(filePath: string, updates: Record<string, string>) {
+  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8').split(/\r?\n/) : []
+  const pending = new Map(Object.entries(updates))
+  const lines = existing.map((line) => {
+    const separatorIndex = line.indexOf('=')
+    if (separatorIndex === -1) return line
+
+    const key = line.slice(0, separatorIndex).trim()
+    if (!pending.has(key)) return line
+
+    const value = pending.get(key) ?? ''
+    pending.delete(key)
+    return `${key}=${value}`
+  })
+
+  pending.forEach((value, key) => {
+    lines.push(`${key}=${value}`)
+  })
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, `${lines.filter((line, index) => line !== '' || index < lines.length - 1).join('\n')}\n`, 'utf8')
+}
+
 function readConfig(): OperatorConfig {
-  const configPath = getConfigCandidates().find((candidate) => fs.existsSync(candidate))
-  const values = configPath ? parseConfigFile(configPath) : new Map<string, string>()
+  const values = getMergedConfigValues()
   const displayMode = values.get('DisplayMode') ?? 'Kiosk'
+  const serverUrl = normalizeServerUrl(values.get('ServerUrl') ?? getServerUrlFromApiBaseUrl(values.get('ApiBaseUrl') ?? `${DEFAULT_SERVER_URL}/api`))
 
   return {
-    apiBaseUrl: values.get('ApiBaseUrl') ?? 'http://192.168.115.12/api',
-    displayUrl: values.get('DisplayUrl') ?? 'http://192.168.115.12/ru/admin/operator-display?fullscreen=1',
+    serverUrl,
+    apiBaseUrl: values.get('ApiBaseUrl') ?? buildApiBaseUrl(serverUrl),
+    displayUrl: values.get('DisplayUrl') ?? buildDisplayUrl(serverUrl),
     monitorIndex: Number(values.get('MonitorIndex') ?? '2') || 2,
     displayMode: displayMode === 'Fullscreen' || displayMode === 'Window' ? displayMode : 'Kiosk',
     displayScale: parseScale(values.get('DisplayScale'), 0.9),
@@ -124,6 +212,33 @@ function readConfig(): OperatorConfig {
     refreshSeconds: Number(values.get('RefreshSeconds') ?? '5') || 5,
     rememberEmail: parseBool(values.get('RememberEmail'), true),
   }
+}
+
+function saveServerUrl(value: string, adminToken: unknown) {
+  if (typeof adminToken !== 'string' || !adminSettingsTokens.has(adminToken)) {
+    throw new Error('Admin password is required')
+  }
+
+  const serverUrl = normalizeServerUrl(value)
+
+  writeConfigValues(getUserConfigPath(), {
+    ServerUrl: serverUrl,
+    ApiBaseUrl: buildApiBaseUrl(serverUrl),
+    DisplayUrl: buildDisplayUrl(serverUrl),
+  })
+
+  config = readConfig()
+  return config
+}
+
+function verifyAdminPassword(value: unknown) {
+  if (value !== ADMIN_SETTINGS_PASSWORD) {
+    return { ok: false }
+  }
+
+  const token = crypto.randomUUID()
+  adminSettingsTokens.add(token)
+  return { ok: true, token }
 }
 
 function getDisplayUrl(options?: DisplayOpenOptions) {
@@ -355,7 +470,7 @@ async function openPlatonusDisplayWindow(options?: PlatonusDisplayOptions) {
       nodeIntegration: false,
       contextIsolation: true,
       backgroundThrottling: false,
-      partition: 'persist:platonus',
+      partition: PLATONUS_PARTITION,
     },
   })
 
@@ -549,14 +664,144 @@ async function apiRequest({ path: requestPath, method = 'GET', body, accessToken
   }
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function waitForDownloadedFile(filePath: string) {
+  let previousSize = -1
+  let stableChecks = 0
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < 12000) {
+    if (fs.existsSync(filePath)) {
+      const stats = fs.statSync(filePath)
+
+      if (stats.size > 0 && stats.size === previousSize) {
+        stableChecks += 1
+        if (stableChecks >= 2) return true
+      } else {
+        stableChecks = 0
+      }
+
+      previousSize = stats.size
+    }
+
+    await delay(350)
+  }
+
+  return fs.existsSync(filePath) && fs.statSync(filePath).size > 0
+}
+
+function sanitizeDownloadFilename(filename: string) {
+  const sanitized = filename.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim()
+  return sanitized || `platonus-${Date.now()}`
+}
+
+function getPlatonusPrintTempPath(filename: string) {
+  const tempDir = path.join(app.getPath('temp'), 'queue-operator-platonus-print')
+  fs.mkdirSync(tempDir, { recursive: true })
+
+  return path.join(tempDir, `${Date.now()}-${sanitizeDownloadFilename(filename)}`)
+}
+
+function printDownloadedFileDirectly(filePath: string) {
+  return new Promise<void>((resolve, reject) => {
+    const printWindow = new BrowserWindow({
+      width: 1024,
+      height: 768,
+      show: true,
+      title: path.basename(filePath),
+      autoHideMenuBar: true,
+      webPreferences: {
+        sandbox: true,
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    })
+
+    printWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        if (printWindow.isDestroyed()) return
+
+        printWindow.focus()
+        printWindow.webContents.print(
+          { silent: false, printBackground: true },
+          (success, failureReason) => {
+            if (!success) {
+              reject(new Error(failureReason || 'Electron direct file print failed'))
+              return
+            }
+
+            resolve()
+          },
+        )
+      }, 2200)
+    })
+
+    printWindow.webContents.once('did-fail-load', (_event, _code, description) => {
+      if (!printWindow.isDestroyed()) printWindow.destroy()
+      reject(new Error(description))
+    })
+
+    printWindow.loadURL(pathToFileURL(filePath).toString()).catch((err) => {
+      if (!printWindow.isDestroyed()) printWindow.destroy()
+      reject(err)
+    })
+  })
+}
+
+async function printDownloadedFile(filePath: string) {
+  const fileReady = await waitForDownloadedFile(filePath)
+  if (!fileReady) {
+    console.error('Downloaded Platonus file is not ready for printing', filePath)
+    return
+  }
+
+  try {
+    await printDownloadedFileDirectly(filePath)
+    return
+  } catch (err) {
+    console.error('Electron direct file print failed for downloaded Platonus file', err)
+  }
+
+  shell.openPath(filePath).catch((err) => {
+    console.error('Failed to open downloaded Platonus file', err)
+  })
+}
+
+function installPlatonusDownloadPrintHandler() {
+  if (platonusDownloadPrintHandlerInstalled) return
+  platonusDownloadPrintHandlerInstalled = true
+
+  session.fromPartition(PLATONUS_PARTITION).on('will-download', (_event, item) => {
+    const tempFilePath = getPlatonusPrintTempPath(item.getFilename())
+    item.setSavePath(tempFilePath)
+
+    item.once('done', (_doneEvent, state) => {
+      if (state !== 'completed') return
+
+      const filePath = item.getSavePath() || tempFilePath
+      if (!filePath) return
+
+      void printDownloadedFile(filePath)
+    })
+  })
+}
+
 app.whenReady().then(() => {
   config = readConfig()
+  installPlatonusDownloadPrintHandler()
 
   ipcMain.handle('operator:get-config', () => config)
   ipcMain.handle('operator:reload-config', () => {
     config = readConfig()
     return config
   })
+  ipcMain.handle('operator:verify-admin-password', (_event, value: unknown) => verifyAdminPassword(value))
+  ipcMain.handle('operator:save-server-url', (_event, value: string, adminToken: unknown) => saveServerUrl(value, adminToken))
   ipcMain.handle('operator:api-request', (_event, request: ApiRequest) => apiRequest(request))
   ipcMain.handle('operator:open-display', (_event, options?: DisplayOpenOptions) => openDisplayWindow(options))
   ipcMain.handle('operator:open-platonus-display', (_event, options?: PlatonusDisplayOptions) => openPlatonusDisplayWindow(options))

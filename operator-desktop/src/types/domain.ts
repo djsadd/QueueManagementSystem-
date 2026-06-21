@@ -4,6 +4,7 @@ export type StudyLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
 export type ServiceLanguage = 'KAZAKH' | 'RUSSIAN' | 'ENGLISH'
 
 export type OperatorConfig = {
+  serverUrl: string
   apiBaseUrl: string
   displayUrl: string
   monitorIndex: number

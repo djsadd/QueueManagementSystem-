@@ -56,6 +56,8 @@ export function LoginPage() {
       })
 
       tokenStorage.setTokens(tokens.access_token, tokens.refresh_token)
+      const user = await authApi.me()
+      tokenStorage.setUser(user)
       const pathParts = window.location.pathname.split('/').filter(Boolean)
       const shouldStayOnCurrentPath =
         pathParts.includes('admin') || pathParts.includes('operator-display')

@@ -56,6 +56,11 @@ type AnalyticsPieSegment = {
   label: string
   value: number
 }
+type AnalyticsDistributionItem = {
+  id: string
+  label: string
+  value: number
+}
 type OperatorPerformancePoint = {
   averageProcessingMinutes: number
   clientsPerHour: number
@@ -495,6 +500,32 @@ function AnalyticsDonutChart({
   )
 }
 
+function AnalyticsDonutPanel({
+  centerLabel,
+  centerValue,
+  segments,
+  title,
+  total,
+}: {
+  centerLabel: string
+  centerValue: string | number
+  segments: AnalyticsPieSegment[]
+  title: string
+  total: number
+}) {
+  return (
+    <div className="analytics-chart-block">
+      <h3>{title}</h3>
+      <AnalyticsDonutChart
+        centerLabel={centerLabel}
+        centerValue={centerValue}
+        segments={segments}
+        total={total}
+      />
+    </div>
+  )
+}
+
 function boolLabel(value: boolean) {
   return value ? 'Активно' : 'Выключено'
 }
@@ -502,17 +533,23 @@ function boolLabel(value: boolean) {
 function AnalyticsDailyLineChart({
   grouping,
   rows,
+  valueKey = 'completed',
+  valueLabel = 'Обслужено',
+  averageLabel,
 }: {
   grouping: AnalyticsTimeGrouping
   rows: OperatorDailyAnalyticsItem[]
+  valueKey?: 'completed' | 'tickets_count'
+  valueLabel?: string
+  averageLabel?: string
 }) {
   if (rows.length === 0) {
     return null
   }
 
-  const servedTotal = rows.reduce((total, rowStats) => total + rowStats.completed, 0)
-  const averageServed = rows.length > 0 ? Math.round(servedTotal / rows.length) : 0
-  const maxServed = Math.max(1, ...rows.map((rowStats) => rowStats.completed))
+  const totalValue = rows.reduce((total, rowStats) => total + rowStats[valueKey], 0)
+  const averageValue = rows.length > 0 ? Math.round(totalValue / rows.length) : 0
+  const maxValue = Math.max(1, ...rows.map((rowStats) => rowStats[valueKey]))
   const chartWidth = 640
   const chartHeight = 190
   const padding = { bottom: 34, left: 34, right: 16, top: 16 }
@@ -523,29 +560,31 @@ function AnalyticsDailyLineChart({
       rows.length === 1
         ? padding.left + innerWidth / 2
         : padding.left + (index / (rows.length - 1)) * innerWidth
-    const y = padding.top + ((maxServed - rowStats.completed) / maxServed) * innerHeight
+    const value = rowStats[valueKey]
+    const y = padding.top + ((maxValue - value) / maxValue) * innerHeight
 
     return {
       ...rowStats,
       label: grouping === 'month' ? formatAnalyticsMonth(rowStats.date) : formatAnalyticsDate(rowStats.date),
+      value,
       x,
       y,
     }
   })
   const pointPath = points.map((point) => `${point.x},${point.y}`).join(' ')
   const labelStep = grouping === 'month' ? 1 : Math.max(1, Math.ceil(rows.length / 7))
-  const yTicks = [0, Math.ceil(maxServed / 2), maxServed]
+  const yTicks = [0, Math.ceil(maxValue / 2), maxValue]
 
   return (
     <div className="analytics-line-chart">
       <div className="analytics-line-summary">
         <div>
-          <span>Обслужено</span>
-          <strong>{servedTotal}</strong>
+          <span>{valueLabel}</span>
+          <strong>{totalValue}</strong>
         </div>
         <div>
-          <span>Среднее в день</span>
-          <strong>{averageServed}</strong>
+          <span>{averageLabel ?? (grouping === 'month' ? 'Среднее в месяц' : 'Среднее в день')}</span>
+          <strong>{averageValue}</strong>
         </div>
       </div>
       <svg
@@ -555,7 +594,7 @@ function AnalyticsDailyLineChart({
         aria-label="Линейная диаграмма обслуженных талонов по дням"
       >
         {yTicks.map((tick) => {
-          const y = padding.top + ((maxServed - tick) / maxServed) * innerHeight
+          const y = padding.top + ((maxValue - tick) / maxValue) * innerHeight
 
           return (
             <g className="analytics-line-grid" key={tick}>
@@ -597,9 +636,9 @@ function AnalyticsDailyLineChart({
           return (
             <g className="analytics-line-point" key={point.date}>
               <circle cx={point.x} cy={point.y} r="3.5" />
-              {point.completed > 0 && (
+              {point.value > 0 && (
                 <text className="analytics-line-value" x={point.x} y={point.y - 10}>
-                  {point.completed}
+                  {point.value}
                 </text>
               )}
               {showDateLabel && (
@@ -612,102 +651,6 @@ function AnalyticsDailyLineChart({
         })}
       </svg>
     </div>
-  )
-}
-
-function AnalyticsOperatorPerformanceChart({
-  points,
-  type,
-}: {
-  points: OperatorPerformancePoint[]
-  type: 'bubble' | 'scatter'
-}) {
-  if (points.length === 0) {
-    return <div className="analytics-empty">Данных по производительности пока нет</div>
-  }
-
-  const chartWidth = 520
-  const chartHeight = 260
-  const padding = { bottom: 42, left: 46, right: 26, top: 20 }
-  const innerWidth = chartWidth - padding.left - padding.right
-  const innerHeight = chartHeight - padding.top - padding.bottom
-  const maxProcessed = Math.max(1, ...points.map((point) => point.processed))
-  const maxAverageMinutes = Math.max(1, ...points.map((point) => point.averageProcessingMinutes))
-  const maxClientsPerHour = Math.max(1, ...points.map((point) => point.clientsPerHour))
-  const maxUtilization = Math.max(100, ...points.map((point) => point.utilizationPercent))
-  const xMax = type === 'scatter' ? maxProcessed : maxClientsPerHour
-  const yMax = type === 'scatter' ? maxAverageMinutes : maxUtilization
-  const xLabel = type === 'scatter' ? 'Клиентов' : 'Клиентов/час'
-  const yLabel = type === 'scatter' ? 'Минут' : 'Загрузка %'
-
-  function getX(point: OperatorPerformancePoint) {
-    const value = type === 'scatter' ? point.processed : point.clientsPerHour
-    return padding.left + (value / xMax) * innerWidth
-  }
-
-  function getY(point: OperatorPerformancePoint) {
-    const value = type === 'scatter' ? point.averageProcessingMinutes : point.utilizationPercent
-    return padding.top + ((yMax - value) / yMax) * innerHeight
-  }
-
-  function getRadius(point: OperatorPerformancePoint) {
-    if (type === 'scatter') {
-      return 4
-    }
-
-    return 5 + (point.processed / maxProcessed) * 11
-  }
-
-  const yTicks = [0, Math.round(yMax / 2), Math.round(yMax)]
-
-  return (
-    <svg
-      className={`analytics-performance-plot ${type}`}
-      viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-      role="img"
-      aria-label={type === 'scatter' ? 'Количество клиентов и среднее время обслуживания' : 'Производительность операторов'}
-    >
-      {yTicks.map((tick) => {
-        const y = padding.top + ((yMax - tick) / yMax) * innerHeight
-
-        return (
-          <g className="analytics-line-grid" key={tick}>
-            <line x1={padding.left} x2={chartWidth - padding.right} y1={y} y2={y} />
-            <text x={padding.left - 10} y={y + 4}>
-              {tick}
-            </text>
-          </g>
-        )
-      })}
-      <line
-        className="analytics-line-axis"
-        x1={padding.left}
-        x2={chartWidth - padding.right}
-        y1={chartHeight - padding.bottom}
-        y2={chartHeight - padding.bottom}
-      />
-      <line
-        className="analytics-line-axis"
-        x1={padding.left}
-        x2={padding.left}
-        y1={padding.top}
-        y2={chartHeight - padding.bottom}
-      />
-      <text className="analytics-performance-axis-label" x={chartWidth - padding.right} y={chartHeight - 10}>
-        {xLabel}
-      </text>
-      <text className="analytics-performance-axis-label y" x={padding.left - 34} y={padding.top + 6}>
-        {yLabel}
-      </text>
-      {points.map((point) => (
-        <g className="analytics-performance-point" key={`${type}-${point.operatorId}`}>
-          <circle cx={getX(point)} cy={getY(point)} r={getRadius(point)} />
-          <text x={getX(point)} y={getY(point) - getRadius(point) - 5}>
-            {point.label.split(' ')[0]}
-          </text>
-        </g>
-      ))}
-    </svg>
   )
 }
 
@@ -1208,6 +1151,67 @@ function buildMonthlyAnalyticsRange(days: OperatorDailyAnalyticsItem[], from: st
   return rows
 }
 
+function aggregateDailyAnalytics(rows: OperatorDailyAnalyticsItem[]) {
+  const rowsByDate = new Map<string, OperatorDailyAnalyticsItem>()
+
+  rows.forEach((dayStats) => {
+    const current = rowsByDate.get(dayStats.date)
+
+    if (current) {
+      current.active += dayStats.active
+      current.completed += dayStats.completed
+      current.skipped += dayStats.skipped
+      current.tickets_count += dayStats.tickets_count
+      return
+    }
+
+    rowsByDate.set(dayStats.date, { ...dayStats })
+  })
+
+  return [...rowsByDate.values()].sort((firstStats, secondStats) =>
+    firstStats.date.localeCompare(secondStats.date),
+  )
+}
+
+function buildTicketDistribution<T extends string>(
+  tickets: TicketItem[],
+  getKey: (ticket: TicketItem) => T,
+  getLabel: (ticket: TicketItem) => string,
+) {
+  const rowsByKey = new Map<T, AnalyticsDistributionItem>()
+
+  tickets.forEach((ticket) => {
+    const key = getKey(ticket)
+    const current = rowsByKey.get(key)
+
+    if (current) {
+      current.value += 1
+      return
+    }
+
+    rowsByKey.set(key, {
+      id: key,
+      label: getLabel(ticket),
+      value: 1,
+    })
+  })
+
+  return [...rowsByKey.values()].sort((firstItem, secondItem) => secondItem.value - firstItem.value)
+}
+
+function distributionToPieSegments(
+  rows: AnalyticsDistributionItem[],
+  total: number,
+  detailLabel = 'от всех талонов',
+) {
+  return rows.map((item, index) => ({
+    color: getAnalyticsServiceColor(index),
+    detail: `${total > 0 ? Math.round((item.value / total) * 100) : 0}% ${detailLabel}`,
+    label: item.label,
+    value: item.value,
+  }))
+}
+
 function getDegreeLabel(degrees: AcademicDegreeItem[], degreeId: number) {
   const degree = degrees.find((item) => item.id === degreeId)
   return degree ? `${degree.name} (${degree.code})` : String(degreeId)
@@ -1335,6 +1339,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [applicants, setApplicants] = useState<ApplicantItem[]>([])
   const [ticketEvents, setTicketEvents] = useState<TicketEventItem[]>([])
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
+  const [analyticsTickets, setAnalyticsTickets] = useState<TicketItem[]>([])
   const [ticketExportingKey, setTicketExportingKey] = useState<string | null>(null)
   const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => getDefaultSummerDateRange().from)
   const [analyticsDateTo, setAnalyticsDateTo] = useState(() => getDefaultSummerDateRange().to)
@@ -1665,6 +1670,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         applicantRows,
         ticketEventRows,
         analyticsRows,
+        ticketRows,
       ] = await Promise.all([
         adminApi.services.list(),
         adminApi.windows.list(),
@@ -1675,6 +1681,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         adminApi.applicants.list(),
         adminApi.ticketEvents.list(),
         adminApi.ticketEvents.analytics(),
+        adminApi.tickets.export(),
       ])
       const operatorProgramsRows = await Promise.all(
         operatorRows.map(async (operator) => ({
@@ -1698,6 +1705,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       setApplicants(applicantRows)
       setTicketEvents(ticketEventRows)
       setOperatorAnalytics(analyticsRows)
+      setAnalyticsTickets(ticketRows)
       setOperatorProgramIds(
         Object.fromEntries(
           operatorProgramsRows.map((row) => [
@@ -2947,6 +2955,59 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const analyticsExportKey = analyticsExportOperatorId ?? 'all'
   const selectedServiceAnalyticsRows = selectedOperatorAnalyticsRow?.stats.service_analytics ?? []
   const selectedRawDailyAnalyticsRows = selectedOperatorAnalyticsRow?.stats.daily_analytics ?? []
+  const generalRawDailyAnalyticsRows = aggregateDailyAnalytics(
+    operatorAnalyticsRows.flatMap((row) => row.stats.daily_analytics),
+  )
+  const generalDailyAnalyticsRows =
+    analyticsTimeGrouping === 'month'
+      ? buildMonthlyAnalyticsRange(generalRawDailyAnalyticsRows, analyticsDateFrom, analyticsDateTo)
+      : buildDailyAnalyticsRange(generalRawDailyAnalyticsRows, analyticsDateFrom, analyticsDateTo)
+  const generalDailyAnalyticsUnitLabel =
+    analyticsTimeGrouping === 'month' ? 'месяцев' : 'дней'
+  const generalDailyAnalyticsEmptyLabel =
+    analyticsTimeGrouping === 'month'
+      ? 'По всем талонам пока нет данных по месяцам'
+      : 'По всем талонам пока нет данных по дням'
+  const generalTicketsTotal = analyticsTickets.length
+  const generalServiceRows = buildTicketDistribution(
+    analyticsTickets,
+    (ticket) => String(ticket.service_id),
+    (ticket) => ticket.service_name ?? ticket.service_code ?? `Услуга ${ticket.service_id}`,
+  )
+  const generalProgramRows = buildTicketDistribution(
+    analyticsTickets,
+    (ticket) => ticket.educational_program_id === null ? 'none' : String(ticket.educational_program_id),
+    (ticket) =>
+      ticket.educational_program_name ??
+      ticket.educational_program_code ??
+      (ticket.educational_program_id === null ? 'Без образовательной программы' : `ОП ${ticket.educational_program_id}`),
+  )
+  const generalOperatorRows = buildTicketDistribution(
+    analyticsTickets,
+    (ticket) => ticket.operator_id ?? 'none',
+    (ticket) => ticket.operator_name ?? ticket.operator_email ?? (ticket.operator_id ? ticket.operator_id.slice(0, 8) : 'Не назначен'),
+  )
+  const generalStatusRows = buildTicketDistribution(
+    analyticsTickets,
+    (ticket) => ticket.status,
+    (ticket) => getTicketStatusLabel(ticket.status),
+  )
+  const generalServicePieSegments = distributionToPieSegments(generalServiceRows, generalTicketsTotal)
+  const generalProgramPieSegments = distributionToPieSegments(generalProgramRows, generalTicketsTotal)
+  const generalOperatorPieSegments = distributionToPieSegments(generalOperatorRows, generalTicketsTotal)
+  const generalStatusPieSegments = generalStatusRows.map((item, index) => ({
+    color:
+      item.id === 'COMPLETED'
+        ? ANALYTICS_STATUS_COLORS.completed
+        : item.id === 'SKIPPED'
+          ? ANALYTICS_STATUS_COLORS.skipped
+          : item.id === 'WAITING' || item.id === 'CALLED'
+            ? ANALYTICS_STATUS_COLORS.active
+            : getAnalyticsServiceColor(index),
+    detail: `${generalTicketsTotal > 0 ? Math.round((item.value / generalTicketsTotal) * 100) : 0}% от всех талонов`,
+    label: item.label,
+    value: item.value,
+  }))
   const selectedDailyAnalyticsRows =
     analyticsTimeGrouping === 'month'
       ? buildMonthlyAnalyticsRange(selectedRawDailyAnalyticsRows, analyticsDateFrom, analyticsDateTo)
@@ -3966,15 +4027,102 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       </div>
                     </div>
 
-                    <div className="analytics-performance-grid">
-                      <div className="analytics-performance-card">
-                        <h3>Клиенты vs среднее время</h3>
-                        <AnalyticsOperatorPerformanceChart points={operatorPerformancePoints} type="scatter" />
+                    <div className="analytics-daily-panel">
+                      <div className="analytics-card-header">
+                        <div>
+                          <span className="profile-label">Все операторы</span>
+                          <h3>Талоны по дням</h3>
+                        </div>
+                        <span className="analytics-status">
+                          {generalDailyAnalyticsRows.length} {generalDailyAnalyticsUnitLabel}
+                        </span>
                       </div>
-                      <div className="analytics-performance-card">
-                        <h3>Bubble Chart: производительность</h3>
-                        <AnalyticsOperatorPerformanceChart points={operatorPerformancePoints} type="bubble" />
+                      <div className="analytics-date-filter">
+                        <div className="analytics-grouping-toggle" role="group" aria-label="Группировка общей аналитики">
+                          <button
+                            className={analyticsTimeGrouping === 'day' ? 'selected' : ''}
+                            type="button"
+                            onClick={() => setAnalyticsTimeGrouping('day')}
+                          >
+                            Дни
+                          </button>
+                          <button
+                            className={analyticsTimeGrouping === 'month' ? 'selected' : ''}
+                            type="button"
+                            onClick={() => setAnalyticsTimeGrouping('month')}
+                          >
+                            Месяцы
+                          </button>
+                        </div>
+                        <label>
+                          <span>С даты</span>
+                          <input
+                            type="date"
+                            value={analyticsDateFrom}
+                            onChange={(event) => setAnalyticsDateFrom(event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>По дату</span>
+                          <input
+                            type="date"
+                            value={analyticsDateTo}
+                            onChange={(event) => setAnalyticsDateTo(event.target.value)}
+                          />
+                        </label>
+                        <button
+                          className="secondary-action compact"
+                          type="button"
+                          onClick={() => {
+                            const summerRange = getDefaultSummerDateRange()
+                            setAnalyticsDateFrom(summerRange.from)
+                            setAnalyticsDateTo(summerRange.to)
+                          }}
+                        >
+                          Лето
+                        </button>
                       </div>
+                      {generalDailyAnalyticsRows.length === 0 ? (
+                        <div className="analytics-empty">{generalDailyAnalyticsEmptyLabel}</div>
+                      ) : (
+                        <AnalyticsDailyLineChart
+                          grouping={analyticsTimeGrouping}
+                          rows={generalDailyAnalyticsRows}
+                          valueKey="tickets_count"
+                          valueLabel="Всего талонов"
+                        />
+                      )}
+                    </div>
+
+                    <div className="analytics-general-donut-grid">
+                      <AnalyticsDonutPanel
+                        centerLabel="талонов"
+                        centerValue={generalTicketsTotal}
+                        segments={generalServicePieSegments}
+                        title="Распределение по услугам"
+                        total={generalTicketsTotal}
+                      />
+                      <AnalyticsDonutPanel
+                        centerLabel="статусов"
+                        centerValue={generalTicketsTotal}
+                        segments={generalStatusPieSegments}
+                        title="Статусы талонов"
+                        total={generalTicketsTotal}
+                      />
+                      <AnalyticsDonutPanel
+                        centerLabel="талонов"
+                        centerValue={generalTicketsTotal}
+                        segments={generalProgramPieSegments}
+                        title="Образовательные программы"
+                        total={generalTicketsTotal}
+                      />
+                      <AnalyticsDonutPanel
+                        centerLabel="талонов"
+                        centerValue={generalTicketsTotal}
+                        segments={generalOperatorPieSegments}
+                        title="Талоны по операторам"
+                        total={generalTicketsTotal}
+                      />
                     </div>
                   </div>
                 )}

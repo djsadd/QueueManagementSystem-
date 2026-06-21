@@ -243,6 +243,11 @@ namespace QueueTerminal
         private readonly Button serviceSelector = new Button();
         private readonly Button programSelector = new Button();
         private readonly Label programLabel = new Label();
+        private readonly Label operatorLanguageLabel = new Label();
+        private readonly TableLayoutPanel operatorLanguageLayout = new TableLayoutPanel();
+        private readonly Button operatorKazakhButton = new Button();
+        private readonly Button operatorRussianButton = new Button();
+        private readonly Button operatorEnglishButton = new Button();
         private readonly Button issueButton = new Button();
         private readonly Button reloadButton = new Button();
         private readonly Button reprintButton = new Button();
@@ -258,6 +263,7 @@ namespace QueueTerminal
         private ServiceItem selectedService;
         private ProgramItem selectedProgram;
         private UiLanguage language = UiLanguage.Russian;
+        private UiLanguage operatorLanguage = UiLanguage.Russian;
         private TicketItem lastTicket;
         private bool busy;
 
@@ -362,15 +368,16 @@ namespace QueueTerminal
             ticketFormLayout.Dock = DockStyle.Fill;
             ticketFormLayout.Padding = new Padding(30);
             ticketFormLayout.ColumnCount = 1;
-            ticketFormLayout.RowCount = 8;
+            ticketFormLayout.RowCount = 9;
             ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
             ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
             ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 96F));
             ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
             ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 96F));
             ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 75F));
-            ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72F));
+            ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+            ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 70F));
+            ticketFormLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
             formCard.Controls.Add(ticketFormLayout);
 
             formTitle.Dock = DockStyle.Fill;
@@ -389,6 +396,27 @@ namespace QueueTerminal
             ConfigureSelectorButton(programSelector, delegate { OpenProgramDialog(); });
             ticketFormLayout.Controls.Add(programSelector, 0, 4);
 
+            operatorLanguageLayout.Dock = DockStyle.Fill;
+            operatorLanguageLayout.Margin = new Padding(0, 0, 0, 10);
+            operatorLanguageLayout.ColumnCount = 4;
+            operatorLanguageLayout.RowCount = 1;
+            operatorLanguageLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34F));
+            operatorLanguageLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22F));
+            operatorLanguageLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22F));
+            operatorLanguageLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22F));
+            operatorLanguageLabel.Dock = DockStyle.Fill;
+            operatorLanguageLabel.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
+            operatorLanguageLabel.ForeColor = Color.FromArgb(40, 21, 26);
+            operatorLanguageLabel.TextAlign = ContentAlignment.MiddleLeft;
+            operatorLanguageLayout.Controls.Add(operatorLanguageLabel, 0, 0);
+            ConfigureOperatorLanguageButton(operatorKazakhButton, UiLanguage.Kazakh);
+            ConfigureOperatorLanguageButton(operatorRussianButton, UiLanguage.Russian);
+            ConfigureOperatorLanguageButton(operatorEnglishButton, UiLanguage.English);
+            operatorLanguageLayout.Controls.Add(operatorKazakhButton, 1, 0);
+            operatorLanguageLayout.Controls.Add(operatorRussianButton, 2, 0);
+            operatorLanguageLayout.Controls.Add(operatorEnglishButton, 3, 0);
+            ticketFormLayout.Controls.Add(operatorLanguageLayout, 0, 6);
+
             issueButton.Dock = DockStyle.Fill;
             issueButton.FlatStyle = FlatStyle.Flat;
             issueButton.FlatAppearance.BorderSize = 0;
@@ -396,13 +424,13 @@ namespace QueueTerminal
             issueButton.ForeColor = Color.White;
             issueButton.Font = new Font("Segoe UI", 19F, FontStyle.Bold);
             issueButton.Click += delegate { CreateTicket(); };
-            ticketFormLayout.Controls.Add(issueButton, 0, 6);
+            ticketFormLayout.Controls.Add(issueButton, 0, 7);
 
             statusLabel.Dock = DockStyle.Fill;
             statusLabel.ForeColor = Color.FromArgb(122, 22, 49);
             statusLabel.Padding = new Padding(0, 16, 0, 0);
             statusLabel.AutoSize = true;
-            ticketFormLayout.Controls.Add(statusLabel, 0, 7);
+            ticketFormLayout.Controls.Add(statusLabel, 0, 8);
 
             TableLayoutPanel result = new TableLayoutPanel();
             result.Dock = DockStyle.Fill;
@@ -466,6 +494,20 @@ namespace QueueTerminal
             button.Click += delegate
             {
                 language = selectedLanguage;
+                ApplyLanguage();
+            };
+        }
+
+        private void ConfigureOperatorLanguageButton(Button button, UiLanguage selectedLanguage)
+        {
+            button.Dock = DockStyle.Fill;
+            button.Margin = new Padding(4, 6, 0, 6);
+            button.FlatStyle = FlatStyle.Flat;
+            button.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+            button.UseVisualStyleBackColor = false;
+            button.Click += delegate
+            {
+                operatorLanguage = selectedLanguage;
                 ApplyLanguage();
             };
         }
@@ -574,9 +616,16 @@ namespace QueueTerminal
             kazakhButton.Text = "Қазақша";
             russianButton.Text = "Русский";
             englishButton.Text = "English";
+            operatorLanguageLabel.Text = T("\u041e\u043f\u0435\u0440\u0430\u0442\u043e\u0440 \u0442\u0456\u043b\u0456", "\u042f\u0437\u044b\u043a \u043e\u043f\u0435\u0440\u0430\u0442\u043e\u0440\u0430", "Operator language");
+            operatorKazakhButton.Text = "\u049a\u0430\u0437";
+            operatorRussianButton.Text = "\u0420\u0443\u0441";
+            operatorEnglishButton.Text = "Eng";
             StyleLanguageButton(kazakhButton, language == UiLanguage.Kazakh);
             StyleLanguageButton(russianButton, language == UiLanguage.Russian);
             StyleLanguageButton(englishButton, language == UiLanguage.English);
+            StyleOperatorLanguageButton(operatorKazakhButton, operatorLanguage == UiLanguage.Kazakh);
+            StyleOperatorLanguageButton(operatorRussianButton, operatorLanguage == UiLanguage.Russian);
+            StyleOperatorLanguageButton(operatorEnglishButton, operatorLanguage == UiLanguage.English);
             RefreshCatalogLanguage();
 
             if (lastTicket == null)
@@ -599,6 +648,16 @@ namespace QueueTerminal
             button.ForeColor = selected ? Color.White : Color.FromArgb(93, 15, 37);
         }
 
+        private void StyleOperatorLanguageButton(Button button, bool selected)
+        {
+            button.FlatAppearance.BorderSize = selected ? 2 : 1;
+            button.FlatAppearance.BorderColor = selected ? Color.FromArgb(122, 22, 49) : Color.FromArgb(234, 212, 218);
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(252, 239, 243);
+            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(247, 219, 227);
+            button.BackColor = selected ? Color.FromArgb(122, 22, 49) : Color.White;
+            button.ForeColor = selected ? Color.White : Color.FromArgb(93, 15, 37);
+        }
+
         private string T(string kazakh, string russian, string english)
         {
             if (language == UiLanguage.Kazakh)
@@ -610,11 +669,11 @@ namespace QueueTerminal
 
         private string CurrentServiceLanguage()
         {
-            if (language == UiLanguage.Kazakh)
+            if (operatorLanguage == UiLanguage.Kazakh)
             {
                 return "KAZAKH";
             }
-            return language == UiLanguage.English ? "ENGLISH" : "RUSSIAN";
+            return operatorLanguage == UiLanguage.English ? "ENGLISH" : "RUSSIAN";
         }
 
         private void UpdateClock()
@@ -1315,6 +1374,9 @@ namespace QueueTerminal
             busy = isBusy;
             serviceSelector.Enabled = !busy && serviceCatalog.Count > 0;
             programSelector.Enabled = !busy && programCatalog.Count > 0;
+            operatorKazakhButton.Enabled = !busy;
+            operatorRussianButton.Enabled = !busy;
+            operatorEnglishButton.Enabled = !busy;
             issueButton.Enabled = !busy && serviceCatalog.Count > 0;
             reloadButton.Enabled = !busy;
             reprintButton.Enabled = !busy && lastTicket != null;

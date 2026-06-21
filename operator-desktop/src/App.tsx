@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { api, ApiError } from './api/client'
 import { tokenStorage } from './api/tokenStorage'
+import { useTicketCallSound } from './hooks/useTicketCallSound'
 import platonusLogoUrl from '../platonus logo.png'
 import type {
   AuthTokens,
@@ -103,6 +104,10 @@ function getErrorMessage(error: unknown) {
   return 'Неизвестная ошибка'
 }
 
+function isAuthFailure(error: unknown) {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403)
+}
+
 function parseApiDate(value: string) {
   const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value)
   return new Date(hasTimezone ? value : `${value}Z`)
@@ -174,11 +179,16 @@ function normalizeStudyLanguages(languages: StudyLanguage[] | undefined) {
 function buildStudyLanguagesPayload(
   programIds: number[],
   programLanguages: Record<number, StudyLanguage[]>,
+  programs: EducationalProgramItem[],
 ) {
+  const programById = new Map(programs.map((program) => [program.id, program]))
+
   return Object.fromEntries(
     programIds.map((programId) => [
       programId,
-      normalizeStudyLanguages(programLanguages[programId]),
+      programById.get(programId)?.requires_service_language
+        ? normalizeStudyLanguages(programLanguages[programId])
+        : [],
     ]),
   )
 }
@@ -544,6 +554,101 @@ function PlatonusView({
   )
 }
 
+function ServerSettingsForm({
+  apiBaseUrl,
+  displayUrl,
+  onChange,
+  onUnlock,
+  onSubmit,
+  saving,
+  value,
+}: {
+  apiBaseUrl?: string
+  displayUrl?: string
+  onChange: (value: string) => void
+  onUnlock: (token: string) => void
+  onSubmit: (event: React.FormEvent) => void
+  saving: boolean
+  value: string
+}) {
+  const [unlocked, setUnlocked] = useState(false)
+  const [password, setPassword] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+  const [unlocking, setUnlocking] = useState(false)
+
+  async function unlockSettings(event: React.FormEvent) {
+    event.preventDefault()
+    setUnlocking(true)
+    setPasswordError('')
+
+    try {
+      const result = await window.operatorBridge.verifyAdminPassword(password)
+      if (!result.ok) {
+        setPasswordError('Неверный пароль администратора')
+        return
+      }
+
+      if (result.token) onUnlock(result.token)
+      setUnlocked(true)
+      setPassword('')
+    } catch (err) {
+      setPasswordError(getErrorMessage(err))
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
+  if (!unlocked) {
+    return (
+      <form className="server-settings-form" onSubmit={unlockSettings}>
+        <label className="field-label" htmlFor="server-admin-password">
+          Пароль администратора
+        </label>
+        <div className="server-settings-row">
+          <input
+            id="server-admin-password"
+            className="text-input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <button className="primary-button h-12" type="submit" disabled={unlocking}>
+            {unlocking ? <Loader2 className="h-5 w-5 animate-spin" /> : <Settings2 className="h-5 w-5" />}
+            Открыть
+          </button>
+        </div>
+        {passwordError ? <div className="server-settings-error">{passwordError}</div> : null}
+      </form>
+    )
+  }
+
+  return (
+    <form className="server-settings-form" onSubmit={onSubmit}>
+      <label className="field-label" htmlFor="server-url">
+        Адрес сервера
+      </label>
+      <div className="server-settings-row">
+        <input
+          id="server-url"
+          className="text-input"
+          placeholder="http://192.168.115.12"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button className="primary-button h-12" type="submit" disabled={saving}>
+          {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
+          Сохранить
+        </button>
+      </div>
+      <div className="server-settings-meta">
+        <span>API: {apiBaseUrl || 'загружается'}</span>
+        {displayUrl ? <span>Display: {displayUrl}</span> : null}
+      </div>
+    </form>
+  )
+}
+
 function App() {
   const [config, setConfig] = useState<OperatorConfig | null>(null)
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -559,6 +664,7 @@ function App() {
   const [password, setPassword] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [serverUrlInput, setServerUrlInput] = useState('')
   const [platonusDisplayUrl, setPlatonusDisplayUrl] = useState(PLATONUS_URL)
   const [platonusRemoteActive, setPlatonusRemoteActive] = useState(false)
   const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null)
@@ -571,11 +677,15 @@ function App() {
   const [reassignProgramQuery, setReassignProgramQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [configSaving, setConfigSaving] = useState(false)
+  const [adminSettingsToken, setAdminSettingsToken] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const [realtimeState, setRealtimeState] = useState<RealtimeState>('disconnected')
+  const observedTicketIdsRef = useRef<Set<string> | null>(null)
+  const { enableSound, isSoundBlocked, isSoundReady, playSound } = useTicketCallSound()
 
   const currentTicket = useMemo(
     () => myWindow?.tickets.find((ticket) => ticket.status === 'CALLED' && ticket.window_id === myWindow.window_id) ?? null,
@@ -631,6 +741,22 @@ function App() {
           page: 1,
           page_size: 50,
         })
+        const observedTicketIds = observedTicketIdsRef.current
+        const hasNewActiveTicket = Boolean(
+          observedTicketIds &&
+            data.tickets.some(
+              (ticket) =>
+                (ticket.status === 'WAITING' || ticket.status === 'CALLED') &&
+                !observedTicketIds.has(ticket.id),
+            ),
+        )
+
+        observedTicketIdsRef.current = observedTicketIds ?? new Set()
+        data.tickets.forEach((ticket) => observedTicketIdsRef.current?.add(ticket.id))
+        if (hasNewActiveTicket) {
+          void playSound()
+        }
+
         setMyWindow(data)
         setLastRefresh(new Date())
         setError('')
@@ -640,7 +766,7 @@ function App() {
         setLoading(false)
       }
     },
-    [search, statusFilter],
+    [playSound, search, statusFilter],
   )
   const refreshWorkspaceRef = useRef(refreshWorkspace)
 
@@ -672,7 +798,7 @@ function App() {
       Object.fromEntries(
         myPrograms.map((program) => [
           program.id,
-          normalizeStudyLanguages(program.study_languages),
+          program.requires_service_language ? normalizeStudyLanguages(program.study_languages) : [],
         ]),
       ),
     )
@@ -683,14 +809,30 @@ function App() {
     try {
       const loadedConfig = await window.operatorBridge.getConfig()
       setConfig(loadedConfig)
+      setServerUrlInput(loadedConfig.serverUrl)
 
       if (!tokenStorage.getAccessToken()) return
 
-      const [me] = await Promise.all([api.auth.me(), refreshWorkspace(true)])
+      const cachedUser = tokenStorage.getUser()
+      if (cachedUser) setUser(cachedUser)
+
+      const me = await api.auth.me()
+      tokenStorage.setUser(me)
       setUser(me)
+      await refreshWorkspace(true)
       await loadProfile().catch(() => undefined)
-    } catch {
-      tokenStorage.clearTokens()
+    } catch (err) {
+      if (isAuthFailure(err)) {
+        tokenStorage.clearTokens()
+        tokenStorage.clearUser()
+        setUser(null)
+        setMyWindow(null)
+        return
+      }
+
+      if (tokenStorage.getAccessToken() && tokenStorage.getUser()) {
+        setError('Сервер временно недоступен. Сессия сохранена, ожидание подключения.')
+      }
     } finally {
       setLoading(false)
     }
@@ -722,19 +864,26 @@ function App() {
       const refreshToken = tokenStorage.getRefreshToken()
       if (!refreshToken) return null
 
-      const response = await window.operatorBridge.apiRequest<AuthTokens>({
-        path: '/auth/refresh',
-        method: 'POST',
-        body: { refresh_token: refreshToken },
-      })
+      try {
+        const response = await window.operatorBridge.apiRequest<AuthTokens>({
+          path: '/auth/refresh',
+          method: 'POST',
+          body: { refresh_token: refreshToken },
+        })
 
-      if (!response.ok) {
-        tokenStorage.clearTokens()
+        if (!response.ok) {
+          if (response.status === 401 || response.status === 403) {
+            tokenStorage.clearTokens()
+            tokenStorage.clearUser()
+          }
+          return null
+        }
+
+        tokenStorage.setTokens(response.payload.access_token, response.payload.refresh_token)
+        return response.payload.access_token
+      } catch {
         return null
       }
-
-      tokenStorage.setTokens(response.payload.access_token, response.payload.refresh_token)
-      return response.payload.access_token
     }
 
     async function connect(forceTokenRefresh = false) {
@@ -747,6 +896,9 @@ function App() {
 
       if (!accessToken || closed) {
         setRealtimeState('disconnected')
+        if (!closed) {
+          reconnectTimer = window.setTimeout(() => void connect(true), 2500)
+        }
         return
       }
 
@@ -793,6 +945,7 @@ function App() {
       tokenStorage.setTokens(tokens.access_token, tokens.refresh_token)
       if (config?.rememberEmail) tokenStorage.setEmail(email.trim())
       const me = await api.auth.me()
+      tokenStorage.setUser(me)
       setUser(me)
       setPassword('')
       await Promise.all([refreshWorkspace(true), loadProfile().catch(() => undefined)])
@@ -806,10 +959,12 @@ function App() {
 
   function logout() {
     tokenStorage.clearTokens()
+    tokenStorage.clearUser()
     if (!config?.rememberEmail) tokenStorage.clearEmail()
     setRealtimeState('disconnected')
     setUser(null)
     setMyWindow(null)
+    observedTicketIdsRef.current = null
     setPassword('')
     setView('window')
   }
@@ -829,6 +984,24 @@ function App() {
       .catch((err) => {
         console.error('Queue display restore failed', err)
       })
+  }
+
+  async function saveServerSettings(event: React.FormEvent) {
+    event.preventDefault()
+    setConfigSaving(true)
+    setMessage('')
+    setError('')
+
+    try {
+      const updatedConfig = await window.operatorBridge.saveServerUrl(serverUrlInput, adminSettingsToken)
+      setConfig(updatedConfig)
+      setServerUrlInput(updatedConfig.serverUrl)
+      setMessage('Адрес сервера обновлен')
+    } catch (err) {
+      setError(getErrorMessage(err))
+    } finally {
+      setConfigSaving(false)
+    }
   }
 
   async function runAction(action: () => Promise<unknown>, successText: string) {
@@ -1044,14 +1217,14 @@ function App() {
     await runAction(async () => {
       const updated = await api.operator.setPrograms(
         selectedPrograms,
-        buildStudyLanguagesPayload(selectedPrograms, selectedProgramLanguages),
+        buildStudyLanguagesPayload(selectedPrograms, selectedProgramLanguages, programs),
       )
       setSelectedPrograms(updated.map((program) => program.id))
       setSelectedProgramLanguages(
         Object.fromEntries(
           updated.map((program) => [
             program.id,
-            normalizeStudyLanguages(program.study_languages),
+            program.requires_service_language ? normalizeStudyLanguages(program.study_languages) : [],
           ]),
         ),
       )
@@ -1069,40 +1242,62 @@ function App() {
   if (!user) {
     return (
       <main className="grid min-h-screen place-items-center bg-shell px-6 text-ink">
-        <form onSubmit={login} className="w-full max-w-[430px] rounded-lg border border-line bg-white p-8 shadow-panel">
-          <div className="mb-8 flex items-center gap-4">
-            <div className="grid h-12 w-12 place-items-center rounded-lg bg-brand text-white">
-              <DoorOpen className="h-7 w-7" />
+        <div className="w-full max-w-[430px] space-y-4">
+          <form onSubmit={login} className="rounded-lg border border-line bg-white p-8 shadow-panel">
+            <div className="mb-8 flex items-center gap-4">
+              <div className="grid h-12 w-12 place-items-center rounded-lg bg-brand text-white">
+                <DoorOpen className="h-7 w-7" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold tracking-normal">Оператор CRM</h1>
+                <p className="mt-1 text-sm text-muted">{config?.apiBaseUrl ?? 'API загружается'}</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-normal">Оператор CRM</h1>
-              <p className="mt-1 text-sm text-muted">{config?.apiBaseUrl ?? 'API загружается'}</p>
-            </div>
-          </div>
 
-          <label className="field-label" htmlFor="email">
-            Email
-          </label>
-          <input id="email" className="text-input" value={email} onChange={(event) => setEmail(event.target.value)} />
+            <label className="field-label" htmlFor="email">
+              Email
+            </label>
+            <input id="email" className="text-input" value={email} onChange={(event) => setEmail(event.target.value)} />
 
-          <label className="field-label mt-5" htmlFor="password">
-            Пароль
-          </label>
-          <input
-            id="password"
-            type="password"
-            className="text-input"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
+            <label className="field-label mt-5" htmlFor="password">
+              Пароль
+            </label>
+            <input
+              id="password"
+              type="password"
+              className="text-input"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
 
-          {error && <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+            {(error || message) && (
+              <div
+                className={classNames(
+                  'mt-5 rounded-lg border px-4 py-3 text-sm font-medium',
+                  error ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                )}
+              >
+                {error || message}
+              </div>
+            )}
 
-          <button className="primary-button mt-6 w-full" disabled={saving}>
-            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Play className="h-5 w-5" />}
-            Войти
-          </button>
-        </form>
+            <button className="primary-button mt-6 w-full" disabled={saving}>
+              {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Play className="h-5 w-5" />}
+              Войти
+            </button>
+          </form>
+          <section className="rounded-lg border border-line bg-white p-5 shadow-panel">
+            <ServerSettingsForm
+              apiBaseUrl={config?.apiBaseUrl}
+              displayUrl={config?.displayUrl}
+              onChange={setServerUrlInput}
+              onUnlock={setAdminSettingsToken}
+              onSubmit={saveServerSettings}
+              saving={configSaving}
+              value={serverUrlInput}
+            />
+          </section>
+        </div>
       </main>
     )
   }
@@ -1162,6 +1357,12 @@ function App() {
               <span className="realtime-dot" aria-hidden="true" />
               {realtimeStatusLabels[realtimeState]}
             </span>
+            {!isSoundReady && (
+              <button className={isSoundBlocked ? 'danger-button' : 'ghost-button'} onClick={() => void enableSound()}>
+                <BellRing className="h-5 w-5" />
+                {isSoundBlocked ? 'Включить звук' : 'Звук'}
+              </button>
+            )}
             <button className="ghost-button" onClick={() => refreshWorkspace()} disabled={saving}>
               <RefreshCw className="h-5 w-5" />
               Обновить
@@ -1413,10 +1614,25 @@ function App() {
                 saving={saving}
               />
               <section className="panel p-6 xl:col-span-2">
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div>
+                    <span className="section-label">Настройки</span>
+                    <h2 className="mt-1 text-xl font-semibold tracking-normal">Сервер оператора</h2>
+                  </div>
+                </div>
+                <ServerSettingsForm
+                  apiBaseUrl={config?.apiBaseUrl}
+                  displayUrl={config?.displayUrl}
+                  onChange={setServerUrlInput}
+                  onUnlock={setAdminSettingsToken}
+                  onSubmit={saveServerSettings}
+                  saving={configSaving}
+                  value={serverUrlInput}
+                />
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
                   <div className="info-line">
-                    <span>API</span>
-                    <strong>{config?.apiBaseUrl}</strong>
+                    <span>Сервер</span>
+                    <strong>{config?.serverUrl}</strong>
                   </div>
                   <div className="info-line">
                     <span>Экран</span>
@@ -1674,6 +1890,7 @@ function ProgramLanguageTable({
   saving: boolean
 }) {
   function setProgramSelected(programId: number, selected: boolean) {
+    const program = programs.find((item) => item.id === programId)
     const nextSelectedIds = selected
       ? [...selectedIds, programId].filter((id, index, ids) => ids.indexOf(id) === index)
       : selectedIds.filter((id) => id !== programId)
@@ -1681,15 +1898,21 @@ function ProgramLanguageTable({
     onSelectedIdsChange(nextSelectedIds)
     onSelectedLanguagesChange(
       Object.fromEntries(
-        nextSelectedIds.map((id) => [
-          id,
-          normalizeStudyLanguages(selectedLanguages[id]),
-        ]),
+        nextSelectedIds.map((id) => {
+          const nextProgram = id === programId ? program : programs.find((item) => item.id === id)
+          return [
+            id,
+            nextProgram?.requires_service_language ? normalizeStudyLanguages(selectedLanguages[id]) : [],
+          ]
+        }),
       ),
     )
   }
 
   function setProgramLanguage(programId: number, language: StudyLanguage, selected: boolean) {
+    const program = programs.find((item) => item.id === programId)
+    if (!program?.requires_service_language) return
+
     const programWasSelected = selectedIds.includes(programId)
     const currentLanguages = programWasSelected ? normalizeStudyLanguages(selectedLanguages[programId]) : []
     const nextLanguages = selected
@@ -1704,7 +1927,11 @@ function ProgramLanguageTable({
       Object.fromEntries(
         nextSelectedIds.map((id) => [
           id,
-          id === programId ? nextLanguages : normalizeStudyLanguages(selectedLanguages[id]),
+          id === programId
+            ? nextLanguages
+            : programs.find((program) => program.id === id)?.requires_service_language
+              ? normalizeStudyLanguages(selectedLanguages[id])
+              : [],
         ]),
       ),
     )
@@ -1739,6 +1966,7 @@ function ProgramLanguageTable({
             {programs.map((program) => {
               const selected = selectedIds.includes(program.id)
               const languages = normalizeStudyLanguages(selectedLanguages[program.id])
+              const languageSelectionEnabled = program.requires_service_language
 
               return (
                 <tr className={selected ? 'program-language-row-selected' : ''} key={program.id}>
@@ -1762,16 +1990,20 @@ function ProgramLanguageTable({
                     </label>
                   </td>
                   {serviceLanguageOptions.map((option) => (
-                    <td key={option.value}>
-                      <label className="program-table-check" aria-label={`${program.name}: ${option.label}`}>
-                        <input
-                          type="checkbox"
-                          checked={selected && languages.includes(option.value)}
-                          disabled={!program.is_active}
-                          onChange={(event) => setProgramLanguage(program.id, option.value, event.target.checked)}
-                        />
-                        <span />
-                      </label>
+                    <td className="program-language-cell" key={option.value}>
+                      {languageSelectionEnabled ? (
+                        <label className="program-table-check" aria-label={`${program.name}: ${option.label}`}>
+                          <input
+                            type="checkbox"
+                            checked={selected && languages.includes(option.value)}
+                            disabled={!program.is_active}
+                            onChange={(event) => setProgramLanguage(program.id, option.value, event.target.checked)}
+                          />
+                          <span />
+                        </label>
+                      ) : (
+                        <span className="program-language-muted">-</span>
+                      )}
                     </td>
                   ))}
                 </tr>

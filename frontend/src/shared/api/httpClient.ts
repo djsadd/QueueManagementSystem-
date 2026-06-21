@@ -45,6 +45,10 @@ function canRefreshAuth(path: string, skipAuthRefresh?: boolean) {
   return !skipAuthRefresh && path !== '/auth/login' && path !== '/auth/refresh'
 }
 
+function isAuthFailureStatus(status: number) {
+  return status === 401 || status === 403
+}
+
 export async function refreshAuthTokens(): Promise<AuthTokens | null> {
   const refreshToken = tokenStorage.getRefreshToken()
 
@@ -72,7 +76,10 @@ export async function refreshAuthTokens(): Promise<AuthTokens | null> {
         return tokens
       })
       .catch((error) => {
-        tokenStorage.clear()
+        if (error instanceof ApiError && isAuthFailureStatus(error.status)) {
+          tokenStorage.clear()
+        }
+
         throw error
       })
       .finally(() => {
@@ -108,8 +115,16 @@ export async function request<T>(
   if (!response.ok) {
     const error = getErrorFromResponse(response, payload)
 
-    if (response.status === 401 && canRefreshAuth(path, skipAuthRefresh)) {
-      const tokens = await refreshAuthTokens().catch(() => null)
+    if (isAuthFailureStatus(response.status) && canRefreshAuth(path, skipAuthRefresh)) {
+      let tokens: AuthTokens | null = null
+
+      try {
+        tokens = await refreshAuthTokens()
+      } catch (refreshError) {
+        if (!(refreshError instanceof ApiError && isAuthFailureStatus(refreshError.status))) {
+          throw refreshError
+        }
+      }
 
       if (tokens) {
         const retryResponse = await send(tokens.access_token)
