@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, MouseEvent, ReactNode } from 'react'
+import type { ChangeEvent, FormEvent, MouseEvent, ReactNode } from 'react'
 import {
   adminApi,
   type AcademicDegreeItem,
@@ -61,6 +61,44 @@ type AnalyticsDistributionItem = {
   label: string
   value: number
 }
+type ApplicantReportStageId =
+  | 'saved_not_submitted'
+  | 'accepted_unconfirmed'
+  | 'accepted_confirmed'
+  | 'unknown'
+type ApplicantReportRecord = {
+  documentsAccepted: string
+  documentsReturned: string
+  fullName: string
+  iin: string | null
+  stage: ApplicantReportStageId
+  status: string
+}
+type ApplicantReportFunnelStage = {
+  color: string
+  id: Exclude<ApplicantReportStageId, 'unknown'>
+  label: string
+  percentOfMatched: number
+  percentOfTickets: number
+  value: number
+}
+type ApplicantReportAnalysis = {
+  duplicateReportIinCount: number
+  fileName: string
+  matchedIinCount: number
+  matchedTicketCount: number
+  matchPercent: number
+  reportIinCount: number
+  recognizedMatchedCount: number
+  rowCount: number
+  rowsWithoutIinCount: number
+  stages: ApplicantReportFunnelStage[]
+  ticketsWithIinCount: number
+  uniqueTicketIinCount: number
+  unmatchedReportIinCount: number
+  unmatchedTicketIinCount: number
+  unknownMatchedCount: number
+}
 type OperatorPerformancePoint = {
   averageProcessingMinutes: number
   clientsPerHour: number
@@ -93,6 +131,34 @@ const ANALYTICS_STATUS_COLORS = {
   completed: '#0f766e',
   skipped: '#b45309',
   active: '#2563eb',
+}
+const APPLICANT_REPORT_STAGE_DEFINITIONS: Array<{
+  color: string
+  id: Exclude<ApplicantReportStageId, 'unknown'>
+  label: string
+}> = [
+  {
+    color: '#b45309',
+    id: 'saved_not_submitted',
+    label: 'Сохранено, не подано',
+  },
+  {
+    color: '#2563eb',
+    id: 'accepted_unconfirmed',
+    label: 'Принято, не подтверждено оригиналами документов',
+  },
+  {
+    color: '#0f766e',
+    id: 'accepted_confirmed',
+    label: 'Принято и подтверждено оригиналами документов',
+  },
+]
+const APPLICANT_REPORT_HEADER_ALIASES = {
+  documentsAccepted: ['документы приняты', 'документы принятые', 'оригиналы документов приняты'],
+  documentsReturned: ['документы возвращены', 'документы возвращенные', 'оригиналы документов возвращены'],
+  fullName: ['полное имя', 'фио', 'ф.и.о.', 'фамилия имя отчество'],
+  iin: ['иин', 'жсн', 'iin', 'иин абитуриента', 'жсн абитуриента'],
+  status: ['статус', 'статус заявления'],
 }
 const languages = ['ru', 'kk', 'en'] as const
 const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
@@ -392,6 +458,7 @@ function Icon({ name }: { name: string }) {
       {name === 'chart' && <path d="M4 19V5M4 19h16M8 16V9M12 16V6M16 16v-4" />}
       {name === 'display' && <path d="M4 5h16v11H4zM8 20h8M12 16v4M8 9h3M13 9h3M8 12h8" />}
       {name === 'download' && <path d="M12 4v10M8 10l4 4 4-4M5 20h14" />}
+      {name === 'upload' && <path d="M12 20V10M8 14l4-4 4 4M5 4h14v4M5 20h14" />}
       {name === 'plus' && <path d="M12 5v14M5 12h14" />}
       {name === 'refresh' && <path d="M20 12a8 8 0 0 1-13.7 5.7M4 12A8 8 0 0 1 17.7 6.3M18 3v4h-4M6 21v-4h4" />}
       {name === 'sidebar-collapse' && <path d="M4 5h16v14H4zM9 5v14M15 9l-3 3 3 3" />}
@@ -853,6 +920,415 @@ function downloadUserLoginExport(users: UserItem[]) {
   const dateStamp = new Date().toISOString().slice(0, 10)
 
   downloadCsvFile(`user-logins-${dateStamp}.csv`, [header, ...rows])
+}
+
+function normalizeReportValue(value: string) {
+  return value
+    .replace(/\uFEFF/g, '')
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ')
+}
+
+function normalizeReportHeader(value: string) {
+  return normalizeReportValue(value)
+    .replace(/[.,:;()[\]{}"']/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function findApplicantReportColumn(headers: string[], aliases: string[]) {
+  const normalizedAliases = aliases.map(normalizeReportHeader)
+  return headers.findIndex((header) => normalizedAliases.includes(header))
+}
+
+function getDelimitedSeparatorCount(line: string, separator: string) {
+  let count = 0
+  let inQuotes = false
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index]
+
+    if (character === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (!inQuotes && character === separator) {
+      count += 1
+    }
+  }
+
+  return count
+}
+
+function detectApplicantReportSeparator(text: string) {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim()).slice(0, 10)
+  const separators = ['\t', ';', ',']
+
+  return separators
+    .map((separator) => ({
+      separator,
+      score: lines.reduce((total, line) => total + getDelimitedSeparatorCount(line, separator), 0),
+    }))
+    .sort((firstItem, secondItem) => secondItem.score - firstItem.score)[0].separator
+}
+
+function parseDelimitedApplicantReportRows(text: string) {
+  const separator = detectApplicantReportSeparator(text)
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let inQuotes = false
+
+  function pushRow() {
+    row.push(cell)
+    if (row.some((value) => value.trim())) {
+      rows.push(row)
+    }
+    row = []
+    cell = ''
+  }
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]
+
+    if (character === '"') {
+      if (inQuotes && text[index + 1] === '"') {
+        cell += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (!inQuotes && character === separator) {
+      row.push(cell)
+      cell = ''
+      continue
+    }
+
+    if (!inQuotes && (character === '\n' || character === '\r')) {
+      pushRow()
+      if (character === '\r' && text[index + 1] === '\n') {
+        index += 1
+      }
+      continue
+    }
+
+    cell += character
+  }
+
+  if (cell || row.length > 0) {
+    pushRow()
+  }
+
+  return rows
+}
+
+function parseHtmlApplicantReportRows(text: string) {
+  if (!/<table[\s>]/i.test(text)) {
+    return null
+  }
+
+  const parsedDocument = new DOMParser().parseFromString(text, 'text/html')
+  const table = parsedDocument.querySelector('table')
+
+  if (!table) {
+    return null
+  }
+
+  const rows = Array.from(table.querySelectorAll('tr')).map((tableRow) =>
+    Array.from(tableRow.querySelectorAll('th,td')).map((cell) => cell.textContent?.trim() ?? ''),
+  )
+
+  return rows.filter((row) => row.some((cell) => cell.trim()))
+}
+
+function getApplicantReportHeaderScore(row: string[]) {
+  const headers = row.map(normalizeReportHeader)
+
+  return Object.values(APPLICANT_REPORT_HEADER_ALIASES).reduce((score, aliases) => {
+    return score + (findApplicantReportColumn(headers, aliases) >= 0 ? 1 : 0)
+  }, 0)
+}
+
+function getApplicantReportCell(row: string[], index: number) {
+  return index >= 0 ? row[index]?.trim() ?? '' : ''
+}
+
+function normalizeIin(value: string | null | undefined) {
+  const digits = (value ?? '').replace(/\D/g, '')
+  return /^\d{12}$/.test(digits) ? digits : null
+}
+
+function extractIinFromApplicantReportRow(row: string[]) {
+  for (const cell of row) {
+    const matches = cell.match(/\d{12}/g) ?? []
+    const normalizedMatch = matches.map(normalizeIin).find(Boolean)
+
+    if (normalizedMatch) {
+      return normalizedMatch
+    }
+  }
+
+  return null
+}
+
+function hasPositiveApplicantReportValue(value: string) {
+  const normalizedValue = normalizeReportValue(value)
+
+  if (!normalizedValue) {
+    return false
+  }
+
+  return ![
+    '-',
+    '0',
+    'false',
+    'no',
+    'none',
+    'нет',
+    'не принят',
+    'не принято',
+    'не приняты',
+    'не подтверждено',
+  ].includes(normalizedValue)
+}
+
+function classifyApplicantReportStage(
+  status: string,
+  documentsAccepted: string,
+  documentsReturned: string,
+): ApplicantReportStageId {
+  const normalizedStatus = normalizeReportValue(status)
+  const documentsAreAccepted = hasPositiveApplicantReportValue(documentsAccepted)
+  const documentsAreReturned = hasPositiveApplicantReportValue(documentsReturned)
+  const isSaved = normalizedStatus.includes('сохран') || normalizedStatus.includes('saved')
+  const isNotSubmitted =
+    normalizedStatus.includes('не подан') ||
+    normalizedStatus.includes('не подано') ||
+    normalizedStatus.includes('not submitted')
+  const isAccepted = normalizedStatus.includes('принят') || normalizedStatus.includes('accepted')
+  const isNotConfirmed =
+    normalizedStatus.includes('не подтвержден') ||
+    normalizedStatus.includes('неподтвержден') ||
+    normalizedStatus.includes('not confirmed')
+  const isConfirmed =
+    (normalizedStatus.includes('подтвержден') && !isNotConfirmed) ||
+    normalizedStatus.includes('confirmed') ||
+    documentsAreAccepted
+
+  if (isSaved && (isNotSubmitted || !isAccepted)) {
+    return 'saved_not_submitted'
+  }
+
+  if ((isAccepted || documentsAreAccepted) && isConfirmed && !isNotConfirmed && !documentsAreReturned) {
+    return 'accepted_confirmed'
+  }
+
+  if (isAccepted || isNotConfirmed || documentsAreReturned) {
+    return 'accepted_unconfirmed'
+  }
+
+  if (isSaved || isNotSubmitted) {
+    return 'saved_not_submitted'
+  }
+
+  return 'unknown'
+}
+
+function getApplicantReportStageRank(stage: ApplicantReportStageId) {
+  if (stage === 'accepted_confirmed') {
+    return 3
+  }
+
+  if (stage === 'accepted_unconfirmed') {
+    return 2
+  }
+
+  if (stage === 'saved_not_submitted') {
+    return 1
+  }
+
+  return 0
+}
+
+function parseApplicantReportRecords(text: string) {
+  const rows = parseHtmlApplicantReportRows(text) ?? parseDelimitedApplicantReportRows(text)
+
+  if (rows.length < 2) {
+    throw new Error('В файле не найдена таблица отчета')
+  }
+
+  const headerIndex = rows.reduce(
+    (bestIndex, row, index) =>
+      getApplicantReportHeaderScore(row) > getApplicantReportHeaderScore(rows[bestIndex]) ? index : bestIndex,
+    0,
+  )
+  const headers = rows[headerIndex].map(normalizeReportHeader)
+  const fullNameIndex = findApplicantReportColumn(headers, APPLICANT_REPORT_HEADER_ALIASES.fullName)
+  const iinIndex = findApplicantReportColumn(headers, APPLICANT_REPORT_HEADER_ALIASES.iin)
+  const statusIndex = findApplicantReportColumn(headers, APPLICANT_REPORT_HEADER_ALIASES.status)
+  const documentsAcceptedIndex = findApplicantReportColumn(
+    headers,
+    APPLICANT_REPORT_HEADER_ALIASES.documentsAccepted,
+  )
+  const documentsReturnedIndex = findApplicantReportColumn(
+    headers,
+    APPLICANT_REPORT_HEADER_ALIASES.documentsReturned,
+  )
+  const dataRows = rows.slice(headerIndex + 1).filter((row) => row.some((cell) => cell.trim()))
+
+  if (dataRows.length === 0) {
+    throw new Error('В отчете нет строк с абитуриентами')
+  }
+
+  return dataRows.map<ApplicantReportRecord>((row) => {
+    const documentsAccepted = getApplicantReportCell(row, documentsAcceptedIndex)
+    const documentsReturned = getApplicantReportCell(row, documentsReturnedIndex)
+    const status = getApplicantReportCell(row, statusIndex)
+
+    return {
+      documentsAccepted,
+      documentsReturned,
+      fullName: getApplicantReportCell(row, fullNameIndex),
+      iin: normalizeIin(getApplicantReportCell(row, iinIndex)) ?? extractIinFromApplicantReportRow(row),
+      stage: classifyApplicantReportStage(status, documentsAccepted, documentsReturned),
+      status,
+    }
+  })
+}
+
+function buildApplicantReportAnalysis(fileName: string, text: string, tickets: TicketItem[]): ApplicantReportAnalysis {
+  const records = parseApplicantReportRecords(text)
+  const ticketCountsByIin = new Map<string, number>()
+  let ticketsWithIinCount = 0
+
+  tickets.forEach((ticket) => {
+    const iin = normalizeIin(ticket.iin)
+
+    if (!iin) {
+      return
+    }
+
+    ticketsWithIinCount += 1
+    ticketCountsByIin.set(iin, (ticketCountsByIin.get(iin) ?? 0) + 1)
+  })
+
+  const reportRowsByIin = new Map<string, ApplicantReportRecord>()
+  const reportIinOccurrences = new Map<string, number>()
+  let rowsWithoutIinCount = 0
+
+  records.forEach((record) => {
+    if (!record.iin) {
+      rowsWithoutIinCount += 1
+      return
+    }
+
+    const currentRecord = reportRowsByIin.get(record.iin)
+    reportIinOccurrences.set(record.iin, (reportIinOccurrences.get(record.iin) ?? 0) + 1)
+
+    if (!currentRecord || getApplicantReportStageRank(record.stage) > getApplicantReportStageRank(currentRecord.stage)) {
+      reportRowsByIin.set(record.iin, record)
+    }
+  })
+
+  const stageCounts: Record<ApplicantReportStageId, number> = {
+    accepted_confirmed: 0,
+    accepted_unconfirmed: 0,
+    saved_not_submitted: 0,
+    unknown: 0,
+  }
+  let matchedIinCount = 0
+  let matchedTicketCount = 0
+  let unmatchedTicketIinCount = 0
+
+  ticketCountsByIin.forEach((ticketCount, iin) => {
+    const reportRecord = reportRowsByIin.get(iin)
+
+    if (!reportRecord) {
+      unmatchedTicketIinCount += 1
+      return
+    }
+
+    matchedIinCount += 1
+    matchedTicketCount += ticketCount
+    stageCounts[reportRecord.stage] += 1
+  })
+
+  let unmatchedReportIinCount = 0
+  reportRowsByIin.forEach((_record, iin) => {
+    if (!ticketCountsByIin.has(iin)) {
+      unmatchedReportIinCount += 1
+    }
+  })
+
+  const uniqueTicketIinCount = ticketCountsByIin.size
+  const recognizedMatchedCount =
+    stageCounts.saved_not_submitted + stageCounts.accepted_unconfirmed + stageCounts.accepted_confirmed
+
+  return {
+    duplicateReportIinCount: [...reportIinOccurrences.values()].filter((count) => count > 1).length,
+    fileName,
+    matchedIinCount,
+    matchedTicketCount,
+    matchPercent: uniqueTicketIinCount > 0 ? Math.round((matchedIinCount / uniqueTicketIinCount) * 100) : 0,
+    recognizedMatchedCount,
+    reportIinCount: reportRowsByIin.size,
+    rowCount: records.length,
+    rowsWithoutIinCount,
+    stages: APPLICANT_REPORT_STAGE_DEFINITIONS.map((stage) => ({
+      ...stage,
+      percentOfMatched: matchedIinCount > 0 ? Math.round((stageCounts[stage.id] / matchedIinCount) * 100) : 0,
+      percentOfTickets: uniqueTicketIinCount > 0 ? Math.round((stageCounts[stage.id] / uniqueTicketIinCount) * 100) : 0,
+      value: stageCounts[stage.id],
+    })),
+    ticketsWithIinCount,
+    uniqueTicketIinCount,
+    unmatchedReportIinCount,
+    unmatchedTicketIinCount,
+    unknownMatchedCount: stageCounts.unknown,
+  }
+}
+
+function countReplacementCharacters(value: string) {
+  return (value.match(/\uFFFD/g) ?? []).length
+}
+
+function decodeApplicantReportText(buffer: ArrayBuffer) {
+  const utf8Text = new TextDecoder('utf-8').decode(buffer)
+
+  if (countReplacementCharacters(utf8Text) === 0) {
+    return utf8Text
+  }
+
+  try {
+    const windowsText = new TextDecoder('windows-1251').decode(buffer)
+    return countReplacementCharacters(windowsText) < countReplacementCharacters(utf8Text)
+      ? windowsText
+      : utf8Text
+  } catch {
+    return utf8Text
+  }
+}
+
+function isUnsupportedSpreadsheetFile(fileName: string, buffer: ArrayBuffer) {
+  const lowerFileName = fileName.toLowerCase()
+  const bytes = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 4))
+
+  return (
+    lowerFileName.endsWith('.xlsx') ||
+    lowerFileName.endsWith('.xlsm') ||
+    lowerFileName.endsWith('.xlsb') ||
+    (bytes[0] === 0x50 && bytes[1] === 0x4b)
+  )
 }
 
 function getMyWindowTicketStatusClassName(status: string) {
@@ -1341,6 +1817,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
   const [analyticsTickets, setAnalyticsTickets] = useState<TicketItem[]>([])
   const [ticketExportingKey, setTicketExportingKey] = useState<string | null>(null)
+  const [applicantReportAnalysis, setApplicantReportAnalysis] =
+    useState<ApplicantReportAnalysis | null>(null)
+  const [applicantReportError, setApplicantReportError] = useState('')
+  const [applicantReportParsing, setApplicantReportParsing] = useState(false)
   const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => getDefaultSummerDateRange().from)
   const [analyticsDateTo, setAnalyticsDateTo] = useState(() => getDefaultSummerDateRange().to)
   const [analyticsTimeGrouping, setAnalyticsTimeGrouping] = useState<AnalyticsTimeGrouping>('day')
@@ -2884,6 +3364,34 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
+  async function uploadApplicantReport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0]
+
+    if (!file) {
+      return
+    }
+
+    setApplicantReportParsing(true)
+    setApplicantReportError('')
+
+    try {
+      const buffer = await file.arrayBuffer()
+
+      if (isUnsupportedSpreadsheetFile(file.name, buffer)) {
+        throw new Error('Формат .xlsx не поддерживается. Сохраните отчет как CSV, TSV или Excel 97-2003 .xls')
+      }
+
+      const text = decodeApplicantReportText(buffer)
+      setApplicantReportAnalysis(buildApplicantReportAnalysis(file.name, text, analyticsTickets))
+    } catch (requestError) {
+      setApplicantReportAnalysis(null)
+      setApplicantReportError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить отчет')
+    } finally {
+      setApplicantReportParsing(false)
+      event.currentTarget.value = ''
+    }
+  }
+
   const isEditing =
     (formModal === 'services' && editingServiceId !== null) ||
     (formModal === 'windows' && editingWindowId !== null) ||
@@ -4025,6 +4533,103 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         <span className="profile-label">Коэффициент загрузки</span>
                         <strong>{operatorPerformanceUtilization}%</strong>
                       </div>
+                    </div>
+
+                    <div className="applicant-report-panel">
+                      <div className="analytics-card-header">
+                        <div>
+                          <span className="profile-label">Отчет абитуриентов</span>
+                          <h3>Воронка по ИИН</h3>
+                        </div>
+                        <div className="applicant-report-actions">
+                          {applicantReportAnalysis && (
+                            <span className="analytics-status">{applicantReportAnalysis.fileName}</span>
+                          )}
+                          <label
+                            className={`secondary-action compact applicant-report-upload${
+                              applicantReportParsing || loading ? ' disabled' : ''
+                            }`}
+                            aria-disabled={applicantReportParsing || loading}
+                          >
+                            <Icon name="upload" />
+                            {applicantReportParsing ? 'Загрузка...' : 'Загрузить отчет'}
+                            <input
+                              accept=".csv,.tsv,.txt,.xls,text/csv,text/tab-separated-values,application/vnd.ms-excel"
+                              disabled={applicantReportParsing || loading}
+                              type="file"
+                              onChange={uploadApplicantReport}
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      {applicantReportError && <div className="admin-alert">{applicantReportError}</div>}
+
+                      {applicantReportAnalysis ? (
+                        <>
+                          <div className="applicant-report-summary">
+                            <div>
+                              <span className="profile-label">Абитуриентов по талонам</span>
+                              <strong>{applicantReportAnalysis.uniqueTicketIinCount}</strong>
+                              <p>{applicantReportAnalysis.ticketsWithIinCount} талонов с ИИН</p>
+                            </div>
+                            <div>
+                              <span className="profile-label">Сопоставлено по ИИН</span>
+                              <strong>{applicantReportAnalysis.matchedIinCount}</strong>
+                              <p>{applicantReportAnalysis.matchPercent}% от абитуриентов по талонам</p>
+                            </div>
+                            <div>
+                              <span className="profile-label">Не найдено в отчете</span>
+                              <strong>{applicantReportAnalysis.unmatchedTicketIinCount}</strong>
+                              <p>ИИН из талонов без совпадения</p>
+                            </div>
+                            <div>
+                              <span className="profile-label">ИИН в отчете</span>
+                              <strong>{applicantReportAnalysis.reportIinCount}</strong>
+                              <p>{applicantReportAnalysis.rowCount} строк отчета</p>
+                            </div>
+                          </div>
+
+                          {applicantReportAnalysis.reportIinCount === 0 && (
+                            <div className="admin-alert">В отчете не найден ИИН для сопоставления с талонами</div>
+                          )}
+
+                          <div className="applicant-funnel">
+                            {applicantReportAnalysis.stages.map((stage) => (
+                              <div className="applicant-funnel-row" key={stage.id}>
+                                <div className="applicant-funnel-label">
+                                  <strong>{stage.label}</strong>
+                                  <span>
+                                    {stage.percentOfMatched}% от сопоставленных · {stage.percentOfTickets}% от талонов
+                                  </span>
+                                </div>
+                                <div className="applicant-funnel-bar" aria-hidden="true">
+                                  <span
+                                    style={{
+                                      background: stage.color,
+                                      width: `${
+                                        stage.value > 0 ? Math.max(4, stage.percentOfTickets) : 0
+                                      }%`,
+                                    }}
+                                  />
+                                </div>
+                                <strong className="applicant-funnel-value">{stage.value}</strong>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="applicant-report-details">
+                            <span>Распознано в этапах: {applicantReportAnalysis.recognizedMatchedCount}</span>
+                            <span>Не распознано: {applicantReportAnalysis.unknownMatchedCount}</span>
+                            <span>Без ИИН в отчете: {applicantReportAnalysis.rowsWithoutIinCount}</span>
+                            <span>Дубликаты ИИН: {applicantReportAnalysis.duplicateReportIinCount}</span>
+                            <span>ИИН отчета без талона: {applicantReportAnalysis.unmatchedReportIinCount}</span>
+                            <span>Совпавших талонов: {applicantReportAnalysis.matchedTicketCount}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="analytics-empty">Отчет абитуриентов пока не загружен</div>
+                      )}
                     </div>
 
                     <div className="analytics-daily-panel">
