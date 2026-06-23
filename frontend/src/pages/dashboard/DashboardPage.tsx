@@ -68,6 +68,12 @@ type AnalyticsDistributionItem = {
   label: string
   value: number
 }
+type TicketEventActionBreakdownRow = {
+  id: string
+  label: string
+  statusCounts: Record<string, number>
+  total: number
+}
 type ApplicantReportStageId =
   | 'saved_not_submitted'
   | 'accepted_unconfirmed'
@@ -145,6 +151,8 @@ const ANALYTICS_STATUS_COLORS = {
   skipped: '#b45309',
   active: '#2563eb',
 }
+const TICKET_EVENT_ACTION_STATUS_ORDER = ['CALLED', 'COMPLETED', 'SKIPPED', 'DECLINED', 'CANCELLED']
+const WAITING_TICKET_EVENT_STATUSES = new Set(['WAITING'])
 const APPLICANT_REPORT_STAGE_DEFINITIONS: Array<{
   color: string
   id: Exclude<ApplicantReportStageId, 'unknown'>
@@ -629,6 +637,53 @@ function AnalyticsDonutPanel({
         segments={segments}
         total={total}
       />
+    </div>
+  )
+}
+
+function TicketEventActionBreakdownPanel({
+  emptyLabel,
+  rows,
+  title,
+  total,
+}: {
+  emptyLabel: string
+  rows: TicketEventActionBreakdownRow[]
+  title: string
+  total: number
+}) {
+  return (
+    <div className="analytics-event-breakdown-panel">
+      <div className="analytics-card-header">
+        <div>
+          <span className="profile-label">Действия без ожидания</span>
+          <h3>{title}</h3>
+        </div>
+        <span className="analytics-status">{total} действий</span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="analytics-empty">{emptyLabel}</div>
+      ) : (
+        <div className="analytics-event-breakdown-list">
+          {rows.map((row) => (
+            <div className="analytics-event-breakdown-row" key={row.id}>
+              <div className="analytics-event-breakdown-title">
+                <strong>{row.label}</strong>
+                <span>{row.total} действий</span>
+              </div>
+              <div className="analytics-event-breakdown-statuses">
+                {getTicketEventActionStatusRows(row.statusCounts).map((statusRow, index) => (
+                  <span className="analytics-event-status-chip" key={statusRow.id}>
+                    <i style={{ background: getAnalyticsStatusColor(statusRow.id, index) }} />
+                    {statusRow.label}: {statusRow.value}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1804,6 +1859,58 @@ function buildTicketEventStatusDistribution(ticketEvents: TicketEventItem[]) {
   })
 
   return [...rowsByStatus.values()].sort((firstItem, secondItem) => secondItem.value - firstItem.value)
+}
+
+function buildTicketEventActionBreakdown(
+  ticketEvents: TicketEventItem[],
+  getGroup: (ticketEvent: TicketEventItem) => AnalyticsDistributionItem,
+  excludedStatuses = new Set<string>(),
+) {
+  const rowsByGroup = new Map<string, TicketEventActionBreakdownRow>()
+
+  ticketEvents.forEach((ticketEvent) => {
+    const status = getTicketEventActionStatus(ticketEvent)
+
+    if (status === null || excludedStatuses.has(status)) {
+      return
+    }
+
+    const group = getGroup(ticketEvent)
+    const current = rowsByGroup.get(group.id)
+
+    if (current) {
+      current.total += 1
+      current.statusCounts[status] = (current.statusCounts[status] ?? 0) + 1
+      return
+    }
+
+    rowsByGroup.set(group.id, {
+      id: group.id,
+      label: group.label,
+      statusCounts: {
+        [status]: 1,
+      },
+      total: 1,
+    })
+  })
+
+  return [...rowsByGroup.values()].sort(
+    (firstItem, secondItem) =>
+      secondItem.total - firstItem.total || firstItem.label.localeCompare(secondItem.label, 'ru-RU'),
+  )
+}
+
+function getTicketEventActionStatusRows(statusCounts: Record<string, number>) {
+  const knownStatuses = TICKET_EVENT_ACTION_STATUS_ORDER.filter((status) => (statusCounts[status] ?? 0) > 0)
+  const extraStatuses = Object.keys(statusCounts)
+    .filter((status) => !TICKET_EVENT_ACTION_STATUS_ORDER.includes(status))
+    .sort((firstStatus, secondStatus) => firstStatus.localeCompare(secondStatus))
+
+  return [...knownStatuses, ...extraStatuses].map((status) => ({
+    id: status,
+    label: getTicketEventStatusLabel(status),
+    value: statusCounts[status] ?? 0,
+  }))
 }
 
 function distributionToPieSegments(
@@ -3709,6 +3816,47 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     label: item.label,
     value: item.value,
   }))
+  const generalTicketById = new Map(analyticsTickets.map((ticket) => [ticket.id, ticket]))
+  const generalEventOperatorRows = buildTicketEventActionBreakdown(
+    ticketEvents,
+    (ticketEvent) => ({
+      id: ticketEvent.operator_id ?? 'none',
+      label:
+        ticketEvent.operator_name ??
+        ticketEvent.operator_email ??
+        (ticketEvent.operator_id ? ticketEvent.operator_id.slice(0, 8) : 'Регистратура / без оператора'),
+      value: 0,
+    }),
+    WAITING_TICKET_EVENT_STATUSES,
+  )
+  const generalEventProgramRows = buildTicketEventActionBreakdown(
+    ticketEvents,
+    (ticketEvent) => {
+      const ticket = ticketEvent.ticket_id ? generalTicketById.get(ticketEvent.ticket_id) : undefined
+
+      if (!ticket) {
+        return {
+          id: 'unknown',
+          label: 'Без данных по талону',
+          value: 0,
+        }
+      }
+
+      return {
+        id: ticket.educational_program_id === null ? 'none' : String(ticket.educational_program_id),
+        label:
+          ticket.educational_program_name ??
+          ticket.educational_program_code ??
+          (ticket.educational_program_id === null
+            ? 'Без образовательной программы'
+            : `ОП ${ticket.educational_program_id}`),
+        value: 0,
+      }
+    },
+    WAITING_TICKET_EVENT_STATUSES,
+  )
+  const generalEventOperatorActionsTotal = generalEventOperatorRows.reduce((total, item) => total + item.total, 0)
+  const generalEventProgramActionsTotal = generalEventProgramRows.reduce((total, item) => total + item.total, 0)
   const selectedDailyAnalyticsRows =
     analyticsTimeGrouping === 'month'
       ? buildMonthlyAnalyticsRange(selectedRawDailyAnalyticsRows, analyticsDateFrom, analyticsDateTo)
@@ -4979,6 +5127,21 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                           </div>
                         </div>
                       )}
+                    </div>
+
+                    <div className="analytics-event-breakdown-grid">
+                      <TicketEventActionBreakdownPanel
+                        emptyLabel="Нет действий талонов по операторам без ожидания"
+                        rows={generalEventOperatorRows}
+                        title="Действия по операторам"
+                        total={generalEventOperatorActionsTotal}
+                      />
+                      <TicketEventActionBreakdownPanel
+                        emptyLabel="Нет действий талонов по образовательным программам без ожидания"
+                        rows={generalEventProgramRows}
+                        title="Действия по образовательным программам"
+                        total={generalEventProgramActionsTotal}
+                      />
                     </div>
                   </div>
                 )}
