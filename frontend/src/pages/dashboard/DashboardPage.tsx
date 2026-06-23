@@ -639,40 +639,14 @@ function AnalyticsDonutPanel({
   )
 }
 
-function AnalyticsDonutLegend({
-  segments,
-  total,
-}: {
-  segments: AnalyticsPieSegment[]
-  total: number
-}) {
-  const visibleSegments = segments.filter((segment) => segment.value > 0)
-
-  if (visibleSegments.length === 0) {
-    return null
-  }
-
-  return (
-    <div className="analytics-donut-legend">
-      {visibleSegments.map((segment) => (
-        <div className="analytics-donut-legend-item" key={segment.label}>
-          <span className="analytics-service-legend-dot" style={{ background: segment.color }} />
-          <strong>{segment.label}</strong>
-          <span>
-            {segment.value} · {total > 0 ? Math.round((segment.value / total) * 100) : 0}%
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function TicketEventActionDonutPanel({
+  eyebrow = 'Действия без ожидания',
   emptyLabel,
   segments,
   title,
   total,
 }: {
+  eyebrow?: string
   emptyLabel: string
   segments: AnalyticsPieSegment[]
   title: string
@@ -682,7 +656,7 @@ function TicketEventActionDonutPanel({
     <div className="analytics-event-donut-panel">
       <div className="analytics-card-header">
         <div>
-          <span className="profile-label">Действия без ожидания</span>
+          <span className="profile-label">{eyebrow}</span>
           <h3>{title}</h3>
         </div>
         <span className="analytics-status">{total} действий</span>
@@ -698,7 +672,6 @@ function TicketEventActionDonutPanel({
             segments={segments}
             total={total}
           />
-          <AnalyticsDonutLegend segments={segments} total={total} />
         </div>
       )}
     </div>
@@ -5098,50 +5071,14 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       />
                     </div>
 
-                    <div className="analytics-event-status-panel">
-                      <div className="analytics-card-header">
-                        <div>
-                          <span className="profile-label">История талонов</span>
-                          <h3>Статусы по действиям</h3>
-                        </div>
-                        <span className="analytics-status">{generalEventStatusActionsTotal} действий</span>
-                      </div>
-
-                      {generalEventStatusActionsTotal === 0 ? (
-                        <div className="analytics-empty">В истории талонов пока нет действий со статусами</div>
-                      ) : (
-                        <div className="analytics-event-status-content">
-                          <AnalyticsDonutChart
-                            centerLabel="действий"
-                            centerValue={generalEventStatusActionsTotal}
-                            segments={generalEventStatusPieSegments}
-                            total={generalEventStatusActionsTotal}
-                          />
-                          <div className="analytics-event-status-list">
-                            {generalEventStatusRows.map((item, index) => {
-                              const percent =
-                                generalEventStatusActionsTotal > 0
-                                  ? Math.round((item.value / generalEventStatusActionsTotal) * 100)
-                                  : 0
-
-                              return (
-                                <div className="analytics-event-status-row" key={item.id}>
-                                  <span
-                                    className="analytics-service-legend-dot"
-                                    style={{ background: getAnalyticsStatusColor(item.id, index) }}
-                                  />
-                                  <strong>{item.label}</strong>
-                                  <span>{item.value} действий</span>
-                                  <span>{percent}%</span>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
                     <div className="analytics-event-donut-grid">
+                      <TicketEventActionDonutPanel
+                        emptyLabel="В истории талонов пока нет действий со статусами"
+                        eyebrow="История талонов"
+                        segments={generalEventStatusPieSegments}
+                        title="Статусы по действиям"
+                        total={generalEventStatusActionsTotal}
+                      />
                       <TicketEventActionDonutPanel
                         emptyLabel="Нет действий талонов по операторам без ожидания"
                         segments={generalEventOperatorPieSegments}
