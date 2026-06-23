@@ -23,7 +23,6 @@ export type TerminalService = {
   requires_educational_program: boolean
   requires_service_language: boolean
   requires_reception_desk: boolean
-  reception_window_id: number | null
 }
 
 export type TerminalProgram = {

@@ -184,7 +184,6 @@ const emptyService: ServicePayload = {
   is_active: true,
   requires_educational_program: false,
   requires_reception_desk: false,
-  reception_window_id: null,
   requires_service_language: false,
 }
 const emptyTicketCreateForm: TicketCreateFormState = {
@@ -4462,7 +4461,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       is_active: service.is_active,
                       requires_educational_program: service.requires_educational_program,
                       requires_reception_desk: service.requires_reception_desk,
-                      reception_window_id: null,
                       requires_service_language: service.requires_service_language,
                     })
                     setFormModal('services')
@@ -5339,7 +5337,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                     setServiceForm({
                       ...serviceForm,
                       requires_reception_desk: event.target.checked,
-                      reception_window_id: null,
                     })
                   }
                 />

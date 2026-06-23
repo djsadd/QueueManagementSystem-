@@ -30,9 +30,7 @@ class ServiceService:
                 detail="Service code already exists"
             )
 
-        service_data = data.model_dump()
-        await ServiceService.validate_reception_window(db, service_data)
-        service = Service(**service_data)
+        service = Service(**data.model_dump())
 
         db.add(service)
 
@@ -98,16 +96,6 @@ class ServiceService:
         update_data = data.model_dump(
             exclude_unset=True
         )
-        merged_data = {
-            "requires_reception_desk": service.requires_reception_desk,
-            "reception_window_id": service.reception_window_id,
-            **update_data,
-        }
-        await ServiceService.validate_reception_window(db, merged_data)
-
-        if merged_data["requires_reception_desk"] is False:
-            update_data["reception_window_id"] = None
-
         for field, value in update_data.items():
             setattr(service, field, value)
 
@@ -139,18 +127,3 @@ class ServiceService:
                 status_code=409,
                 detail="Service is used by tickets"
             )
-
-    @staticmethod
-    async def validate_reception_window(
-        db: AsyncSession,
-        data: dict,
-    ) -> None:
-        requires_reception_desk = data.get("requires_reception_desk", False)
-        reception_window_id = data.get("reception_window_id")
-
-        if not requires_reception_desk:
-            data["reception_window_id"] = None
-            return
-
-        if reception_window_id is not None:
-            data["reception_window_id"] = None
