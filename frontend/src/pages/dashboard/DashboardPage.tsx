@@ -57,6 +57,12 @@ type AnalyticsPieSegment = {
   label: string
   value: number
 }
+type AnalyticsVisiblePieSegment = {
+  currentOffset: number
+  midpointRadians: number
+  percent: number
+  segment: AnalyticsPieSegment
+}
 type AnalyticsDistributionItem = {
   id: string
   label: string
@@ -256,6 +262,9 @@ const ticketStatusLabels: Record<string, string> = {
   COMPLETED: 'Завершен',
   SKIPPED: 'Пропущен',
   CANCELLED: 'Отменен',
+}
+const ticketEventStatusLabels: Record<string, string> = {
+  DECLINED: 'Отказано',
 }
 
 const studyLanguageLabels: Record<StudyLanguage, string> = {
@@ -499,8 +508,32 @@ function AnalyticsDonutChart({
     x: number
     y: number
   } | null>(null)
-  let offset = 0
   const visibleSegments = segments.filter((segment) => segment.value > 0)
+  const visibleSegmentsWithGeometry = visibleSegments.reduce<{
+    offset: number
+    rows: AnalyticsVisiblePieSegment[]
+  }>(
+    (result, segment) => {
+      const percent = total > 0 ? (segment.value / total) * 100 : 0
+      const currentOffset = result.offset
+      const midpoint = currentOffset + percent / 2
+      const midpointRadians = (midpoint / 100) * Math.PI * 2 - Math.PI / 2
+
+      return {
+        offset: result.offset + percent,
+        rows: [
+          ...result.rows,
+          {
+            currentOffset,
+            midpointRadians,
+            percent,
+            segment,
+          },
+        ],
+      }
+    },
+    { offset: 0, rows: [] },
+  ).rows
 
   function moveTooltip(event: MouseEvent<SVGCircleElement>, segment: AnalyticsPieSegment, percent: number) {
     const svg = event.currentTarget.ownerSVGElement
@@ -520,13 +553,7 @@ function AnalyticsDonutChart({
     <div className="analytics-donut">
       <svg viewBox="0 0 100 100" role="img" aria-label={centerLabel}>
         <circle className="analytics-donut-track" cx="50" cy="50" r="38" pathLength="100" />
-        {visibleSegments.map((segment) => {
-          const percent = total > 0 ? (segment.value / total) * 100 : 0
-          const currentOffset = offset
-          const midpoint = currentOffset + percent / 2
-          const midpointRadians = (midpoint / 100) * Math.PI * 2 - Math.PI / 2
-          offset += percent
-
+        {visibleSegmentsWithGeometry.map(({ currentOffset, midpointRadians, percent, segment }) => {
           return (
             <circle
               className="analytics-donut-segment"
@@ -1493,6 +1520,26 @@ function getAnalyticsServiceColor(index: number) {
   return ANALYTICS_SERVICE_COLORS[index % ANALYTICS_SERVICE_COLORS.length]
 }
 
+function getAnalyticsStatusColor(status: string, index: number) {
+  if (status === 'COMPLETED') {
+    return ANALYTICS_STATUS_COLORS.completed
+  }
+
+  if (status === 'SKIPPED') {
+    return ANALYTICS_STATUS_COLORS.skipped
+  }
+
+  if (status === 'WAITING' || status === 'CALLED') {
+    return ANALYTICS_STATUS_COLORS.active
+  }
+
+  if (status === 'DECLINED' || status === 'CANCELLED') {
+    return '#be123c'
+  }
+
+  return getAnalyticsServiceColor(index)
+}
+
 function formatDecimal(value: number, fractionDigits = 1) {
   return value.toLocaleString('ru-RU', {
     maximumFractionDigits: fractionDigits,
@@ -1694,6 +1741,69 @@ function buildTicketDistribution<T extends string>(
   })
 
   return [...rowsByKey.values()].sort((firstItem, secondItem) => secondItem.value - firstItem.value)
+}
+
+function getTicketEventStatusLabel(status: string) {
+  return ticketEventStatusLabels[status] ?? getTicketStatusLabel(status)
+}
+
+function getTicketEventActionStatus(ticketEvent: TicketEventItem) {
+  if (ticketEvent.ticket_id === null || ticketEvent.event_type === 'OPERATOR_STATUS_CHANGED') {
+    return null
+  }
+
+  if (ticketEvent.event_type === 'TICKET_DECLINED') {
+    return 'DECLINED'
+  }
+
+  if (ticketEvent.new_status === null) {
+    return null
+  }
+
+  if (ticketEvent.event_type === 'TICKET_CREATED') {
+    return ticketEvent.new_status
+  }
+
+  if (
+    ticketEvent.event_type === 'TICKET_CALLED' ||
+    ticketEvent.event_type === 'TICKET_COMPLETED' ||
+    ticketEvent.event_type === 'TICKET_SKIPPED'
+  ) {
+    return ticketEvent.new_status
+  }
+
+  if (ticketEvent.old_status !== ticketEvent.new_status) {
+    return ticketEvent.new_status
+  }
+
+  return null
+}
+
+function buildTicketEventStatusDistribution(ticketEvents: TicketEventItem[]) {
+  const rowsByStatus = new Map<string, AnalyticsDistributionItem>()
+
+  ticketEvents.forEach((ticketEvent) => {
+    const status = getTicketEventActionStatus(ticketEvent)
+
+    if (status === null) {
+      return
+    }
+
+    const current = rowsByStatus.get(status)
+
+    if (current) {
+      current.value += 1
+      return
+    }
+
+    rowsByStatus.set(status, {
+      id: status,
+      label: getTicketEventStatusLabel(status),
+      value: 1,
+    })
+  })
+
+  return [...rowsByStatus.values()].sort((firstItem, secondItem) => secondItem.value - firstItem.value)
 }
 
 function distributionToPieSegments(
@@ -3586,15 +3696,16 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const generalProgramPieSegments = distributionToPieSegments(generalProgramRows, generalTicketsTotal)
   const generalOperatorPieSegments = distributionToPieSegments(generalOperatorRows, generalTicketsTotal)
   const generalStatusPieSegments = generalStatusRows.map((item, index) => ({
-    color:
-      item.id === 'COMPLETED'
-        ? ANALYTICS_STATUS_COLORS.completed
-        : item.id === 'SKIPPED'
-          ? ANALYTICS_STATUS_COLORS.skipped
-          : item.id === 'WAITING' || item.id === 'CALLED'
-            ? ANALYTICS_STATUS_COLORS.active
-            : getAnalyticsServiceColor(index),
+    color: getAnalyticsStatusColor(item.id, index),
     detail: `${generalTicketsTotal > 0 ? Math.round((item.value / generalTicketsTotal) * 100) : 0}% от всех талонов`,
+    label: item.label,
+    value: item.value,
+  }))
+  const generalEventStatusRows = buildTicketEventStatusDistribution(ticketEvents)
+  const generalEventStatusActionsTotal = generalEventStatusRows.reduce((total, item) => total + item.value, 0)
+  const generalEventStatusPieSegments = generalEventStatusRows.map((item, index) => ({
+    color: getAnalyticsStatusColor(item.id, index),
+    detail: `${generalEventStatusActionsTotal > 0 ? Math.round((item.value / generalEventStatusActionsTotal) * 100) : 0}% от действий талонов`,
     label: item.label,
     value: item.value,
   }))
@@ -4825,6 +4936,49 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         title="Талоны по операторам"
                         total={generalTicketsTotal}
                       />
+                    </div>
+
+                    <div className="analytics-event-status-panel">
+                      <div className="analytics-card-header">
+                        <div>
+                          <span className="profile-label">История талонов</span>
+                          <h3>Статусы по действиям</h3>
+                        </div>
+                        <span className="analytics-status">{generalEventStatusActionsTotal} действий</span>
+                      </div>
+
+                      {generalEventStatusActionsTotal === 0 ? (
+                        <div className="analytics-empty">В истории талонов пока нет действий со статусами</div>
+                      ) : (
+                        <div className="analytics-event-status-content">
+                          <AnalyticsDonutChart
+                            centerLabel="действий"
+                            centerValue={generalEventStatusActionsTotal}
+                            segments={generalEventStatusPieSegments}
+                            total={generalEventStatusActionsTotal}
+                          />
+                          <div className="analytics-event-status-list">
+                            {generalEventStatusRows.map((item, index) => {
+                              const percent =
+                                generalEventStatusActionsTotal > 0
+                                  ? Math.round((item.value / generalEventStatusActionsTotal) * 100)
+                                  : 0
+
+                              return (
+                                <div className="analytics-event-status-row" key={item.id}>
+                                  <span
+                                    className="analytics-service-legend-dot"
+                                    style={{ background: getAnalyticsStatusColor(item.id, index) }}
+                                  />
+                                  <strong>{item.label}</strong>
+                                  <span>{item.value} действий</span>
+                                  <span>{percent}%</span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
