@@ -71,7 +71,6 @@ type AnalyticsDistributionItem = {
 type TicketEventActionBreakdownRow = {
   id: string
   label: string
-  statusCounts: Record<string, number>
   total: number
 }
 type ApplicantReportStageId =
@@ -151,7 +150,6 @@ const ANALYTICS_STATUS_COLORS = {
   skipped: '#b45309',
   active: '#2563eb',
 }
-const TICKET_EVENT_ACTION_STATUS_ORDER = ['CALLED', 'COMPLETED', 'SKIPPED', 'DECLINED', 'CANCELLED']
 const WAITING_TICKET_EVENT_STATUSES = new Set(['WAITING'])
 const APPLICANT_REPORT_STAGE_DEFINITIONS: Array<{
   color: string
@@ -641,19 +639,47 @@ function AnalyticsDonutPanel({
   )
 }
 
-function TicketEventActionBreakdownPanel({
+function AnalyticsDonutLegend({
+  segments,
+  total,
+}: {
+  segments: AnalyticsPieSegment[]
+  total: number
+}) {
+  const visibleSegments = segments.filter((segment) => segment.value > 0)
+
+  if (visibleSegments.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="analytics-donut-legend">
+      {visibleSegments.map((segment) => (
+        <div className="analytics-donut-legend-item" key={segment.label}>
+          <span className="analytics-service-legend-dot" style={{ background: segment.color }} />
+          <strong>{segment.label}</strong>
+          <span>
+            {segment.value} · {total > 0 ? Math.round((segment.value / total) * 100) : 0}%
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TicketEventActionDonutPanel({
   emptyLabel,
-  rows,
+  segments,
   title,
   total,
 }: {
   emptyLabel: string
-  rows: TicketEventActionBreakdownRow[]
+  segments: AnalyticsPieSegment[]
   title: string
   total: number
 }) {
   return (
-    <div className="analytics-event-breakdown-panel">
+    <div className="analytics-event-donut-panel">
       <div className="analytics-card-header">
         <div>
           <span className="profile-label">Действия без ожидания</span>
@@ -662,26 +688,17 @@ function TicketEventActionBreakdownPanel({
         <span className="analytics-status">{total} действий</span>
       </div>
 
-      {rows.length === 0 ? (
+      {segments.length === 0 ? (
         <div className="analytics-empty">{emptyLabel}</div>
       ) : (
-        <div className="analytics-event-breakdown-list">
-          {rows.map((row) => (
-            <div className="analytics-event-breakdown-row" key={row.id}>
-              <div className="analytics-event-breakdown-title">
-                <strong>{row.label}</strong>
-                <span>{row.total} действий</span>
-              </div>
-              <div className="analytics-event-breakdown-statuses">
-                {getTicketEventActionStatusRows(row.statusCounts).map((statusRow, index) => (
-                  <span className="analytics-event-status-chip" key={statusRow.id}>
-                    <i style={{ background: getAnalyticsStatusColor(statusRow.id, index) }} />
-                    {statusRow.label}: {statusRow.value}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
+        <div className="analytics-event-donut-content">
+          <AnalyticsDonutChart
+            centerLabel="действий"
+            centerValue={total}
+            segments={segments}
+            total={total}
+          />
+          <AnalyticsDonutLegend segments={segments} total={total} />
         </div>
       )}
     </div>
@@ -1880,16 +1897,12 @@ function buildTicketEventActionBreakdown(
 
     if (current) {
       current.total += 1
-      current.statusCounts[status] = (current.statusCounts[status] ?? 0) + 1
       return
     }
 
     rowsByGroup.set(group.id, {
       id: group.id,
       label: group.label,
-      statusCounts: {
-        [status]: 1,
-      },
       total: 1,
     })
   })
@@ -1898,19 +1911,6 @@ function buildTicketEventActionBreakdown(
     (firstItem, secondItem) =>
       secondItem.total - firstItem.total || firstItem.label.localeCompare(secondItem.label, 'ru-RU'),
   )
-}
-
-function getTicketEventActionStatusRows(statusCounts: Record<string, number>) {
-  const knownStatuses = TICKET_EVENT_ACTION_STATUS_ORDER.filter((status) => (statusCounts[status] ?? 0) > 0)
-  const extraStatuses = Object.keys(statusCounts)
-    .filter((status) => !TICKET_EVENT_ACTION_STATUS_ORDER.includes(status))
-    .sort((firstStatus, secondStatus) => firstStatus.localeCompare(secondStatus))
-
-  return [...knownStatuses, ...extraStatuses].map((status) => ({
-    id: status,
-    label: getTicketEventStatusLabel(status),
-    value: statusCounts[status] ?? 0,
-  }))
 }
 
 function distributionToPieSegments(
@@ -3857,6 +3857,18 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   )
   const generalEventOperatorActionsTotal = generalEventOperatorRows.reduce((total, item) => total + item.total, 0)
   const generalEventProgramActionsTotal = generalEventProgramRows.reduce((total, item) => total + item.total, 0)
+  const generalEventOperatorPieSegments = generalEventOperatorRows.map((item, index) => ({
+    color: getAnalyticsServiceColor(index),
+    detail: `${generalEventOperatorActionsTotal > 0 ? Math.round((item.total / generalEventOperatorActionsTotal) * 100) : 0}% от действий без ожидания`,
+    label: item.label,
+    value: item.total,
+  }))
+  const generalEventProgramPieSegments = generalEventProgramRows.map((item, index) => ({
+    color: getAnalyticsServiceColor(index),
+    detail: `${generalEventProgramActionsTotal > 0 ? Math.round((item.total / generalEventProgramActionsTotal) * 100) : 0}% от действий без ожидания`,
+    label: item.label,
+    value: item.total,
+  }))
   const selectedDailyAnalyticsRows =
     analyticsTimeGrouping === 'month'
       ? buildMonthlyAnalyticsRange(selectedRawDailyAnalyticsRows, analyticsDateFrom, analyticsDateTo)
@@ -5129,16 +5141,16 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       )}
                     </div>
 
-                    <div className="analytics-event-breakdown-grid">
-                      <TicketEventActionBreakdownPanel
+                    <div className="analytics-event-donut-grid">
+                      <TicketEventActionDonutPanel
                         emptyLabel="Нет действий талонов по операторам без ожидания"
-                        rows={generalEventOperatorRows}
+                        segments={generalEventOperatorPieSegments}
                         title="Действия по операторам"
                         total={generalEventOperatorActionsTotal}
                       />
-                      <TicketEventActionBreakdownPanel
+                      <TicketEventActionDonutPanel
                         emptyLabel="Нет действий талонов по образовательным программам без ожидания"
-                        rows={generalEventProgramRows}
+                        segments={generalEventProgramPieSegments}
                         title="Действия по образовательным программам"
                         total={generalEventProgramActionsTotal}
                       />
