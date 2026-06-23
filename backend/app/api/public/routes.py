@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import TicketStatus
 from app.dependencies.db import get_db
+from app.models.service import Service
 from app.models.ticket import Ticket
 from app.schemas.education import EducationalProgramResponse
 from app.schemas.service import ServiceResponse
@@ -60,13 +61,17 @@ async def get_public_queue_display(
 
     serving_query = (
         select(Ticket)
+        .join(Service, Service.id == Ticket.service_id)
         .where(Ticket.status == TicketStatus.CALLED.value)
+        .where(Service.requires_reception_desk.is_(False))
         .order_by(Ticket.called_at.desc().nullslast(), Ticket.created_at.desc())
         .limit(6)
     )
     next_query = (
         select(Ticket)
+        .join(Service, Service.id == Ticket.service_id)
         .where(Ticket.status == TicketStatus.WAITING.value)
+        .where(Service.requires_reception_desk.is_(False))
         .order_by(Ticket.priority.desc(), Ticket.created_at.asc())
     )
 

@@ -19,6 +19,7 @@ import {
   type OperatorDailyAnalyticsItem,
   type OperatorTicketAnalyticsItem,
   type ReceptionTickets,
+  type TicketCreatePayload,
   type TicketItem,
   type TicketEventItem,
   type TicketEventPayload,
@@ -113,6 +114,12 @@ type DeleteTarget = {
   id: number | string
   label: string
 }
+type TicketCreateFormState = {
+  service_id: string
+  educational_program_id: string
+  study_language: StudyLanguage | ''
+  service_language: ServiceLanguage | ''
+}
 
 const LANG_STORAGE_KEY = 'queueflow-language'
 const MY_WINDOW_PAGE_SIZE = 10
@@ -177,7 +184,14 @@ const emptyService: ServicePayload = {
   is_active: true,
   requires_educational_program: false,
   requires_reception_desk: false,
+  reception_window_id: null,
   requires_service_language: false,
+}
+const emptyTicketCreateForm: TicketCreateFormState = {
+  service_id: '',
+  educational_program_id: '',
+  study_language: '',
+  service_language: '',
 }
 const emptyWindow: WindowPayload = { name: '', floor: '', status: 'OPEN', current_operator_id: null }
 const emptyUser: UserPayload = {
@@ -1853,6 +1867,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [receptionRefreshing, setReceptionRefreshing] = useState(false)
   const [receptionError, setReceptionError] = useState('')
   const [selectedReceptionTicket, setSelectedReceptionTicket] = useState<TicketItem | null>(null)
+  const [ticketCreateModalOpen, setTicketCreateModalOpen] = useState(false)
+  const [ticketCreateForm, setTicketCreateForm] = useState<TicketCreateFormState>(emptyTicketCreateForm)
   const [acceptIin, setAcceptIin] = useState('')
   const [acceptStudyLanguage, setAcceptStudyLanguage] = useState<StudyLanguage | ''>('')
   const [ticketActionSaving, setTicketActionSaving] = useState(false)
@@ -2559,6 +2575,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setFormModal(section)
   }
 
+  function closeTicketCreateModal() {
+    setTicketCreateModalOpen(false)
+    setTicketCreateForm(emptyTicketCreateForm)
+  }
+
   async function submitService(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
@@ -2613,6 +2634,60 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await loadAdminData()
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить окно')
+    }
+  }
+
+  async function submitTicketCreate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError('')
+    setReceptionError('')
+
+    const selectedService = services.find((service) => String(service.id) === ticketCreateForm.service_id)
+    const selectedProgram = educationalPrograms.find(
+      (program) => String(program.id) === ticketCreateForm.educational_program_id,
+    )
+
+    if (!selectedService) {
+      setError('Выберите услугу')
+      return
+    }
+
+    if (selectedService.requires_educational_program && !selectedProgram) {
+      setError('Для этой услуги нужно выбрать образовательную программу')
+      return
+    }
+
+    if (selectedProgram?.requires_service_language && !ticketCreateForm.study_language) {
+      setError('Для выбранной ОП нужно выбрать язык обучения')
+      return
+    }
+
+    if (selectedService.requires_service_language && !ticketCreateForm.service_language) {
+      setError('Для этой услуги нужно выбрать язык обслуживания')
+      return
+    }
+
+    const payload: TicketCreatePayload = {
+      service_id: selectedService.id,
+      educational_program_id: selectedService.requires_educational_program ? selectedProgram?.id ?? null : null,
+      study_language: selectedProgram?.requires_service_language ? ticketCreateForm.study_language || null : null,
+      service_language: selectedService.requires_service_language ? ticketCreateForm.service_language || null : null,
+    }
+
+    try {
+      await adminApi.tickets.create(payload)
+      closeTicketCreateModal()
+      setReceptionPage(1)
+
+      if (activeSection === 'reception') {
+        await loadReceptionData({ silent: true })
+      }
+
+      if (activeSection === 'myWindow') {
+        await loadMyWindowData({ animate: true, silent: true })
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось создать талон')
     }
   }
 
@@ -3659,6 +3734,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const activeServices = services.filter((service) => service.is_active)
   const receptionServices = activeServices.filter((service) => service.requires_reception_desk)
   const activeEducationalPrograms = educationalPrograms.filter((program) => program.is_active)
+  const selectedTicketCreateService = activeServices.find(
+    (service) => String(service.id) === ticketCreateForm.service_id,
+  )
+  const selectedTicketCreateProgram = activeEducationalPrograms.find(
+    (program) => String(program.id) === ticketCreateForm.educational_program_id,
+  )
   const selectedReassignService = services.find((service) => String(service.id) === reassignServiceId)
   const selectedReassignProgram = educationalPrograms.find((program) => String(program.id) === reassignProgramId)
   const selectedReassignProgramRequiresLanguage = Boolean(selectedReassignProgram?.requires_service_language)
@@ -4021,6 +4102,14 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         {activeSection === 'reception' && (
           <section className="admin-panel tab-panel" key="reception">
             <div className="dashboard-toolbar">
+              <button
+                className="primary-action compact"
+                type="button"
+                onClick={() => setTicketCreateModalOpen(true)}
+              >
+                <Icon name="plus" />
+                Создать талон
+              </button>
               <input
                 className="toolbar-input"
                 placeholder="Поиск по талону, ИИН, услуге или ОП"
@@ -4347,7 +4436,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         {activeSection === 'services' && (
           <section className="admin-panel tab-panel" key="services">
             <CrudTable
-              columns={['ID', 'Название (RU)', 'Название (KZ)', 'Название (EN)', 'Код', 'Приоритет', 'Обр. программа', 'Регистратура', 'Статус', 'Действия']}
+              columns={['ID', 'Название (RU)', 'Название (KZ)', 'Название (EN)', 'Код', 'Приоритет', 'Обр. программа', 'Язык обслуживания', 'Регистратура', 'Статус', 'Действия']}
               loading={loading}
               rows={services.map((service) => [
                 service.id,
@@ -4373,6 +4462,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       is_active: service.is_active,
                       requires_educational_program: service.requires_educational_program,
                       requires_reception_desk: service.requires_reception_desk,
+                      reception_window_id: null,
                       requires_service_language: service.requires_service_language,
                     })
                     setFormModal('services')
@@ -5249,6 +5339,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                     setServiceForm({
                       ...serviceForm,
                       requires_reception_desk: event.target.checked,
+                      reception_window_id: null,
                     })
                   }
                 />
@@ -5770,6 +5861,96 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               />
             </form>
           )}
+        </AdminModal>
+      )}
+
+      {ticketCreateModalOpen && (
+        <AdminModal title="Создать талон" onClose={closeTicketCreateModal}>
+          <form className="admin-form modal-form" onSubmit={submitTicketCreate}>
+            <select
+              required
+              value={ticketCreateForm.service_id}
+              onChange={(event) =>
+                setTicketCreateForm({
+                  ...ticketCreateForm,
+                  service_id: event.target.value,
+                  educational_program_id: '',
+                  study_language: '',
+                  service_language: '',
+                })
+              }
+            >
+              <option value="">Выберите услугу</option>
+              {activeServices.map((service) => (
+                <option value={service.id} key={service.id}>
+                  {service.name} ({service.code})
+                </option>
+              ))}
+            </select>
+
+            {selectedTicketCreateService?.requires_educational_program && (
+              <select
+                required
+                value={ticketCreateForm.educational_program_id}
+                onChange={(event) =>
+                  setTicketCreateForm({
+                    ...ticketCreateForm,
+                    educational_program_id: event.target.value,
+                    study_language: '',
+                  })
+                }
+              >
+                <option value="">Выберите образовательную программу</option>
+                {activeEducationalPrograms.map((program) => (
+                  <option value={program.id} key={program.id}>
+                    {program.name} ({program.code})
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {selectedTicketCreateProgram?.requires_service_language && (
+              <select
+                required
+                value={ticketCreateForm.study_language}
+                onChange={(event) =>
+                  setTicketCreateForm({
+                    ...ticketCreateForm,
+                    study_language: event.target.value as StudyLanguage | '',
+                  })
+                }
+              >
+                <option value="">Выберите язык обучения</option>
+                {studyLanguageOptions.map((option) => (
+                  <option value={option.value} key={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {selectedTicketCreateService?.requires_service_language && (
+              <select
+                required
+                value={ticketCreateForm.service_language}
+                onChange={(event) =>
+                  setTicketCreateForm({
+                    ...ticketCreateForm,
+                    service_language: event.target.value as ServiceLanguage | '',
+                  })
+                }
+              >
+                <option value="">Выберите язык обслуживания</option>
+                {serviceLanguageOptions.map((option) => (
+                  <option value={option.value} key={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <ModalActions onCancel={closeTicketCreateModal} submitText="Создать талон" />
+          </form>
         </AdminModal>
       )}
 

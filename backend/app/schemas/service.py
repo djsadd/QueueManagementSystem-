@@ -12,6 +12,7 @@ class ServiceBase(BaseModel):
     is_active: bool = True
     requires_educational_program: bool = False
     requires_reception_desk: bool = False
+    reception_window_id: int | None = Field(default=None, gt=0)
     requires_service_language: bool = False
 
 
@@ -28,6 +29,7 @@ class ServiceUpdate(BaseModel):
     is_active: bool | None = None
     requires_educational_program: bool | None = None
     requires_reception_desk: bool | None = None
+    reception_window_id: int | None = Field(default=None, gt=0)
     requires_service_language: bool | None = None
 
 

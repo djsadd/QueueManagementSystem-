@@ -24,6 +24,11 @@ class Service(Base):
 
     requires_reception_desk: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    reception_window_id: Mapped[int | None] = mapped_column(
+        ForeignKey("windows.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     requires_service_language: Mapped[bool] = mapped_column(Boolean, default=False)
 
 

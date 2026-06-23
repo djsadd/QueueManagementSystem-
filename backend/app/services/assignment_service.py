@@ -72,6 +72,10 @@ class AssignmentService:
         ticket: Ticket,
         excluded_operator_ids: set[uuid.UUID] | None = None,
     ) -> Operator | None:
+        service = await db.get(Service, ticket.service_id)
+        if service is not None and service.requires_reception_desk:
+            return None
+
         excluded_operator_ids = excluded_operator_ids or set()
         candidates = await AssignmentService.get_assignable_operator_profiles(db)
         scored_candidates = [
@@ -117,10 +121,12 @@ class AssignmentService:
 
         result = await db.execute(
             select(Ticket)
+            .join(Service, Service.id == Ticket.service_id)
             .where(
                 Ticket.window_id.is_(None),
                 Ticket.status == TicketStatus.WAITING.value,
                 Ticket.service_id.in_(profile.service_ids),
+                Service.requires_reception_desk.is_(False),
             )
             .order_by(Ticket.priority.desc(), Ticket.created_at.asc())
             .with_for_update(skip_locked=True)

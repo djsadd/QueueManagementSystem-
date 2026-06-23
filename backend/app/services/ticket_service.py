@@ -134,7 +134,6 @@ class TicketService:
             data.service_id,
             data.educational_program_id,
         )
-
         ticket = None
         for attempt in range(5):
             queue_number = await TicketService.build_next_queue_number(
@@ -382,7 +381,7 @@ class TicketService:
         result = await db.execute(select(Window).where(Window.id == operator.window_id))
         window = result.scalar_one_or_none()
 
-        conditions = []
+        conditions = [Service.requires_reception_desk.is_(False)]
         normalized_search = search.strip() if search else ""
 
         if status_filter:
@@ -452,7 +451,13 @@ class TicketService:
         )
         tickets = list(tickets_result.scalars().all())
         global_waiting_count_result = await db.execute(
-            select(func.count(Ticket.id)).where(Ticket.status == TicketStatus.WAITING.value)
+            select(func.count(Ticket.id))
+            .select_from(Ticket)
+            .join(Service, Service.id == Ticket.service_id)
+            .where(
+                Ticket.status == TicketStatus.WAITING.value,
+                Service.requires_reception_desk.is_(False),
+            )
         )
 
         return {
@@ -1226,6 +1231,12 @@ class TicketService:
             "ticket_reassigned",
             {"ticket_id": str(ticket.id)},
         )
+        if ticket.window_id != previous_window_id:
+            await realtime_manager.broadcast_my_window_update(
+                ticket.window_id,
+                "ticket_reassigned",
+                {"ticket_id": str(ticket.id)},
+            )
         await realtime_manager.broadcast_all_my_windows_update(
             "global_waiting_count_changed",
             {"ticket_id": str(ticket.id)},
@@ -1289,6 +1300,12 @@ class TicketService:
             "ticket_reassigned",
             {"ticket_id": str(ticket.id)},
         )
+        if ticket.window_id != previous_window_id:
+            await realtime_manager.broadcast_my_window_update(
+                ticket.window_id,
+                "ticket_reassigned",
+                {"ticket_id": str(ticket.id)},
+            )
         await realtime_manager.broadcast_all_my_windows_update(
             "global_waiting_count_changed",
             {"ticket_id": str(ticket.id)},
@@ -1474,6 +1491,11 @@ class TicketService:
             )
             update_data["academic_degree_id"] = academic_degree_id
             update_data["routing_key"] = routing_key
+
+            if "service_id" in update_data and "window_id" not in update_data:
+                update_data["operator_id"] = None
+                update_data["window_id"] = None
+                update_data["assignment_score"] = None
 
         if update_data.get("applicant_id") is not None:
             await TicketService.ensure_applicant_exists(db, update_data["applicant_id"])

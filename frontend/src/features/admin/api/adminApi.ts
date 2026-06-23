@@ -10,6 +10,7 @@ export type ServiceItem = {
   is_active: boolean
   requires_educational_program: boolean
   requires_reception_desk: boolean
+  reception_window_id: number | null
   requires_service_language: boolean
 }
 
@@ -302,6 +303,13 @@ export type TicketServiceReassignPayload = {
   service_language?: ServiceLanguage | null
 }
 
+export type TicketCreatePayload = {
+  service_id: number
+  educational_program_id?: number | null
+  study_language?: StudyLanguage | null
+  service_language?: ServiceLanguage | null
+}
+
 export type TicketStudyLanguagePayload = {
   study_language: StudyLanguage | null
 }
@@ -330,6 +338,8 @@ export const adminApi = {
       request<MyWindowTickets>('/tickets/my-window/window-status', { method: 'PATCH', body: { status } }),
     callNextMyTicket: () =>
       request<TicketItem>('/tickets/my-window/next', { method: 'PATCH' }),
+    create: (payload: TicketCreatePayload) =>
+      request<TicketItem>('/tickets/', { method: 'POST', body: payload }),
     acceptMyTicket: (id: string, payload: TicketAcceptPayload) =>
       request<TicketItem>(`/tickets/my-window/${id}/accept`, { method: 'PATCH', body: payload }),
     completeMyTicket: (id: string) =>
