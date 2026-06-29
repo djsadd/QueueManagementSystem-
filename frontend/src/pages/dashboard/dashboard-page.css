@@ -1164,6 +1164,7 @@
 }
 
 .analytics-general-section {
+  gap: 12px;
   order: 2;
 }
 
@@ -1298,12 +1299,12 @@
 
 .applicant-report-panel {
   display: grid;
-  gap: 14px;
+  gap: 10px;
   border: 1px solid #e1e5eb;
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 1px 4px rgba(16, 24, 40, 0.12);
-  padding: 16px;
+  padding: 14px;
 }
 
 .applicant-report-panel h3 {
@@ -1378,8 +1379,8 @@
 
 .applicant-funnel-visual {
   display: grid;
-  width: min(100%, 760px);
-  gap: 22px;
+  width: min(100%, 620px);
+  gap: 12px;
   justify-self: center;
   border: 1px solid #e1e5eb;
   border-radius: 8px;
@@ -1389,19 +1390,24 @@
     linear-gradient(#edf0f4 1px, transparent 1px),
     linear-gradient(90deg, #edf0f4 1px, transparent 1px);
   background-size: auto, 100% 82px, 128px 100%;
-  padding: 24px 28px;
+  padding: 18px 20px;
 }
 
 .applicant-funnel-step {
   display: grid;
-  gap: 8px;
-  justify-items: center;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  justify-items: stretch;
 }
 
 .applicant-funnel-block {
   display: grid;
-  min-width: 52px;
-  height: 74px;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 44px;
+  height: 48px;
+  justify-self: center;
   place-items: center;
   color: #ffffff;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.14);
@@ -1414,17 +1420,19 @@
 
 .applicant-funnel-block strong {
   color: #ffffff;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 900;
   line-height: 1;
 }
 
 .applicant-funnel-caption {
   display: grid;
-  max-width: min(100%, 520px);
+  grid-column: 1;
+  grid-row: 1;
+  max-width: 100%;
   gap: 3px;
-  justify-items: center;
-  text-align: center;
+  justify-items: start;
+  text-align: left;
 }
 
 .applicant-funnel-caption strong {
@@ -1579,13 +1587,13 @@
 .analytics-general-donut-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(180px, 1fr));
-  gap: 20px;
+  gap: 14px;
   align-items: start;
   border: 1px solid #e1e5eb;
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 1px 4px rgba(16, 24, 40, 0.12);
-  padding: 20px;
+  padding: 16px;
 }
 
 .analytics-general-donut-grid .analytics-chart-block {
@@ -1599,7 +1607,7 @@
 .analytics-event-donut-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(180px, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 
 .analytics-event-donut-panel {
@@ -3043,16 +3051,29 @@
   }
 
   .applicant-funnel-visual {
-    gap: 18px;
-    padding: 18px 14px;
+    gap: 10px;
+    padding: 14px 12px;
+  }
+
+  .applicant-funnel-step {
+    grid-template-columns: minmax(126px, 0.85fr) minmax(0, 1fr);
+    gap: 10px;
   }
 
   .applicant-funnel-block {
-    height: 62px;
+    height: 42px;
   }
 
   .applicant-funnel-caption {
     max-width: 100%;
+  }
+
+  .applicant-funnel-caption strong {
+    font-size: 12px;
+  }
+
+  .applicant-funnel-caption span {
+    font-size: 11px;
   }
 
   .analytics-master {
