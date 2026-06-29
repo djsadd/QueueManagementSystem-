@@ -1785,9 +1785,9 @@
   align-items: end;
 }
 
-.analytics-grouping-toggle {
+.analytics-grouping-toggle,
+.analytics-month-filter {
   display: inline-grid;
-  grid-template-columns: repeat(2, 1fr);
   overflow: hidden;
   align-self: end;
   border: 1px solid #d8dee8;
@@ -1795,7 +1795,16 @@
   background: #ffffff;
 }
 
-.analytics-grouping-toggle button {
+.analytics-grouping-toggle {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.analytics-month-filter {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.analytics-grouping-toggle button,
+.analytics-month-filter button {
   min-height: 40px;
   border: 0;
   background: transparent;
@@ -1807,11 +1816,13 @@
   padding: 0 14px;
 }
 
-.analytics-grouping-toggle button + button {
+.analytics-grouping-toggle button + button,
+.analytics-month-filter button + button {
   border-left: 1px solid #d8dee8;
 }
 
-.analytics-grouping-toggle button.selected {
+.analytics-grouping-toggle button.selected,
+.analytics-month-filter button.selected {
   background: #9a002d;
   color: #ffffff;
 }

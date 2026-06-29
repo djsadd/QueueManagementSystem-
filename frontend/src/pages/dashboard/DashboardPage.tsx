@@ -183,6 +183,11 @@ const APPLICANT_REPORT_HEADER_ALIASES = {
   iin: ['иин', 'жсн', 'iin', 'иин абитуриента', 'жсн абитуриента'],
   status: ['статус', 'статус заявления'],
 }
+const ANALYTICS_QUICK_MONTHS = [
+  { label: 'Июнь', month: 6 },
+  { label: 'Июль', month: 7 },
+  { label: 'Август', month: 8 },
+]
 const languages = ['ru', 'kk', 'en'] as const
 const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
   { value: 'KAZAKH', label: 'KAZ' },
@@ -1673,6 +1678,13 @@ function getDefaultSummerDateRange() {
   }
 }
 
+function getAnalyticsMonthDateRange(year: number, month: number) {
+  return {
+    from: formatDateInputValue(new Date(year, month - 1, 1)),
+    to: formatDateInputValue(new Date(year, month, 0)),
+  }
+}
+
 function buildDailyAnalyticsRange(days: OperatorDailyAnalyticsItem[], from: string, to: string) {
   const fromDate = parseDateInputValue(from)
   const toDate = parseDateInputValue(to)
@@ -2055,7 +2067,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [analyticsDateTo, setAnalyticsDateTo] = useState(() => getDefaultSummerDateRange().to)
   const [analyticsTimeGrouping, setAnalyticsTimeGrouping] = useState<AnalyticsTimeGrouping>('day')
   const [selectedAnalyticsOperatorId, setSelectedAnalyticsOperatorId] = useState<AnalyticsSelection>(() =>
-    isAdminUser ? getAnalyticsSelectionFromPath() : null,
+    isAdminUser && getSectionFromPath() === 'analytics' ? getAnalyticsSelectionFromPath() ?? 'general' : null,
   )
   const [myWindowTickets, setMyWindowTickets] = useState<MyWindowTickets | null>(null)
   const [myWindowRealtimeStatus, setMyWindowRealtimeStatus] =
@@ -2172,7 +2184,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
       const nextSection = getSectionFromPath()
       setActiveSection(nextSection)
-      setSelectedAnalyticsOperatorId(nextSection === 'analytics' ? getAnalyticsSelectionFromPath() : null)
+      setSelectedAnalyticsOperatorId(nextSection === 'analytics' ? getAnalyticsSelectionFromPath() ?? 'general' : null)
     }
 
     window.addEventListener('popstate', syncSectionFromPath)
@@ -2202,6 +2214,34 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     if (sectionPath !== currentPath) {
       window.history.pushState(null, '', sectionPath)
     }
+  }
+
+  function getAnalyticsFilterYear() {
+    return (
+      parseDateInputValue(analyticsDateFrom)?.getFullYear() ??
+      parseDateInputValue(analyticsDateTo)?.getFullYear() ??
+      new Date().getFullYear()
+    )
+  }
+
+  function selectAnalyticsMonth(month: number) {
+    const monthRange = getAnalyticsMonthDateRange(getAnalyticsFilterYear(), month)
+    setAnalyticsDateFrom(monthRange.from)
+    setAnalyticsDateTo(monthRange.to)
+  }
+
+  function getSelectedAnalyticsMonth() {
+    const fromDate = parseDateInputValue(analyticsDateFrom)
+    const toDate = parseDateInputValue(analyticsDateTo)
+
+    if (!fromDate || !toDate || fromDate.getFullYear() !== toDate.getFullYear()) {
+      return null
+    }
+
+    const month = fromDate.getMonth() + 1
+    const monthRange = getAnalyticsMonthDateRange(fromDate.getFullYear(), month)
+
+    return analyticsDateFrom === monthRange.from && analyticsDateTo === monthRange.to ? month : null
   }
 
   function selectProfileService(serviceId: number, checked: boolean) {
@@ -4101,6 +4141,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   })
   const filteredMyWindowTickets = sortMyWindowTickets(myWindowTicketList.filter(isActiveMyWindowTicket))
   const filteredReceptionTickets = sortReceptionTickets(receptionTicketList.filter(isActiveMyWindowTicket))
+  const selectedAnalyticsMonth = getSelectedAnalyticsMonth()
   const dashboardClassName = [
     'dashboard-layout',
     sidebarCollapsed ? 'sidebar-collapsed' : '',
@@ -4148,11 +4189,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           {navSections.map((section) => (
             <a
               className={activeSection === section ? 'nav-item active' : 'nav-item'}
-              href={buildSectionPath(lang, section)}
+              href={buildSectionPath(lang, section, section === 'analytics' ? 'general' : null)}
               key={section}
               onClick={(event) => {
                 event.preventDefault()
-                navigateToSection(section)
+                navigateToSection(section, section === 'analytics' ? 'general' : null)
               }}
             >
               <Icon
@@ -5126,17 +5167,18 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                             onChange={(event) => setAnalyticsDateTo(event.target.value)}
                           />
                         </label>
-                        <button
-                          className="secondary-action compact"
-                          type="button"
-                          onClick={() => {
-                            const summerRange = getDefaultSummerDateRange()
-                            setAnalyticsDateFrom(summerRange.from)
-                            setAnalyticsDateTo(summerRange.to)
-                          }}
-                        >
-                          Лето
-                        </button>
+                        <div className="analytics-month-filter" role="group" aria-label="Быстрый выбор месяца">
+                          {ANALYTICS_QUICK_MONTHS.map((monthOption) => (
+                            <button
+                              className={selectedAnalyticsMonth === monthOption.month ? 'selected' : ''}
+                              key={monthOption.month}
+                              type="button"
+                              onClick={() => selectAnalyticsMonth(monthOption.month)}
+                            >
+                              {monthOption.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                       {generalDailyAnalyticsRows.length === 0 ? (
                         <div className="analytics-empty">{generalDailyAnalyticsEmptyLabel}</div>
@@ -5406,17 +5448,18 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                           onChange={(event) => setAnalyticsDateTo(event.target.value)}
                         />
                       </label>
-                      <button
-                        className="secondary-action compact"
-                        type="button"
-                        onClick={() => {
-                          const summerRange = getDefaultSummerDateRange()
-                          setAnalyticsDateFrom(summerRange.from)
-                          setAnalyticsDateTo(summerRange.to)
-                        }}
-                      >
-                        Лето
-                      </button>
+                      <div className="analytics-month-filter" role="group" aria-label="Быстрый выбор месяца">
+                        {ANALYTICS_QUICK_MONTHS.map((monthOption) => (
+                          <button
+                            className={selectedAnalyticsMonth === monthOption.month ? 'selected' : ''}
+                            key={monthOption.month}
+                            type="button"
+                            onClick={() => selectAnalyticsMonth(monthOption.month)}
+                          >
+                            {monthOption.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                     {selectedDailyAnalyticsRows.length === 0 ? (
                       <div className="analytics-empty">{selectedDailyAnalyticsEmptyLabel}</div>
