@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent, FormEvent, MouseEvent, ReactNode } from 'react'
+import type { ChangeEvent, FormEvent, MouseEvent } from 'react'
 import {
   adminApi,
   type AcademicDegreeItem,
@@ -36,20 +36,54 @@ import { env } from '../../shared/config/env'
 import { refreshAuthTokens } from '../../shared/api/httpClient'
 import { tokenStorage } from '../../shared/lib/tokenStorage'
 import logoUrl from '../../assets/Logo+RGB.png'
+import {
+  loadAdminCrudPageData,
+  loadAdminProfilePageData,
+  type AdminDashboardPageData,
+} from './dashboard-loaders'
+import { AdminModal } from './components/AdminModal'
+import { CrudTable } from './components/CrudTable'
+import { ModalActions } from './components/ModalActions'
+import {
+  boolLabel,
+  getDegreeLabel,
+  getUserLabel,
+  getWindowLabel,
+  operatorStatusLabels,
+} from './dashboard-formatters'
+import {
+  ANALYTICS_SELECTION_STORAGE_KEY,
+  LANG_STORAGE_KEY,
+  buildAnalyticsDataScopeKey,
+  buildOperatorDisplayPath,
+  buildSectionPath,
+  canUseOperatorSection,
+  getAnalyticsSelectionFromPath,
+  getInitialAnalyticsSelection,
+  getInitialLang,
+  getSavedAnalyticsSelection,
+  getSectionFromPath,
+  isCrudSection,
+  isSpecificAnalyticsOperatorSelection,
+  languages,
+  sectionLabels,
+  type AnalyticsSelection,
+  type CrudSection,
+  type DashboardSection,
+  type Lang,
+} from './dashboard-routing'
+import {
+  AcademicDegreesRoute,
+  ApplicantsRoute,
+  EducationalProgramsRoute,
+  OperatorsRoute,
+  ServicesRoute,
+  TicketEventsRoute,
+  UsersRoute,
+  WindowsRoute,
+} from './routes'
 import './dashboard-page.css'
 
-type Lang = 'ru' | 'kk' | 'en'
-type CrudSection =
-  | 'services'
-  | 'windows'
-  | 'users'
-  | 'operators'
-  | 'academicDegrees'
-  | 'educationalPrograms'
-  | 'applicants'
-  | 'ticketEvents'
-type DashboardSection = CrudSection | 'profile' | 'myWindow' | 'analytics' | 'reception'
-type AnalyticsSelection = 'general' | string | null
 type MyWindowRealtimeStatus = 'connecting' | 'connected' | 'disconnected'
 type MyWindowTicketHighlight = 'new' | 'updated'
 type AnalyticsTimeGrouping = 'day' | 'month'
@@ -144,8 +178,6 @@ type TicketCreateFormState = {
   service_language: ServiceLanguage | ''
 }
 
-const LANG_STORAGE_KEY = 'queueflow-language'
-const ANALYTICS_SELECTION_STORAGE_KEY = 'queueflow-analytics-selection'
 const ANALYTICS_OPERATORS_SELECTION = 'operators'
 const MY_WINDOW_PAGE_SIZE = 10
 const ACTIVE_MY_WINDOW_TICKET_STATUSES = new Set(['WAITING', 'CALLED'])
@@ -198,7 +230,6 @@ const ANALYTICS_QUICK_MONTHS = [
   { label: 'Июль', month: 7 },
   { label: 'Август', month: 8 },
 ]
-const languages = ['ru', 'kk', 'en'] as const
 const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
   { value: 'KAZAKH', label: 'KAZ' },
   { value: 'RUSSIAN', label: 'RUS' },
@@ -261,13 +292,6 @@ const emptyTicketEvent: TicketEventPayload = {
   metadata: null,
 }
 
-const operatorStatusLabels: Record<OperatorStatus, string> = {
-  ONLINE: 'Готов',
-  BUSY: 'Занят',
-  BREAK: 'Отошел',
-  OFFLINE: 'Не работает',
-}
-
 const operatorStatusActions: Array<{ status: OperatorStatus; label: string }> = [
   { status: 'ONLINE', label: 'Готов' },
   { status: 'BUSY', label: 'Занят' },
@@ -309,153 +333,6 @@ const myWindowStatusActions: Array<{ status: WindowStatus; label: string }> = [
   { status: 'BUSY', label: 'Занято' },
   { status: 'CLOSED', label: 'Закрыто' },
 ]
-
-const sectionLabels: Record<DashboardSection, string> = {
-  myWindow: 'Мое окно',
-  reception: 'Регистратура',
-  profile: 'Профиль',
-  services: 'Услуги',
-  windows: 'Окна',
-  users: 'Пользователи',
-  operators: 'Операторы',
-  academicDegrees: 'Академические степени',
-  educationalPrograms: 'Образовательные программы',
-  applicants: 'Абитуриенты',
-  analytics: 'Аналитика',
-  ticketEvents: 'История талонов',
-}
-
-const sectionPaths: Record<DashboardSection, string> = {
-  myWindow: 'my-window',
-  reception: 'reception',
-  profile: 'profile',
-  services: 'services',
-  windows: 'windows',
-  users: 'users',
-  operators: 'operators',
-  academicDegrees: 'academic-degrees',
-  educationalPrograms: 'educational-programs',
-  applicants: 'applicants',
-  analytics: 'analytics',
-  ticketEvents: 'ticket-events',
-}
-
-function isDashboardSection(value: string | undefined): value is DashboardSection {
-  return (
-    value === 'profile' ||
-    value === 'reception' ||
-    value === 'services' ||
-    value === 'windows' ||
-    value === 'users' ||
-    value === 'operators' ||
-    value === 'academic-degrees' ||
-    value === 'educational-programs' ||
-    value === 'applicants' ||
-    value === 'analytics' ||
-    value === 'ticket-events'
-  )
-}
-
-function isLang(value: string | undefined): value is Lang {
-  return languages.includes(value as Lang)
-}
-
-function getInitialLang(): Lang {
-  const pathLang = window.location.pathname.split('/').filter(Boolean)[0]
-
-  if (pathLang === 'kz') {
-    return 'kk'
-  }
-
-  if (isLang(pathLang)) {
-    return pathLang
-  }
-
-  const savedLang = localStorage.getItem(LANG_STORAGE_KEY) ?? undefined
-  return isLang(savedLang) ? savedLang : 'ru'
-}
-
-function getSectionFromPath(): DashboardSection {
-  const pathParts = window.location.pathname.split('/').filter(Boolean)
-  const sectionCandidate = pathParts[pathParts.length - 1]
-
-  if (pathParts.includes('analytics')) {
-    return 'analytics'
-  }
-
-  if (sectionCandidate === 'academic-degrees') {
-    return 'academicDegrees'
-  }
-
-  if (sectionCandidate === 'educational-programs') {
-    return 'educationalPrograms'
-  }
-
-  if (sectionCandidate === 'ticket-events') {
-    return 'ticketEvents'
-  }
-
-  if (sectionCandidate === 'analytics') {
-    return 'analytics'
-  }
-
-  if (sectionCandidate === 'my-window') {
-    return 'myWindow'
-  }
-
-  if (sectionCandidate === 'reception') {
-    return 'reception'
-  }
-
-  return isDashboardSection(sectionCandidate) ? sectionCandidate : 'services'
-}
-
-function getAnalyticsSelectionFromPath(): AnalyticsSelection {
-  const pathParts = window.location.pathname.split('/').filter(Boolean)
-  const analyticsIndex = pathParts.indexOf('analytics')
-
-  if (analyticsIndex === -1) {
-    return null
-  }
-
-  const analyticsSelection = pathParts[analyticsIndex + 1]
-  return analyticsSelection ? decodeURIComponent(analyticsSelection) : null
-}
-
-function getSavedAnalyticsSelection(): AnalyticsSelection {
-  return localStorage.getItem(ANALYTICS_SELECTION_STORAGE_KEY) || null
-}
-
-function getInitialAnalyticsSelection(isAdminUser: boolean): AnalyticsSelection {
-  if (!isAdminUser || getSectionFromPath() !== 'analytics') {
-    return null
-  }
-
-  return getAnalyticsSelectionFromPath() ?? getSavedAnalyticsSelection()
-}
-
-function isSpecificAnalyticsOperatorSelection(selection: AnalyticsSelection) {
-  return selection !== null && selection !== 'general' && selection !== ANALYTICS_OPERATORS_SELECTION
-}
-
-function buildAnalyticsDataScopeKey(selection: AnalyticsSelection, dateFrom: string, dateTo: string) {
-  return selection === null ? null : `${selection}:${dateFrom}:${dateTo}`
-}
-
-function canUseOperatorSection(section: DashboardSection) {
-  return section === 'myWindow' || section === 'profile'
-}
-
-function buildSectionPath(lang: Lang, section: DashboardSection, analyticsSelection: AnalyticsSelection = null) {
-  const analyticsSelectionPath =
-    section === 'analytics' && analyticsSelection ? `/${encodeURIComponent(analyticsSelection)}` : ''
-
-  return `/${lang}/admin/${sectionPaths[section]}${analyticsSelectionPath}${window.location.search}${window.location.hash}`
-}
-
-function buildOperatorDisplayPath(lang: Lang) {
-  return `/${lang}/admin/operator-display?fullscreen=1`
-}
 
 type BrowserScreen = {
   availHeight?: number
@@ -739,10 +616,6 @@ function TicketEventActionDonutPanel({
       )}
     </div>
   )
-}
-
-function boolLabel(value: boolean) {
-  return value ? 'Активно' : 'Выключено'
 }
 
 function AnalyticsDailyLineChart({
@@ -1609,31 +1482,6 @@ function parseStudyLanguage(value: string): StudyLanguage | null {
   return studyLanguageOptions.some((option) => option.value === value) ? (value as StudyLanguage) : null
 }
 
-function getUserLabel(users: UserItem[], userId: string) {
-  const user = users.find((item) => item.id === userId)
-  return user ? `${user.full_name} (${user.email})` : userId
-}
-
-function getWindowLabel(windows: WindowItem[], windowId: number | null) {
-  if (windowId === null) {
-    return 'Не назначено'
-  }
-
-  const windowItem = windows.find((item) => item.id === windowId)
-  return windowItem
-    ? `${windowItem.name}${windowItem.floor ? `, этаж ${windowItem.floor}` : ''} (${windowItem.status})`
-    : String(windowId)
-}
-
-function getOperatorLabel(operators: OperatorItem[], users: UserItem[], operatorId: string | null) {
-  if (operatorId === null) {
-    return 'Не назначен'
-  }
-
-  const operator = operators.find((item) => item.id === operatorId)
-  return operator ? getUserLabel(users, operator.user_id) : operatorId
-}
-
 function getAnalyticsOperatorLabel(
   stats: OperatorTicketAnalyticsItem,
   operator: OperatorItem | undefined,
@@ -2010,39 +1858,8 @@ function distributionToPieSegments(
   }))
 }
 
-function getDegreeLabel(degrees: AcademicDegreeItem[], degreeId: number) {
-  const degree = degrees.find((item) => item.id === degreeId)
-  return degree ? `${degree.name} (${degree.code})` : String(degreeId)
-}
-
 function normalizeChoiceSearch(value: string) {
   return value.trim().toLowerCase()
-}
-
-function getProgramLabels(programs: EducationalProgramItem[], programIds: number[]) {
-  if (programIds.length === 0) {
-    return 'Не выбрано'
-  }
-
-  return programIds
-    .map((programId) => {
-      const program = programs.find((item) => item.id === programId)
-      return program ? program.code : String(programId)
-    })
-    .join(', ')
-}
-
-function getServiceLabels(services: ServiceItem[], serviceIds: number[]) {
-  if (serviceIds.length === 0) {
-    return 'Не выбрано'
-  }
-
-  return serviceIds
-    .map((serviceId) => {
-      const service = services.find((item) => item.id === serviceId)
-      return service ? service.code : String(serviceId)
-    })
-    .join(', ')
 }
 
 function normalizeServiceLanguages(languages: ServiceLanguage[] | undefined) {
@@ -2519,56 +2336,43 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
-  async function loadAdminData() {
-    setLoading(true)
-    setError('')
-    setMyWindowError('')
+  function applyAdminDashboardPageData(data: AdminDashboardPageData) {
+    if (data.services) {
+      setServices(data.services)
+    }
 
-    try {
-      const [
-        serviceRows,
-        windowRows,
-        userRows,
-        operatorRows,
-        degreeRows,
-        programRows,
-        applicantRows,
-        ticketEventRows,
-      ] = await Promise.all([
-        adminApi.services.list(),
-        adminApi.windows.list(),
-        adminApi.users.list(),
-        adminApi.operators.list(),
-        adminApi.academicDegrees.list(),
-        adminApi.educationalPrograms.list(),
-        adminApi.applicants.list(),
-        adminApi.ticketEvents.list(),
-      ])
-      const operatorProgramsRows = await Promise.all(
-        operatorRows.map(async (operator) => ({
-          operatorId: operator.id,
-          programs: await adminApi.operators.programs(operator.id),
-        })),
-      )
-      const operatorServicesRows = await Promise.all(
-        operatorRows.map(async (operator) => ({
-          operatorId: operator.id,
-          services: await adminApi.operators.services(operator.id),
-        })),
-      )
+    if (data.windows) {
+      setWindows(data.windows)
+    }
 
-      setServices(serviceRows)
-      setWindows(windowRows)
-      setUsers(userRows)
-      setOperators(operatorRows)
-      setAcademicDegrees(degreeRows)
-      setEducationalPrograms(programRows)
-      setApplicants(applicantRows)
-      setTicketEvents(ticketEventRows)
-      setAnalyticsBaseLoaded(true)
+    if (data.users) {
+      setUsers(data.users)
+    }
+
+    if (data.operators) {
+      setOperators(data.operators)
+    }
+
+    if (data.academicDegrees) {
+      setAcademicDegrees(data.academicDegrees)
+    }
+
+    if (data.educationalPrograms) {
+      setEducationalPrograms(data.educationalPrograms)
+    }
+
+    if (data.applicants) {
+      setApplicants(data.applicants)
+    }
+
+    if (data.ticketEvents) {
+      setTicketEvents(data.ticketEvents)
+    }
+
+    if (data.operatorProgramsRows) {
       setOperatorProgramIds(
         Object.fromEntries(
-          operatorProgramsRows.map((row) => [
+          data.operatorProgramsRows.map((row) => [
             row.operatorId,
             row.programs.map((program) => program.id),
           ]),
@@ -2576,7 +2380,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       )
       setOperatorProgramLanguages(
         Object.fromEntries(
-          operatorProgramsRows.map((row) => [
+          data.operatorProgramsRows.map((row) => [
             row.operatorId,
             Object.fromEntries(
               row.programs.map((program) => [
@@ -2587,9 +2391,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           ]),
         ),
       )
+    }
+
+    if (data.operatorServicesRows) {
       setOperatorServiceIds(
         Object.fromEntries(
-          operatorServicesRows.map((row) => [
+          data.operatorServicesRows.map((row) => [
             row.operatorId,
             row.services.map((service) => service.id),
           ]),
@@ -2597,7 +2404,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       )
       setOperatorServiceLanguages(
         Object.fromEntries(
-          operatorServicesRows.map((row) => [
+          data.operatorServicesRows.map((row) => [
             row.operatorId,
             Object.fromEntries(
               row.services.map((service) => [
@@ -2608,33 +2415,52 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           ]),
         ),
       )
-      const currentOperator = operatorRows.find((operator) => operator.user_id === currentUserId)
-      const currentOperatorPrograms = operatorProgramsRows.find((row) => row.operatorId === currentOperator?.id)
-      const currentOperatorServices = operatorServicesRows.find((row) => row.operatorId === currentOperator?.id)
-      setProfileProgramIds(currentOperatorPrograms?.programs.map((program) => program.id) ?? [])
-      setProfileProgramLanguages(
-        Object.fromEntries(
-          currentOperatorPrograms?.programs.map((program) => [
-            program.id,
-            normalizeStudyLanguages(program.study_languages),
-          ]) ?? [],
-        ),
-      )
-      setProfileServiceIds(currentOperatorServices?.services.map((service) => service.id) ?? [])
-      setProfileServiceLanguages(
-        Object.fromEntries(
-          currentOperatorServices?.services.map((service) => [
-            service.id,
-            normalizeServiceLanguages(service.service_languages),
-          ]) ?? [],
-        ),
-      )
-      try {
-        applyMyWindowData(await adminApi.tickets.myWindow())
-      } catch (requestError) {
-        myWindowTicketsRef.current = null
-        setMyWindowTickets(null)
-        setMyWindowError(requestError instanceof Error ? requestError.message : 'Мое окно пока не назначено')
+    }
+  }
+
+  async function loadAdminSectionData(section: DashboardSection) {
+    if (section === 'analytics' || section === 'myWindow' || section === 'reception') {
+      return
+    }
+
+    setLoading(true)
+    setError('')
+
+    try {
+      const data =
+        section === 'profile'
+          ? await loadAdminProfilePageData(currentUserId)
+          : isCrudSection(section)
+            ? await loadAdminCrudPageData(section)
+            : null
+
+      if (data) {
+        applyAdminDashboardPageData(data)
+
+        if (section === 'profile') {
+          const currentOperator = data.operators?.find((operator) => operator.user_id === currentUserId)
+          const currentOperatorPrograms = data.operatorProgramsRows?.find((row) => row.operatorId === currentOperator?.id)
+          const currentOperatorServices = data.operatorServicesRows?.find((row) => row.operatorId === currentOperator?.id)
+
+          setProfileProgramIds(currentOperatorPrograms?.programs.map((program) => program.id) ?? [])
+          setProfileProgramLanguages(
+            Object.fromEntries(
+              currentOperatorPrograms?.programs.map((program) => [
+                program.id,
+                normalizeStudyLanguages(program.study_languages),
+              ]) ?? [],
+            ),
+          )
+          setProfileServiceIds(currentOperatorServices?.services.map((service) => service.id) ?? [])
+          setProfileServiceLanguages(
+            Object.fromEntries(
+              currentOperatorServices?.services.map((service) => [
+                service.id,
+                normalizeServiceLanguages(service.service_languages),
+              ]) ?? [],
+            ),
+          )
+        }
       }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить данные')
@@ -2787,19 +2613,21 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setMyWindowError('')
 
     try {
-      const [myWindowRows, serviceRows, programRows] = await Promise.all([
+      const [myWindowRows, serviceRows, programRows, degreeRows] = await Promise.all([
         adminApi.tickets.myWindow({
           page: myWindowPage,
           page_size: MY_WINDOW_PAGE_SIZE,
         }),
         adminApi.operators.availableServices(),
         adminApi.operators.availablePrograms(),
+        adminApi.operators.availableDegrees(),
       ])
 
       applyMyWindowData(myWindowRows, animate)
       setMyWindowPage(myWindowRows.page)
       setServices(serviceRows)
       setEducationalPrograms(programRows)
+      setAcademicDegrees(degreeRows)
     } catch (requestError) {
       if (!silent) {
         myWindowTicketsRef.current = null
@@ -2826,7 +2654,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setReceptionError('')
 
     try {
-      const [receptionRows, serviceRows] = await Promise.all([
+      const [receptionRows, serviceRows, programRows, degreeRows] = await Promise.all([
         adminApi.tickets.reception({
           search: receptionSearch,
           service_id: receptionServiceId ? Number(receptionServiceId) : undefined,
@@ -2834,11 +2662,15 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           page_size: MY_WINDOW_PAGE_SIZE,
         }),
         adminApi.services.list(),
+        adminApi.educationalPrograms.list(),
+        adminApi.academicDegrees.list(),
       ])
 
       applyReceptionData(receptionRows)
       setReceptionPage(receptionRows.page)
       setServices(serviceRows)
+      setEducationalPrograms(programRows)
+      setAcademicDegrees(degreeRows)
     } catch (requestError) {
       setReceptionError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить регистратуру')
     } finally {
@@ -2901,9 +2733,20 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   }
 
   useEffect(() => {
-    if (isAdminUser && activeSection !== 'analytics') {
-      void loadAdminData()
+    if (
+      !isAdminUser ||
+      activeSection === 'analytics' ||
+      activeSection === 'myWindow' ||
+      activeSection === 'reception'
+    ) {
+      return
     }
+
+    const timerId = window.setTimeout(() => {
+      void loadAdminSectionData(activeSection)
+    }, 0)
+
+    return () => window.clearTimeout(timerId)
   }, [activeSection, isAdminUser])
 
   useEffect(() => {
@@ -3191,7 +3034,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminData()
+      await loadAdminSectionData('services')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить услугу')
     }
@@ -3230,7 +3073,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminData()
+      await loadAdminSectionData('windows')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить окно')
     }
@@ -3313,7 +3156,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminData()
+      await loadAdminSectionData('users')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить пользователя')
     }
@@ -3351,7 +3194,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminData()
+      await loadAdminSectionData('operators')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить оператора')
     }
@@ -3369,7 +3212,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminData()
+      await loadAdminSectionData('academicDegrees')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить академическую степень')
     }
@@ -3387,7 +3230,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminData()
+      await loadAdminSectionData('educationalPrograms')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить образовательную программу')
     }
@@ -3412,7 +3255,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminData()
+      await loadAdminSectionData('applicants')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить абитуриента')
     }
@@ -3453,7 +3296,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminData()
+      await loadAdminSectionData('ticketEvents')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить событие талона')
     }
@@ -4023,8 +3866,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         await adminApi.ticketEvents.delete(String(deleteTarget.id))
       }
 
+      const deletedSection = deleteTarget.section
       setDeleteTarget(null)
-      await loadAdminData()
+      await loadAdminSectionData(deletedSection)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось удалить запись')
     }
@@ -5136,172 +4980,104 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         )}
 
         {activeSection === 'services' && (
-          <section className="admin-panel tab-panel" key="services">
-            <CrudTable
-              columns={['ID', 'Название (RU)', 'Название (KZ)', 'Название (EN)', 'Код', 'Приоритет', 'Обр. программа', 'Язык обслуживания', 'Регистратура', 'Статус', 'Действия']}
-              loading={loading}
-              rows={services.map((service) => [
-                service.id,
-                service.name,
-                service.name_kk,
-                service.name_en,
-                service.code,
-                service.priority,
-                boolLabel(service.requires_educational_program),
-                boolLabel(service.requires_service_language),
-                boolLabel(service.requires_reception_desk),
-                boolLabel(service.is_active),
-                <RowActions
-                  key={service.id}
-                  onEdit={() => {
-                    setEditingServiceId(service.id)
-                    setServiceForm({
-                      name: service.name,
-                      name_kk: service.name_kk,
-                      name_en: service.name_en,
-                      code: service.code,
-                      priority: service.priority,
-                      is_active: service.is_active,
-                      requires_educational_program: service.requires_educational_program,
-                      requires_reception_desk: service.requires_reception_desk,
-                      requires_service_language: service.requires_service_language,
-                    })
-                    setFormModal('services')
-                  }}
-                  onDelete={() => setDeleteTarget({ section: 'services', id: service.id, label: service.name })}
-                />,
-              ])}
-            />
-          </section>
+          <ServicesRoute
+            loading={loading}
+            services={services}
+            onEdit={(service) => {
+              setEditingServiceId(service.id)
+              setServiceForm({
+                name: service.name,
+                name_kk: service.name_kk,
+                name_en: service.name_en,
+                code: service.code,
+                priority: service.priority,
+                is_active: service.is_active,
+                requires_educational_program: service.requires_educational_program,
+                requires_reception_desk: service.requires_reception_desk,
+                requires_service_language: service.requires_service_language,
+              })
+              setFormModal('services')
+            }}
+            onDelete={(service) => setDeleteTarget({ section: 'services', id: service.id, label: service.name })}
+          />
         )}
 
         {activeSection === 'windows' && (
-          <section className="admin-panel tab-panel" key="windows">
-            <CrudTable
-              columns={['ID', 'Название', 'Этаж', 'Статус', 'Оператор', 'Действия']}
-              loading={loading}
-              rows={windows.map((windowItem) => [
-                windowItem.id,
-                windowItem.name,
-                windowItem.floor ?? 'Не указан',
-                windowItem.status,
-                getOperatorLabel(
-                  operators,
-                  users,
-                  operators.find((operator) => operator.window_id === windowItem.id)?.id ?? null,
-                ),
-                <RowActions
-                  key={windowItem.id}
-                  onEdit={() => {
-                    const assignedOperator = operators.find((operator) => operator.window_id === windowItem.id)
-                    setEditingWindowId(windowItem.id)
-                    setWindowForm({
-                      name: windowItem.name,
-                      floor: windowItem.floor ?? '',
-                      status: windowItem.status,
-                      current_operator_id: windowItem.current_operator_id,
-                    })
-                    setSelectedWindowOperatorId(assignedOperator?.id ?? '')
-                    setFormModal('windows')
-                  }}
-                  onDelete={() => setDeleteTarget({ section: 'windows', id: windowItem.id, label: windowItem.name })}
-                />,
-              ])}
-            />
-          </section>
+          <WindowsRoute
+            loading={loading}
+            operators={operators}
+            users={users}
+            windows={windows}
+            onEdit={(windowItem, assignedOperatorId) => {
+              setEditingWindowId(windowItem.id)
+              setWindowForm({
+                name: windowItem.name,
+                floor: windowItem.floor ?? '',
+                status: windowItem.status,
+                current_operator_id: windowItem.current_operator_id,
+              })
+              setSelectedWindowOperatorId(assignedOperatorId)
+              setFormModal('windows')
+            }}
+            onDelete={(windowItem) =>
+              setDeleteTarget({ section: 'windows', id: windowItem.id, label: windowItem.name })
+            }
+          />
         )}
 
         {activeSection === 'users' && (
-          <section className="admin-panel tab-panel" key="users">
-            <CrudTable
-              columns={['ID', 'ФИО', 'Email', 'Роль', 'Статус', 'Действия']}
-              loading={loading}
-              rows={users.map((user) => [
-                user.id.slice(0, 8),
-                user.full_name,
-                user.email,
-                user.role,
-                boolLabel(user.is_active),
-                <RowActions
-                  key={user.id}
-                  onEdit={() => {
-                    setEditingUserId(user.id)
-                    setUserForm({
-                      email: user.email,
-                      full_name: user.full_name,
-                      password: '',
-                      role: user.role,
-                      is_active: user.is_active,
-                    })
-                    setFormModal('users')
-                  }}
-                  onDelete={() => setDeleteTarget({ section: 'users', id: user.id, label: user.full_name })}
-                />,
-              ])}
-            />
-          </section>
+          <UsersRoute
+            loading={loading}
+            users={users}
+            onEdit={(user) => {
+              setEditingUserId(user.id)
+              setUserForm({
+                email: user.email,
+                full_name: user.full_name,
+                password: '',
+                role: user.role,
+                is_active: user.is_active,
+              })
+              setFormModal('users')
+            }}
+            onDelete={(user) => setDeleteTarget({ section: 'users', id: user.id, label: user.full_name })}
+          />
         )}
 
         {activeSection === 'operators' && (
-          <section className="admin-panel tab-panel" key="operators">
-            <CrudTable
-              columns={['ID', 'Пользователь', 'Окно', 'Услуги', 'ОП', 'Статус', 'Дата создания', 'Действия']}
-              loading={loading}
-              rows={operators.map((operator) => [
-                operator.id.slice(0, 8),
-                getUserLabel(users, operator.user_id),
-                getWindowLabel(windows, operator.window_id),
-                getServiceLabels(services, operatorServiceIds[operator.id] ?? []),
-                getProgramLabels(educationalPrograms, operatorProgramIds[operator.id] ?? []),
-                operatorStatusLabels[operator.status],
-                new Date(operator.created_at).toLocaleString(),
-                <div className="row-actions" key={operator.id}>
-                  <a
-                    className="secondary-action compact"
-                    href={buildSectionPath(lang, 'analytics', operator.id)}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      navigateToSection('analytics', operator.id)
-                    }}
-                  >
-                    Отчет
-                  </a>
-                  <button
-                    className="secondary-action compact"
-                    type="button"
-                    onClick={() => {
-                      setEditingOperatorId(operator.id)
-                      setOperatorForm({
-                        user_id: operator.user_id,
-                        window_id: operator.window_id,
-                        status: operator.status,
-                      })
-                      setSelectedOperatorProgramIds(operatorProgramIds[operator.id] ?? [])
-                      setSelectedOperatorProgramLanguages(operatorProgramLanguages[operator.id] ?? {})
-                      setSelectedOperatorServiceIds(operatorServiceIds[operator.id] ?? [])
-                      setSelectedOperatorServiceLanguages(operatorServiceLanguages[operator.id] ?? {})
-                      setFormModal('operators')
-                    }}
-                  >
-                    Изменить
-                  </button>
-                  <button
-                    className="danger-action"
-                    type="button"
-                    onClick={() =>
-                      setDeleteTarget({
-                        section: 'operators',
-                        id: operator.id,
-                        label: getUserLabel(users, operator.user_id),
-                      })
-                    }
-                  >
-                    Удалить
-                  </button>
-                </div>,
-              ])}
-            />
-          </section>
+          <OperatorsRoute
+            analyticsHref={(currentLang, operatorId) => buildSectionPath(currentLang as Lang, 'analytics', operatorId)}
+            educationalPrograms={educationalPrograms}
+            lang={lang}
+            loading={loading}
+            operatorProgramIds={operatorProgramIds}
+            operatorServiceIds={operatorServiceIds}
+            operators={operators}
+            services={services}
+            users={users}
+            windows={windows}
+            onOpenAnalytics={(operatorId) => navigateToSection('analytics', operatorId)}
+            onEdit={(operator) => {
+              setEditingOperatorId(operator.id)
+              setOperatorForm({
+                user_id: operator.user_id,
+                window_id: operator.window_id,
+                status: operator.status,
+              })
+              setSelectedOperatorProgramIds(operatorProgramIds[operator.id] ?? [])
+              setSelectedOperatorProgramLanguages(operatorProgramLanguages[operator.id] ?? {})
+              setSelectedOperatorServiceIds(operatorServiceIds[operator.id] ?? [])
+              setSelectedOperatorServiceLanguages(operatorServiceLanguages[operator.id] ?? {})
+              setFormModal('operators')
+            }}
+            onDelete={(operator) =>
+              setDeleteTarget({
+                section: 'operators',
+                id: operator.id,
+                label: getUserLabel(users, operator.user_id),
+              })
+            }
+          />
         )}
 
         {activeSection === 'analytics' && (
@@ -5940,160 +5716,107 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         )}
 
         {activeSection === 'academicDegrees' && (
-          <section className="admin-panel tab-panel" key="academicDegrees">
-            <CrudTable
-              columns={['ID', 'Название', 'Код', 'Статус', 'Действия']}
-              loading={loading}
-              rows={academicDegrees.map((degree) => [
-                degree.id,
-                degree.name,
-                degree.code,
-                boolLabel(degree.is_active),
-                <RowActions
-                  key={degree.id}
-                  onEdit={() => {
-                    setEditingAcademicDegreeId(degree.id)
-                    setAcademicDegreeForm({
-                      name: degree.name,
-                      code: degree.code,
-                      is_active: degree.is_active,
-                    })
-                    setFormModal('academicDegrees')
-                  }}
-                  onDelete={() =>
-                    setDeleteTarget({
-                      section: 'academicDegrees',
-                      id: degree.id,
-                      label: degree.name,
-                    })
-                  }
-                />,
-              ])}
-            />
-          </section>
+          <AcademicDegreesRoute
+            academicDegrees={academicDegrees}
+            loading={loading}
+            onEdit={(degree) => {
+              setEditingAcademicDegreeId(degree.id)
+              setAcademicDegreeForm({
+                name: degree.name,
+                code: degree.code,
+                is_active: degree.is_active,
+              })
+              setFormModal('academicDegrees')
+            }}
+            onDelete={(degree) =>
+              setDeleteTarget({
+                section: 'academicDegrees',
+                id: degree.id,
+                label: degree.name,
+              })
+            }
+          />
         )}
 
         {activeSection === 'educationalPrograms' && (
-          <section className="admin-panel tab-panel" key="educationalPrograms">
-            <CrudTable
-              columns={['ID', 'Название (RU)', 'Название (KZ)', 'Название (EN)', 'Код', 'Степень', 'Требовать язык обслуживания', 'Статус', 'Действия']}
-              loading={loading}
-              rows={educationalPrograms.map((program) => [
-                program.id,
-                program.name,
-                program.name_kk,
-                program.name_en,
-                program.code,
-                getDegreeLabel(academicDegrees, program.academic_degree_id),
-                boolLabel(program.requires_service_language),
-                boolLabel(program.is_active),
-                <RowActions
-                  key={program.id}
-                  onEdit={() => {
-                    setEditingEducationalProgramId(program.id)
-                    setEducationalProgramForm({
-                      name: program.name,
-                      name_kk: program.name_kk,
-                      name_en: program.name_en,
-                      code: program.code,
-                      academic_degree_id: program.academic_degree_id,
-                      requires_service_language: program.requires_service_language,
-                      is_active: program.is_active,
-                    })
-                    setFormModal('educationalPrograms')
-                  }}
-                  onDelete={() =>
-                    setDeleteTarget({
-                      section: 'educationalPrograms',
-                      id: program.id,
-                      label: program.name,
-                    })
-                  }
-                />,
-              ])}
-            />
-          </section>
+          <EducationalProgramsRoute
+            academicDegrees={academicDegrees}
+            educationalPrograms={educationalPrograms}
+            loading={loading}
+            onEdit={(program) => {
+              setEditingEducationalProgramId(program.id)
+              setEducationalProgramForm({
+                name: program.name,
+                name_kk: program.name_kk,
+                name_en: program.name_en,
+                code: program.code,
+                academic_degree_id: program.academic_degree_id,
+                requires_service_language: program.requires_service_language,
+                is_active: program.is_active,
+              })
+              setFormModal('educationalPrograms')
+            }}
+            onDelete={(program) =>
+              setDeleteTarget({
+                section: 'educationalPrograms',
+                id: program.id,
+                label: program.name,
+              })
+            }
+          />
         )}
 
         {activeSection === 'applicants' && (
-          <section className="admin-panel tab-panel" key="applicants">
-            <CrudTable
-              columns={['ID', 'ФИО', 'ИИН', 'Телефон', 'Telegram Chat ID', 'Дата регистрации', 'Действия']}
-              loading={loading}
-              rows={applicants.map((applicant) => [
-                applicant.id.slice(0, 8),
-                applicant.full_name ?? 'Не указано',
-                applicant.iin ?? 'Не указано',
-                applicant.phone ?? 'Не указано',
-                applicant.telegram_chat_id ?? 'Не указано',
-                new Date(applicant.created_at).toLocaleString(),
-                <RowActions
-                  key={applicant.id}
-                  onEdit={() => {
-                    setEditingApplicantId(applicant.id)
-                    setApplicantForm({
-                      full_name: applicant.full_name ?? '',
-                      iin: applicant.iin ?? '',
-                      phone: applicant.phone ?? '',
-                      telegram_chat_id: applicant.telegram_chat_id,
-                    })
-                    setFormModal('applicants')
-                  }}
-                  onDelete={() =>
-                    setDeleteTarget({
-                      section: 'applicants',
-                      id: applicant.id,
-                      label: applicant.full_name ?? applicant.iin ?? applicant.id,
-                    })
-                  }
-                />,
-              ])}
-            />
-          </section>
+          <ApplicantsRoute
+            applicants={applicants}
+            loading={loading}
+            onEdit={(applicant) => {
+              setEditingApplicantId(applicant.id)
+              setApplicantForm({
+                full_name: applicant.full_name ?? '',
+                iin: applicant.iin ?? '',
+                phone: applicant.phone ?? '',
+                telegram_chat_id: applicant.telegram_chat_id,
+              })
+              setFormModal('applicants')
+            }}
+            onDelete={(applicant) =>
+              setDeleteTarget({
+                section: 'applicants',
+                id: applicant.id,
+                label: applicant.full_name ?? applicant.iin ?? applicant.id,
+              })
+            }
+          />
         )}
 
         {activeSection === 'ticketEvents' && (
-          <section className="admin-panel tab-panel" key="ticketEvents">
-            <CrudTable
-              columns={['ID', 'Талон', 'Тип', 'Старый статус', 'Новый статус', 'Оператор', 'Metadata', 'Время', 'Действия']}
-              loading={loading}
-              rows={ticketEvents.map((ticketEvent) => [
-                ticketEvent.id.slice(0, 8),
-                ticketEvent.ticket_id ?? 'Не указано',
-                ticketEvent.event_type ?? 'Не указано',
-                ticketEvent.old_status ?? 'Не указано',
-                ticketEvent.new_status ?? 'Не указано',
-                ticketEvent.operator_name ?? ticketEvent.operator_email ?? ticketEvent.operator_id?.slice(0, 8) ?? 'Не указано',
-                ticketEvent.metadata ? JSON.stringify(ticketEvent.metadata) : 'Не указано',
-                new Date(ticketEvent.created_at).toLocaleString(),
-                <RowActions
-                  key={ticketEvent.id}
-                  onEdit={() => {
-                    setEditingTicketEventId(ticketEvent.id)
-                    setTicketEventForm({
-                      ticket_id: ticketEvent.ticket_id,
-                      event_type: ticketEvent.event_type,
-                      old_status: ticketEvent.old_status,
-                      new_status: ticketEvent.new_status,
-                      operator_id: ticketEvent.operator_id,
-                      metadata: ticketEvent.metadata,
-                    })
-                    setTicketEventMetadataText(
-                      ticketEvent.metadata ? JSON.stringify(ticketEvent.metadata, null, 2) : '',
-                    )
-                    setFormModal('ticketEvents')
-                  }}
-                  onDelete={() =>
-                    setDeleteTarget({
-                      section: 'ticketEvents',
-                      id: ticketEvent.id,
-                      label: ticketEvent.event_type ?? ticketEvent.id,
-                    })
-                  }
-                />,
-              ])}
-            />
-          </section>
+          <TicketEventsRoute
+            loading={loading}
+            ticketEvents={ticketEvents}
+            onEdit={(ticketEvent) => {
+              setEditingTicketEventId(ticketEvent.id)
+              setTicketEventForm({
+                ticket_id: ticketEvent.ticket_id,
+                event_type: ticketEvent.event_type,
+                old_status: ticketEvent.old_status,
+                new_status: ticketEvent.new_status,
+                operator_id: ticketEvent.operator_id,
+                metadata: ticketEvent.metadata,
+              })
+              setTicketEventMetadataText(
+                ticketEvent.metadata ? JSON.stringify(ticketEvent.metadata, null, 2) : '',
+              )
+              setFormModal('ticketEvents')
+            }}
+            onDelete={(ticketEvent) =>
+              setDeleteTarget({
+                section: 'ticketEvents',
+                id: ticketEvent.id,
+                label: ticketEvent.event_type ?? ticketEvent.id,
+              })
+            }
+          />
         )}
       </main>
 
@@ -7328,114 +7051,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           </div>
         </AdminModal>
       )}
-    </div>
-  )
-}
-
-function CrudTable({
-  columns,
-  loading,
-  rowClassNames,
-  rowKeys,
-  rows,
-}: {
-  columns: string[]
-  loading: boolean
-  rowClassNames?: string[]
-  rowKeys?: Array<string | number>
-  rows: Array<Array<string | number | ReactNode>>
-}) {
-  return (
-    <div className="queue-panel">
-      <div className="queue-table-wrap">
-        <table className="queue-table admin-table">
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th key={column}>{column}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr>
-                <td colSpan={columns.length}>Загрузка...</td>
-              </tr>
-            )}
-            {!loading && rows.length === 0 && (
-              <tr>
-                <td colSpan={columns.length}>Данных пока нет</td>
-              </tr>
-            )}
-            {!loading &&
-              rows.map((row, rowIndex) => (
-                <tr className={rowClassNames?.[rowIndex]} key={rowKeys?.[rowIndex] ?? rowIndex}>
-                  {row.map((cell, cellIndex) => (
-                    <td key={cellIndex}>{cell}</td>
-                  ))}
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
-  return (
-    <div className="row-actions">
-      <button className="secondary-action compact" type="button" onClick={onEdit}>
-        Изменить
-      </button>
-      <button className="danger-action" type="button" onClick={onDelete}>
-        Удалить
-      </button>
-    </div>
-  )
-}
-
-function AdminModal({
-  children,
-  onClose,
-  size = 'default',
-  title,
-}: {
-  children: ReactNode
-  onClose: () => void
-  size?: 'default' | 'small' | 'wide'
-  title: string
-}) {
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        className={`admin-modal ${size === 'small' ? 'small' : size === 'wide' ? 'wide' : ''}`.trim()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header className="modal-header">
-          <h2>{title}</h2>
-          <button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>
-            ×
-          </button>
-        </header>
-        <div className="modal-body">{children}</div>
-      </section>
-    </div>
-  )
-}
-
-function ModalActions({ onCancel, submitText }: { onCancel: () => void; submitText: string }) {
-  return (
-    <div className="modal-actions">
-      <button className="secondary-action compact" type="button" onClick={onCancel}>
-        Отмена
-      </button>
-      <button className="primary-action compact" type="submit">
-        {submitText}
-      </button>
     </div>
   )
 }

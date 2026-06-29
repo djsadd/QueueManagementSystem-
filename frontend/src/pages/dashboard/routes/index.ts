@@ -1,0 +1,8 @@
+export { AcademicDegreesRoute } from './AcademicDegreesRoute'
+export { ApplicantsRoute } from './ApplicantsRoute'
+export { EducationalProgramsRoute } from './EducationalProgramsRoute'
+export { OperatorsRoute } from './OperatorsRoute'
+export { ServicesRoute } from './ServicesRoute'
+export { TicketEventsRoute } from './TicketEventsRoute'
+export { UsersRoute } from './UsersRoute'
+export { WindowsRoute } from './WindowsRoute'
