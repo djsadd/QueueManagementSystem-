@@ -222,6 +222,7 @@ namespace QueueTerminal
     {
         private const int ChoiceCardWidth = 250;
         private const int ChoiceCardHeight = 112;
+        private const int TicketDisplayDurationMs = 15000;
 
         private enum UiLanguage
         {
@@ -257,6 +258,16 @@ namespace QueueTerminal
         private readonly Label ticketDetails = new Label();
         private readonly System.Windows.Forms.Timer clockTimer = new System.Windows.Forms.Timer();
         private readonly System.Windows.Forms.Timer ticketDisplayTimer = new System.Windows.Forms.Timer();
+        private readonly Panel ticketPage = new Panel();
+        private readonly Label ticketPageTitle = new Label();
+        private readonly Label ticketPageInstruction = new Label();
+        private readonly Label ticketPageReceiptLabel = new Label();
+        private readonly Label ticketPageNumber = new Label();
+        private readonly Label ticketPageDetails = new Label();
+        private readonly Label ticketPageDate = new Label();
+        private readonly Button ticketPageBackButton = new Button();
+        private readonly Panel ticketProgressTrack = new Panel();
+        private readonly Panel ticketProgressFill = new Panel();
         private TableLayoutPanel ticketFormLayout;
         private List<ServiceItem> serviceCatalog = new List<ServiceItem>();
         private List<ProgramItem> programCatalog = new List<ProgramItem>();
@@ -265,6 +276,7 @@ namespace QueueTerminal
         private UiLanguage language = UiLanguage.Russian;
         private UiLanguage operatorLanguage = UiLanguage.Russian;
         private TicketItem lastTicket;
+        private DateTime ticketDisplayStartedAt;
         private bool busy;
 
         public TerminalForm(TerminalConfig config)
@@ -277,8 +289,8 @@ namespace QueueTerminal
             clockTimer.Interval = 1000;
             clockTimer.Tick += delegate { UpdateClock(); };
             clockTimer.Start();
-            ticketDisplayTimer.Interval = 10000;
-            ticketDisplayTimer.Tick += delegate { ClearDisplayedTicket(); };
+            ticketDisplayTimer.Interval = 100;
+            ticketDisplayTimer.Tick += delegate { UpdateDisplayedTicket(); };
             UpdateClock();
             Shown += delegate { LoadCatalogs(); };
         }
@@ -469,6 +481,101 @@ namespace QueueTerminal
             reloadButton.Dock = DockStyle.Fill;
             reloadButton.Click += delegate { LoadCatalogs(); };
             result.Controls.Add(reloadButton, 0, 6);
+
+            InitializeTicketPage();
+        }
+
+        private void InitializeTicketPage()
+        {
+            ticketPage.Dock = DockStyle.Fill;
+            ticketPage.BackColor = Color.FromArgb(250, 247, 248);
+            ticketPage.Padding = new Padding(54);
+            ticketPage.Visible = false;
+            Controls.Add(ticketPage);
+            ticketPage.BringToFront();
+
+            TableLayoutPanel pageLayout = new TableLayoutPanel();
+            pageLayout.Dock = DockStyle.Fill;
+            pageLayout.ColumnCount = 1;
+            pageLayout.RowCount = 5;
+            pageLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 82F));
+            pageLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54F));
+            pageLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            pageLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
+            pageLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72F));
+            ticketPage.Controls.Add(pageLayout);
+
+            ticketPageTitle.Dock = DockStyle.Fill;
+            ticketPageTitle.Font = new Font("Segoe UI", 36F, FontStyle.Bold);
+            ticketPageTitle.ForeColor = Color.FromArgb(93, 15, 37);
+            ticketPageTitle.TextAlign = ContentAlignment.MiddleCenter;
+            pageLayout.Controls.Add(ticketPageTitle, 0, 0);
+
+            ticketPageInstruction.Dock = DockStyle.Fill;
+            ticketPageInstruction.Font = new Font("Segoe UI", 22F, FontStyle.Bold);
+            ticketPageInstruction.ForeColor = Color.FromArgb(40, 21, 26);
+            ticketPageInstruction.TextAlign = ContentAlignment.MiddleCenter;
+            pageLayout.Controls.Add(ticketPageInstruction, 0, 1);
+
+            Panel receiptPanel = CreateCard();
+            receiptPanel.Margin = new Padding(120, 22, 120, 26);
+            receiptPanel.Padding = new Padding(34);
+            pageLayout.Controls.Add(receiptPanel, 0, 2);
+
+            TableLayoutPanel receiptLayout = new TableLayoutPanel();
+            receiptLayout.Dock = DockStyle.Fill;
+            receiptLayout.ColumnCount = 1;
+            receiptLayout.RowCount = 4;
+            receiptLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            receiptLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 154F));
+            receiptLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            receiptLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
+            receiptPanel.Controls.Add(receiptLayout);
+
+            ticketPageReceiptLabel.Dock = DockStyle.Fill;
+            ticketPageReceiptLabel.Font = new Font("Segoe UI", 18F, FontStyle.Bold);
+            ticketPageReceiptLabel.ForeColor = Color.FromArgb(40, 21, 26);
+            ticketPageReceiptLabel.TextAlign = ContentAlignment.BottomCenter;
+            receiptLayout.Controls.Add(ticketPageReceiptLabel, 0, 0);
+
+            ticketPageNumber.Dock = DockStyle.Fill;
+            ticketPageNumber.Font = new Font("Segoe UI", 70F, FontStyle.Bold);
+            ticketPageNumber.ForeColor = Color.FromArgb(93, 15, 37);
+            ticketPageNumber.TextAlign = ContentAlignment.MiddleCenter;
+            receiptLayout.Controls.Add(ticketPageNumber, 0, 1);
+
+            ticketPageDetails.Dock = DockStyle.Fill;
+            ticketPageDetails.Font = new Font("Segoe UI", 20F, FontStyle.Bold);
+            ticketPageDetails.ForeColor = Color.FromArgb(40, 21, 26);
+            ticketPageDetails.TextAlign = ContentAlignment.TopCenter;
+            receiptLayout.Controls.Add(ticketPageDetails, 0, 2);
+
+            ticketPageDate.Dock = DockStyle.Fill;
+            ticketPageDate.Font = new Font("Segoe UI", 15F, FontStyle.Regular);
+            ticketPageDate.ForeColor = Color.FromArgb(88, 70, 76);
+            ticketPageDate.TextAlign = ContentAlignment.MiddleCenter;
+            receiptLayout.Controls.Add(ticketPageDate, 0, 3);
+
+            ticketProgressTrack.Dock = DockStyle.Fill;
+            ticketProgressTrack.BackColor = Color.FromArgb(234, 212, 218);
+            ticketProgressTrack.Margin = new Padding(120, 0, 120, 8);
+            ticketProgressTrack.Controls.Add(ticketProgressFill);
+            ticketProgressTrack.Resize += delegate { UpdateTicketProgressLine(); };
+            pageLayout.Controls.Add(ticketProgressTrack, 0, 3);
+
+            ticketProgressFill.Dock = DockStyle.Left;
+            ticketProgressFill.BackColor = Color.FromArgb(122, 22, 49);
+
+            ticketPageBackButton.Dock = DockStyle.Fill;
+            ticketPageBackButton.Margin = new Padding(120, 0, 120, 0);
+            ticketPageBackButton.FlatStyle = FlatStyle.Flat;
+            ticketPageBackButton.FlatAppearance.BorderSize = 0;
+            ticketPageBackButton.BackColor = Color.FromArgb(122, 22, 49);
+            ticketPageBackButton.ForeColor = Color.White;
+            ticketPageBackButton.Font = new Font("Segoe UI", 20F, FontStyle.Bold);
+            ticketPageBackButton.UseVisualStyleBackColor = false;
+            ticketPageBackButton.Click += delegate { ClearDisplayedTicket(); };
+            pageLayout.Controls.Add(ticketPageBackButton, 0, 4);
         }
 
         private void LoadLogo()
@@ -616,6 +723,10 @@ namespace QueueTerminal
             kazakhButton.Text = "Қазақша";
             russianButton.Text = "Русский";
             englishButton.Text = "English";
+            ticketPageTitle.Text = T("\u0421\u0456\u0437\u0434\u0456\u04a3 \u0442\u0430\u043b\u043e\u043d\u044b\u04a3\u044b\u0437", "\u0412\u0430\u0448 \u0442\u0430\u043b\u043e\u043d", "Your ticket");
+            ticketPageInstruction.Text = T("\u0422\u0430\u043b\u043e\u043d\u0434\u044b \u0441\u0443\u0440\u0435\u0442\u043a\u0435 \u0442\u04af\u0441\u0456\u0440\u0456\u04a3\u0456\u0437", "\u0421\u0444\u043e\u0442\u043a\u0430\u0439\u0442\u0435 \u0442\u0430\u043b\u043e\u043d", "Take a photo of the ticket");
+            ticketPageReceiptLabel.Text = T("\u0422\u0430\u043b\u043e\u043d", "\u0422\u0430\u043b\u043e\u043d", "Ticket");
+            ticketPageBackButton.Text = T("\u0410\u0440\u0442\u049b\u0430", "\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f", "Back");
             operatorLanguageLabel.Text = T("\u041e\u043f\u0435\u0440\u0430\u0442\u043e\u0440 \u0442\u0456\u043b\u0456", "\u042f\u0437\u044b\u043a \u043e\u043f\u0435\u0440\u0430\u0442\u043e\u0440\u0430", "Operator language");
             operatorKazakhButton.Text = "\u049a\u0430\u0437";
             operatorRussianButton.Text = "\u0420\u0443\u0441";
@@ -638,6 +749,8 @@ namespace QueueTerminal
             else
             {
                 ticketDetails.Text = BuildTicketDetails(lastTicket);
+                ticketPageDetails.Text = BuildTicketDetails(lastTicket);
+                ticketPageDate.Text = FormatCreatedAt(lastTicket.created_at);
             }
         }
 
@@ -933,8 +1046,7 @@ namespace QueueTerminal
                         ticketNumber.Text = ticket.ticket_number;
                         ticketDetails.Text = BuildTicketDetails(ticket);
                         reprintButton.Enabled = true;
-                        ticketDisplayTimer.Stop();
-                        ticketDisplayTimer.Start();
+                        ShowTicketPage(ticket);
                         SetBusy(false, T("Талон тіркелді. Басып шығару...", "Талон зарегистрирован. Печать...", "Ticket registered. Printing..."));
                         PrintLastTicket();
                     });
@@ -988,12 +1100,74 @@ namespace QueueTerminal
             }
         }
 
+        private void ShowTicketPage(TicketItem ticket)
+        {
+            ticketPageNumber.Text = ticket.ticket_number;
+            ticketPageDetails.Text = BuildTicketDetails(ticket);
+            ticketPageDate.Text = FormatCreatedAt(ticket.created_at);
+            ticketDisplayStartedAt = DateTime.Now;
+            ticketPage.Visible = true;
+            ticketPage.BringToFront();
+            UpdateTicketProgressLine();
+            ticketDisplayTimer.Stop();
+            ticketDisplayTimer.Start();
+        }
+
+        private void UpdateDisplayedTicket()
+        {
+            if (!ticketPage.Visible || lastTicket == null)
+            {
+                ticketDisplayTimer.Stop();
+                return;
+            }
+
+            if ((DateTime.Now - ticketDisplayStartedAt).TotalMilliseconds >= TicketDisplayDurationMs)
+            {
+                ClearDisplayedTicket();
+                return;
+            }
+
+            UpdateTicketProgressLine();
+        }
+
+        private void UpdateTicketProgressLine()
+        {
+            if (ticketProgressTrack.Width <= 0)
+            {
+                return;
+            }
+
+            double elapsed = Math.Max(0.0, (DateTime.Now - ticketDisplayStartedAt).TotalMilliseconds);
+            double progress = Math.Min(1.0, elapsed / TicketDisplayDurationMs);
+            double remaining = 1.0 - progress;
+            ticketProgressFill.Width = Math.Max(0, (int)Math.Round(ticketProgressTrack.ClientSize.Width * remaining));
+            ticketProgressFill.Height = ticketProgressTrack.ClientSize.Height;
+            ticketProgressFill.BackColor = BlendColor(
+                Color.FromArgb(122, 22, 49),
+                Color.FromArgb(234, 212, 218),
+                progress);
+        }
+
+        private Color BlendColor(Color from, Color to, double amount)
+        {
+            amount = Math.Max(0.0, Math.Min(1.0, amount));
+            int red = (int)Math.Round(from.R + (to.R - from.R) * amount);
+            int green = (int)Math.Round(from.G + (to.G - from.G) * amount);
+            int blue = (int)Math.Round(from.B + (to.B - from.B) * amount);
+            return Color.FromArgb(red, green, blue);
+        }
+
         private void ClearDisplayedTicket()
         {
             ticketDisplayTimer.Stop();
             lastTicket = null;
             ticketNumber.Text = "---";
             reprintButton.Enabled = false;
+            ticketPage.Visible = false;
+            ticketPageNumber.Text = "";
+            ticketPageDetails.Text = "";
+            ticketPageDate.Text = "";
+            ticketProgressFill.Width = 0;
             statusLabel.Text = "";
             ApplyLanguage();
         }

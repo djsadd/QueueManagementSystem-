@@ -6,6 +6,7 @@ import {
   type AcademicDegreePayload,
   type ApplicantItem,
   type ApplicantPayload,
+  type ApplicantReportItem,
   type EducationalProgramItem,
   type EducationalProgramPayload,
   type OperatorItem,
@@ -86,9 +87,11 @@ type ApplicantReportFunnelStage = {
 type ApplicantReportAnalysis = {
   duplicateReportIinCount: number
   fileName: string
+  isLatestFallback: boolean
   matchedIinCount: number
   matchedTicketCount: number
   matchPercent: number
+  reportDate: string
   reportIinCount: number
   recognizedMatchedCount: number
   rowCount: number
@@ -1219,7 +1222,13 @@ function parseApplicantReportRecords(text: string) {
   })
 }
 
-function buildApplicantReportAnalysis(fileName: string, text: string, tickets: TicketItem[]): ApplicantReportAnalysis {
+function buildApplicantReportAnalysis(
+  fileName: string,
+  text: string,
+  tickets: TicketItem[],
+  reportDate: string,
+  isLatestFallback = false,
+): ApplicantReportAnalysis {
   const records = parseApplicantReportRecords(text)
   const ticketCountsByIin = new Map<string, number>()
   let ticketsWithIinCount = 0
@@ -1290,9 +1299,11 @@ function buildApplicantReportAnalysis(fileName: string, text: string, tickets: T
   return {
     duplicateReportIinCount: [...reportIinOccurrences.values()].filter((count) => count > 1).length,
     fileName,
+    isLatestFallback,
     matchedIinCount,
     matchedTicketCount,
     matchPercent: uniqueTicketIinCount > 0 ? Math.round((matchedIinCount / uniqueTicketIinCount) * 100) : 0,
+    reportDate,
     recognizedMatchedCount,
     reportIinCount: reportRowsByIin.size,
     rowCount: records.length,
@@ -1427,6 +1438,10 @@ function sortReceptionTickets(tickets: TicketItem[]) {
 
 function getStudyLanguageLabel(studyLanguage: StudyLanguage | null) {
   return studyLanguage ? studyLanguageLabels[studyLanguage] : 'Не указан'
+}
+
+function getServiceLanguageLabel(serviceLanguage: ServiceLanguage | null) {
+  return serviceLanguage ? studyLanguageLabels[serviceLanguage] : 'Не указан'
 }
 
 function parseStudyLanguage(value: string): StudyLanguage | null {
@@ -1840,7 +1855,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [ticketExportingKey, setTicketExportingKey] = useState<string | null>(null)
   const [applicantReportAnalysis, setApplicantReportAnalysis] =
     useState<ApplicantReportAnalysis | null>(null)
+  const [savedApplicantReport, setSavedApplicantReport] = useState<ApplicantReportItem | null>(null)
+  const [applicantReportDate, setApplicantReportDate] = useState(() => formatDateInputValue(new Date()))
   const [applicantReportError, setApplicantReportError] = useState('')
+  const [applicantReportLoading, setApplicantReportLoading] = useState(false)
   const [applicantReportParsing, setApplicantReportParsing] = useState(false)
   const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => getDefaultSummerDateRange().from)
   const [analyticsDateTo, setAnalyticsDateTo] = useState(() => getDefaultSummerDateRange().to)
@@ -2414,6 +2432,34 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       void loadAdminData()
     }
   }, [isAdminUser])
+
+  useEffect(() => {
+    if (isAdminUser) {
+      void loadSavedApplicantReport(applicantReportDate)
+    }
+  }, [isAdminUser, applicantReportDate])
+
+  useEffect(() => {
+    if (!savedApplicantReport) {
+      return
+    }
+
+    try {
+      setApplicantReportAnalysis(
+        buildApplicantReportAnalysis(
+          savedApplicantReport.file_name,
+          savedApplicantReport.content,
+          analyticsTickets,
+          savedApplicantReport.report_date,
+          savedApplicantReport.is_latest_fallback,
+        ),
+      )
+      setApplicantReportError('')
+    } catch (requestError) {
+      setApplicantReportAnalysis(null)
+      setApplicantReportError(requestError instanceof Error ? requestError.message : 'РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕС‡РёС‚Р°С‚СЊ СЃРѕС…СЂР°РЅРµРЅРЅС‹Р№ РѕС‚С‡РµС‚')
+    }
+  }, [savedApplicantReport, analyticsTickets])
 
   useEffect(() => {
     if (isAdminUser) {
@@ -3446,6 +3492,27 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
+  async function loadSavedApplicantReport(reportDate = applicantReportDate) {
+    setApplicantReportLoading(true)
+    setApplicantReportError('')
+
+    try {
+      const report = await adminApi.applicantReports.current(reportDate)
+      setSavedApplicantReport(report)
+    } catch (requestError) {
+      setSavedApplicantReport(null)
+      setApplicantReportAnalysis(null)
+
+      if (requestError && typeof requestError === 'object' && 'status' in requestError && requestError.status === 404) {
+        return
+      }
+
+      setApplicantReportError(requestError instanceof Error ? requestError.message : 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРѕС…СЂР°РЅРµРЅРЅС‹Р№ РѕС‚С‡РµС‚')
+    } finally {
+      setApplicantReportLoading(false)
+    }
+  }
+
   async function uploadApplicantReport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0]
 
@@ -3457,6 +3524,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setApplicantReportError('')
 
     try {
+      if (!applicantReportDate) {
+        throw new Error('Select report date')
+      }
+
       const buffer = await file.arrayBuffer()
 
       if (isUnsupportedSpreadsheetFile(file.name, buffer)) {
@@ -3464,7 +3535,15 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       const text = decodeApplicantReportText(buffer)
-      setApplicantReportAnalysis(buildApplicantReportAnalysis(file.name, text, analyticsTickets))
+      const analysis = buildApplicantReportAnalysis(file.name, text, analyticsTickets, applicantReportDate)
+      const savedReport = await adminApi.applicantReports.save({
+        content: text,
+        file_name: file.name,
+        report_date: applicantReportDate,
+      })
+
+      setSavedApplicantReport(savedReport)
+      setApplicantReportAnalysis(analysis)
     } catch (requestError) {
       setApplicantReportAnalysis(null)
       setApplicantReportError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить отчет')
@@ -3582,9 +3661,21 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     (ticket) => ticket.status,
     (ticket) => getTicketStatusLabel(ticket.status),
   )
+  const generalServiceLanguageRows = buildTicketDistribution(
+    analyticsTickets,
+    (ticket) => ticket.service_language ?? 'none',
+    (ticket) => getServiceLanguageLabel(ticket.service_language),
+  )
+  const generalStudyLanguageRows = buildTicketDistribution(
+    analyticsTickets,
+    (ticket) => ticket.study_language ?? 'none',
+    (ticket) => getStudyLanguageLabel(ticket.study_language),
+  )
   const generalServicePieSegments = distributionToPieSegments(generalServiceRows, generalTicketsTotal)
   const generalProgramPieSegments = distributionToPieSegments(generalProgramRows, generalTicketsTotal)
   const generalOperatorPieSegments = distributionToPieSegments(generalOperatorRows, generalTicketsTotal)
+  const generalServiceLanguagePieSegments = distributionToPieSegments(generalServiceLanguageRows, generalTicketsTotal)
+  const generalStudyLanguagePieSegments = distributionToPieSegments(generalStudyLanguageRows, generalTicketsTotal)
   const generalStatusPieSegments = generalStatusRows.map((item, index) => ({
     color:
       item.id === 'COMPLETED'
@@ -4667,19 +4758,32 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         </div>
                         <div className="applicant-report-actions">
                           {applicantReportAnalysis && (
-                            <span className="analytics-status">{applicantReportAnalysis.fileName}</span>
+                            <span className="analytics-status">
+                              {applicantReportAnalysis.isLatestFallback
+                                ? `Latest report: ${applicantReportAnalysis.reportDate}`
+                                : applicantReportAnalysis.fileName}
+                            </span>
                           )}
+                          <label className="applicant-report-date">
+                            <span>Report date</span>
+                            <input
+                              disabled={applicantReportLoading || applicantReportParsing}
+                              type="date"
+                              value={applicantReportDate}
+                              onChange={(event) => setApplicantReportDate(event.currentTarget.value)}
+                            />
+                          </label>
                           <label
                             className={`secondary-action compact applicant-report-upload${
-                              applicantReportParsing || loading ? ' disabled' : ''
+                              applicantReportParsing || applicantReportLoading || !applicantReportDate || loading ? ' disabled' : ''
                             }`}
-                            aria-disabled={applicantReportParsing || loading}
+                            aria-disabled={applicantReportParsing || applicantReportLoading || !applicantReportDate || loading}
                           >
                             <Icon name="upload" />
                             {applicantReportParsing ? 'Загрузка...' : 'Загрузить отчет'}
                             <input
                               accept=".csv,.tsv,.txt,.xls,text/csv,text/tab-separated-values,application/vnd.ms-excel"
-                              disabled={applicantReportParsing || loading}
+                              disabled={applicantReportParsing || applicantReportLoading || !applicantReportDate || loading}
                               type="file"
                               onChange={uploadApplicantReport}
                             />
@@ -4816,6 +4920,20 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         centerValue={generalTicketsTotal}
                         segments={generalProgramPieSegments}
                         title="Образовательные программы"
+                        total={generalTicketsTotal}
+                      />
+                      <AnalyticsDonutPanel
+                        centerLabel="талонов"
+                        centerValue={generalTicketsTotal}
+                        segments={generalServiceLanguagePieSegments}
+                        title="Язык обслуживания"
+                        total={generalTicketsTotal}
+                      />
+                      <AnalyticsDonutPanel
+                        centerLabel="талонов"
+                        centerValue={generalTicketsTotal}
+                        segments={generalStudyLanguagePieSegments}
+                        title="Язык обучения"
                         total={generalTicketsTotal}
                       />
                       <AnalyticsDonutPanel

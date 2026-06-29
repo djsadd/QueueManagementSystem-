@@ -1,4 +1,5 @@
 from app.models.applicant import Applicant  # noqa: F401
+from app.models.applicant_report import ApplicantReport  # noqa: F401
 from app.models.education import AcademicDegree, EducationalProgram, OperatorAcademicDegree, OperatorEducationalProgram  # noqa: F401
 from app.models.queue_log import QueueLog  # noqa: F401
 from app.models.operator import Operator  # noqa: F401

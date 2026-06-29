@@ -122,6 +122,23 @@ export type ApplicantPayload = {
   telegram_chat_id: number | null
 }
 
+export type ApplicantReportItem = {
+  id: string
+  report_date: string
+  file_name: string
+  content: string
+  uploaded_by_id: string | null
+  created_at: string
+  updated_at: string
+  is_latest_fallback: boolean
+}
+
+export type ApplicantReportPayload = {
+  report_date: string
+  file_name: string
+  content: string
+}
+
 export type TicketEventType =
   | 'TICKET_CREATED'
   | 'TICKET_ASSIGNED'
@@ -468,6 +485,14 @@ export const adminApi = {
     update: (id: string, payload: Partial<ApplicantPayload>) =>
       request<ApplicantItem>(`/applicants/${id}`, { method: 'PATCH', body: payload }),
     delete: (id: string) => request<void>(`/applicants/${id}`, { method: 'DELETE' }),
+  },
+  applicantReports: {
+    current: (reportDate?: string) => {
+      const queryString = reportDate ? `?report_date=${encodeURIComponent(reportDate)}` : ''
+      return request<ApplicantReportItem>(`/applicant-reports/current${queryString}`)
+    },
+    save: (payload: ApplicantReportPayload) =>
+      request<ApplicantReportItem>('/applicant-reports/', { method: 'POST', body: payload }),
   },
   ticketEvents: {
     list: () => request<TicketEventItem[]>('/ticket-events/'),

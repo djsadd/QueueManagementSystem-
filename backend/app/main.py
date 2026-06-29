@@ -6,6 +6,7 @@ from app.services.kafka_event_service import KafkaEventService
 
 # Routers
 from app.api.applicants.routes import applicants_router
+from app.api.applicant_reports.routes import applicant_reports_router
 from app.api.auth.auth import auth_router
 from app.api.education.routes import academic_degrees_router, educational_programs_router, operator_programs_router
 from app.api.operators.routes import operators_router
@@ -19,6 +20,7 @@ from app.api.windows.routes import windows_router
 
 app = FastAPI()
 app.include_router(applicants_router)
+app.include_router(applicant_reports_router)
 app.include_router(auth_router)
 app.include_router(public_router)
 app.include_router(realtime_router)
