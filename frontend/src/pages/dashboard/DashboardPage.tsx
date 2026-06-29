@@ -2055,6 +2055,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [ticketEvents, setTicketEvents] = useState<TicketEventItem[]>([])
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
   const [analyticsTickets, setAnalyticsTickets] = useState<TicketItem[]>([])
+  const [analyticsBaseLoaded, setAnalyticsBaseLoaded] = useState(false)
+  const [analyticsBaseLoading, setAnalyticsBaseLoading] = useState(false)
+  const [analyticsDataScope, setAnalyticsDataScope] = useState<AnalyticsSelection>(null)
+  const [analyticsDataLoading, setAnalyticsDataLoading] = useState(false)
+  const [analyticsDataError, setAnalyticsDataError] = useState('')
   const [ticketExportingKey, setTicketExportingKey] = useState<string | null>(null)
   const [applicantReportAnalysis, setApplicantReportAnalysis] =
     useState<ApplicantReportAnalysis | null>(null)
@@ -2145,6 +2150,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [currentTime, setCurrentTime] = useState(() => new Date())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const analyticsRequestIdRef = useRef(0)
 
   useEffect(() => {
     myWindowTicketsRef.current = myWindowTickets
@@ -2422,8 +2428,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         programRows,
         applicantRows,
         ticketEventRows,
-        analyticsRows,
-        ticketRows,
       ] = await Promise.all([
         adminApi.services.list(),
         adminApi.windows.list(),
@@ -2433,8 +2437,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         adminApi.educationalPrograms.list(),
         adminApi.applicants.list(),
         adminApi.ticketEvents.list(),
-        adminApi.ticketEvents.analytics(),
-        adminApi.tickets.export(),
       ])
       const operatorProgramsRows = await Promise.all(
         operatorRows.map(async (operator) => ({
@@ -2457,8 +2459,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       setEducationalPrograms(programRows)
       setApplicants(applicantRows)
       setTicketEvents(ticketEventRows)
-      setOperatorAnalytics(analyticsRows)
-      setAnalyticsTickets(ticketRows)
+      setAnalyticsBaseLoaded(true)
       setOperatorProgramIds(
         Object.fromEntries(
           operatorProgramsRows.map((row) => [
@@ -2533,6 +2534,96 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить данные')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadAdminAnalyticsBaseData() {
+    if (analyticsBaseLoaded || analyticsBaseLoading) {
+      return
+    }
+
+    setAnalyticsBaseLoading(true)
+    setError('')
+
+    try {
+      const [userRows, operatorRows] = await Promise.all([
+        adminApi.users.list(),
+        adminApi.operators.list(),
+      ])
+
+      setUsers(userRows)
+      setOperators(operatorRows)
+      setAnalyticsBaseLoaded(true)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить операторов')
+    } finally {
+      setAnalyticsBaseLoading(false)
+    }
+  }
+
+  function hasAnalyticsDataForSelection(selection: AnalyticsSelection) {
+    if (selection === null) {
+      return true
+    }
+
+    if (selection === 'general') {
+      return analyticsDataScope === 'general'
+    }
+
+    return analyticsDataScope === selection || operatorAnalytics.some((stats) => stats.operator_id === selection)
+  }
+
+  async function loadAdminAnalyticsData(selection: AnalyticsSelection) {
+    if (selection === null || hasAnalyticsDataForSelection(selection)) {
+      return
+    }
+
+    const requestId = analyticsRequestIdRef.current + 1
+    analyticsRequestIdRef.current = requestId
+    setAnalyticsDataLoading(true)
+    setAnalyticsDataError('')
+
+    try {
+      if (selection === 'general') {
+        const [analyticsRows, ticketRows, ticketEventRows] = await Promise.all([
+          adminApi.ticketEvents.analytics(),
+          adminApi.tickets.export(),
+          adminApi.ticketEvents.list(),
+        ])
+
+        if (analyticsRequestIdRef.current !== requestId) {
+          return
+        }
+
+        setOperatorAnalytics(analyticsRows)
+        setAnalyticsTickets(ticketRows)
+        setTicketEvents(ticketEventRows)
+        setAnalyticsDataScope('general')
+        return
+      }
+
+      const analyticsRows = await adminApi.ticketEvents.analytics({ operator_id: selection })
+
+      if (analyticsRequestIdRef.current !== requestId) {
+        return
+      }
+
+      setOperatorAnalytics((currentRows) => {
+        const nextRowsByOperatorId = new Map(currentRows.map((row) => [row.operator_id, row]))
+        analyticsRows.forEach((row) => nextRowsByOperatorId.set(row.operator_id, row))
+        return Array.from(nextRowsByOperatorId.values())
+      })
+      setAnalyticsDataScope(selection)
+    } catch (requestError) {
+      if (analyticsRequestIdRef.current === requestId) {
+        setAnalyticsDataError(
+          requestError instanceof Error ? requestError.message : 'Не удалось загрузить аналитику',
+        )
+      }
+    } finally {
+      if (analyticsRequestIdRef.current === requestId) {
+        setAnalyticsDataLoading(false)
+      }
     }
   }
 
@@ -2660,16 +2751,38 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   }
 
   useEffect(() => {
-    if (isAdminUser) {
+    if (isAdminUser && activeSection !== 'analytics') {
       void loadAdminData()
     }
-  }, [isAdminUser])
+  }, [activeSection, isAdminUser])
 
   useEffect(() => {
-    if (isAdminUser) {
+    if (isAdminUser && activeSection === 'analytics') {
+      void loadAdminAnalyticsBaseData()
+    }
+  }, [activeSection, analyticsBaseLoaded, analyticsBaseLoading, isAdminUser])
+
+  useEffect(() => {
+    if (
+      isAdminUser &&
+      activeSection === 'analytics' &&
+      analyticsBaseLoaded &&
+      selectedAnalyticsOperatorId !== null
+    ) {
+      void loadAdminAnalyticsData(selectedAnalyticsOperatorId)
+    }
+  }, [activeSection, analyticsBaseLoaded, analyticsDataScope, isAdminUser, selectedAnalyticsOperatorId])
+
+  useEffect(() => {
+    if (
+      isAdminUser &&
+      activeSection === 'analytics' &&
+      selectedAnalyticsOperatorId === 'general' &&
+      analyticsDataScope === 'general'
+    ) {
       void loadSavedApplicantReport(applicantReportDate)
     }
-  }, [isAdminUser, applicantReportDate])
+  }, [activeSection, analyticsDataScope, isAdminUser, applicantReportDate, selectedAnalyticsOperatorId])
 
   useEffect(() => {
     if (!savedApplicantReport) {
@@ -3810,6 +3923,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     operator: operators.find((operator) => operator.id === stats.operator_id),
     stats,
   }))
+  const operatorAnalyticsRowsByOperatorId = new Map(
+    operatorAnalyticsRows.map((row) => [row.stats.operator_id, row]),
+  )
+  const analyticsOperatorCards = operators.map((operator) => ({
+    operator,
+    stats: operatorAnalyticsRowsByOperatorId.get(operator.id)?.stats ?? null,
+  }))
   const operatorPerformancePoints = operatorAnalyticsRows.map<OperatorPerformancePoint>(({ operator, stats }) => ({
     averageProcessingMinutes: Math.round((stats.average_processing_seconds / 60) * 10) / 10,
     clientsPerHour: getOperatorClientsPerHour(stats),
@@ -3844,6 +3964,15 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       ? null
       : operatorAnalyticsRows[0] ?? null
   const selectedGeneralAnalytics = isAdminUser && selectedAnalyticsOperatorId === 'general'
+  const selectedAnalyticsDataReady = hasAnalyticsDataForSelection(selectedAnalyticsOperatorId)
+  const selectedOperatorAnalyticsIsLoading =
+    isAdminUser &&
+    activeSection === 'analytics' &&
+    selectedAnalyticsOperatorId !== null &&
+    selectedAnalyticsOperatorId !== 'general' &&
+    !selectedOperatorAnalyticsRow &&
+    !selectedAnalyticsDataReady &&
+    !analyticsDataError
   const analyticsExportOperatorId =
     selectedAnalyticsOperatorId && selectedAnalyticsOperatorId !== 'general' ? selectedAnalyticsOperatorId : null
   const analyticsExportLabel = selectedOperatorAnalyticsRow
@@ -5001,7 +5130,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 <button
                   className="secondary-action compact"
                   type="button"
-                  disabled={ticketExportingKey !== null || loading}
+                  disabled={ticketExportingKey !== null || loading || analyticsDataLoading}
                   onClick={() => exportTicketsCsv(analyticsExportOperatorId, analyticsExportLabel)}
                 >
                   <Icon name="download" />
@@ -5016,14 +5145,22 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
             {isAdminUser && !selectedOperatorAnalyticsRow && (
               <>
-                {selectedGeneralAnalytics && !loading && operatorAnalyticsRows.length > 0 && (
+                {selectedGeneralAnalytics && !selectedAnalyticsDataReady && !analyticsDataError && (
+                  <div className="analytics-empty">Загрузка общей аналитики...</div>
+                )}
+
+                {selectedGeneralAnalytics && analyticsDataError && (
+                  <div className="admin-alert">{analyticsDataError}</div>
+                )}
+
+                {selectedGeneralAnalytics && selectedAnalyticsDataReady && !analyticsDataError && (
                   <div className="analytics-dashboard-section analytics-general-section">
                     <div className="analytics-section-heading">
                       <div>
                         <span className="profile-label">Раздел</span>
                         <h2>Общая аналитика</h2>
                       </div>
-                      <span className="analytics-status">{operatorPerformancePoints.length} операторов</span>
+                      <span className="analytics-status">{operators.length} операторов</span>
                     </div>
 
                     <div className="analytics-performance-summary">
@@ -5263,11 +5400,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
                 {!selectedAnalyticsOperatorId && (
                 <div className="analytics-employee-grid">
-                {loading && <div className="analytics-empty">Загрузка...</div>}
-                {!loading && operatorAnalyticsRows.length === 0 && (
+                {analyticsBaseLoading && <div className="analytics-empty">Загрузка операторов...</div>}
+                {!analyticsBaseLoading && analyticsOperatorCards.length === 0 && (
                   <div className="analytics-empty">Данных по операторам пока нет</div>
                 )}
-                {!loading && operatorAnalyticsRows.length > 0 && (
+                {!analyticsBaseLoading && analyticsOperatorCards.length > 0 && (
                   <a
                     className="analytics-employee-card analytics-general-link-card"
                     href={buildSectionPath(lang, 'analytics', 'general')}
@@ -5281,7 +5418,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         <span className="profile-label">Раздел</span>
                         <strong>Общая аналитика</strong>
                       </div>
-                      <span className="analytics-status">{operatorPerformancePoints.length} операторов</span>
+                      <span className="analytics-status">{operators.length} операторов</span>
                     </div>
                     <div className="analytics-employee-metrics">
                       <span>
@@ -5299,43 +5436,65 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                     </div>
                   </a>
                 )}
-                {!loading && operatorAnalyticsRows.map(({ operator, stats }) => (
+                {!analyticsBaseLoading && analyticsOperatorCards.map(({ operator, stats }) => (
                   <a
                     className="analytics-employee-card"
-                    href={buildSectionPath(lang, 'analytics', stats.operator_id)}
-                    key={stats.operator_id}
+                    href={buildSectionPath(lang, 'analytics', operator.id)}
+                    key={operator.id}
                     onClick={(event) => {
                       event.preventDefault()
-                      navigateToSection('analytics', stats.operator_id)
+                      navigateToSection('analytics', operator.id)
                     }}
                   >
                     <div className="analytics-card-header">
                       <div>
                         <span className="profile-label">Сотрудник</span>
-                        <strong>{getAnalyticsOperatorLabel(stats, operator, users)}</strong>
+                        <strong>
+                          {stats
+                            ? getAnalyticsOperatorLabel(stats, operator, users)
+                            : getUserLabel(users, operator.user_id)}
+                        </strong>
                       </div>
                       <span className="analytics-status">
-                        {operator ? operatorStatusLabels[operator.status] : 'Без статуса'}
+                        {operatorStatusLabels[operator.status]}
                       </span>
                     </div>
                     <div className="analytics-employee-metrics">
                       <span>
                         Клиентов/час
-                        <strong>{formatDecimal(getOperatorClientsPerHour(stats))}</strong>
+                        <strong>{stats ? formatDecimal(getOperatorClientsPerHour(stats)) : '-'}</strong>
                       </span>
                       <span>
                         Эфф. время
-                        <strong>{formatDuration(stats.total_processing_seconds)}</strong>
+                        <strong>{stats ? formatDuration(stats.total_processing_seconds) : '-'}</strong>
                       </span>
                       <span>
                         Загрузка
-                        <strong>{getOperatorUtilizationPercent(stats)}%</strong>
+                        <strong>{stats ? `${getOperatorUtilizationPercent(stats)}%` : '-'}</strong>
                       </span>
                     </div>
                   </a>
                 ))}
               </div>
                 )}
+
+                {selectedOperatorAnalyticsIsLoading && (
+                  <div className="analytics-empty">Загрузка отчета оператора...</div>
+                )}
+
+                {selectedAnalyticsOperatorId &&
+                  selectedAnalyticsOperatorId !== 'general' &&
+                  analyticsDataError && (
+                    <div className="admin-alert">{analyticsDataError}</div>
+                  )}
+
+                {selectedAnalyticsOperatorId &&
+                  selectedAnalyticsOperatorId !== 'general' &&
+                  selectedAnalyticsDataReady &&
+                  !selectedOperatorAnalyticsRow &&
+                  !analyticsDataError && (
+                    <div className="analytics-empty">Данных по оператору пока нет</div>
+                  )}
               </>
             )}
 

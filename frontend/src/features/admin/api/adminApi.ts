@@ -312,6 +312,10 @@ export type TicketExportParams = {
   operator_id?: string
 }
 
+export type TicketEventAnalyticsParams = {
+  operator_id?: string
+}
+
 export type TicketServiceReassignPayload = {
   service_id: number
   educational_program_id: number | null
@@ -497,7 +501,18 @@ export const adminApi = {
   ticketEvents: {
     list: () => request<TicketEventItem[]>('/ticket-events/'),
     me: () => request<TicketEventItem[]>('/ticket-events/me'),
-    analytics: () => request<OperatorTicketAnalyticsItem[]>('/ticket-events/analytics'),
+    analytics: (params: TicketEventAnalyticsParams = {}) => {
+      const searchParams = new URLSearchParams()
+
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          searchParams.set(key, String(value))
+        }
+      })
+
+      const queryString = searchParams.toString()
+      return request<OperatorTicketAnalyticsItem[]>(`/ticket-events/analytics${queryString ? `?${queryString}` : ''}`)
+    },
     myAnalytics: () => request<OperatorTicketAnalyticsItem>('/ticket-events/me/analytics'),
     create: (payload: TicketEventPayload) =>
       request<TicketEventItem>('/ticket-events/', { method: 'POST', body: payload }),

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,8 +82,11 @@ async def get_my_ticket_events(
     response_model=list[OperatorTicketAnalyticsResponse],
     dependencies=[Depends(require_admin)],
 )
-async def get_ticket_event_analytics(db: AsyncSession = Depends(get_db)):
-    return await TicketEventService.get_operator_analytics(db)
+async def get_ticket_event_analytics(
+    operator_id: uuid.UUID | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await TicketEventService.get_operator_analytics(db, operator_id)
 
 
 @ticket_events_router.get("/me/analytics", response_model=OperatorTicketAnalyticsResponse)
