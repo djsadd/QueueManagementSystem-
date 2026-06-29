@@ -49,6 +49,7 @@ type CrudSection =
   | 'applicants'
   | 'ticketEvents'
 type DashboardSection = CrudSection | 'profile' | 'myWindow' | 'analytics' | 'reception'
+type AnalyticsSelection = 'general' | string | null
 type MyWindowRealtimeStatus = 'connecting' | 'connected' | 'disconnected'
 type MyWindowTicketHighlight = 'new' | 'updated'
 type AnalyticsTimeGrouping = 'day' | 'month'
@@ -394,7 +395,7 @@ function getSectionFromPath(): DashboardSection {
   return isDashboardSection(sectionCandidate) ? sectionCandidate : 'services'
 }
 
-function getAnalyticsOperatorIdFromPath() {
+function getAnalyticsSelectionFromPath(): AnalyticsSelection {
   const pathParts = window.location.pathname.split('/').filter(Boolean)
   const analyticsIndex = pathParts.indexOf('analytics')
 
@@ -402,19 +403,19 @@ function getAnalyticsOperatorIdFromPath() {
     return null
   }
 
-  const operatorId = pathParts[analyticsIndex + 1]
-  return operatorId ? decodeURIComponent(operatorId) : null
+  const analyticsSelection = pathParts[analyticsIndex + 1]
+  return analyticsSelection ? decodeURIComponent(analyticsSelection) : null
 }
 
 function canUseOperatorSection(section: DashboardSection) {
   return section === 'myWindow' || section === 'profile'
 }
 
-function buildSectionPath(lang: Lang, section: DashboardSection, analyticsOperatorId: string | null = null) {
-  const analyticsOperatorPath =
-    section === 'analytics' && analyticsOperatorId ? `/${encodeURIComponent(analyticsOperatorId)}` : ''
+function buildSectionPath(lang: Lang, section: DashboardSection, analyticsSelection: AnalyticsSelection = null) {
+  const analyticsSelectionPath =
+    section === 'analytics' && analyticsSelection ? `/${encodeURIComponent(analyticsSelection)}` : ''
 
-  return `/${lang}/admin/${sectionPaths[section]}${analyticsOperatorPath}${window.location.search}${window.location.hash}`
+  return `/${lang}/admin/${sectionPaths[section]}${analyticsSelectionPath}${window.location.search}${window.location.hash}`
 }
 
 function buildOperatorDisplayPath(lang: Lang) {
@@ -2053,8 +2054,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => getDefaultSummerDateRange().from)
   const [analyticsDateTo, setAnalyticsDateTo] = useState(() => getDefaultSummerDateRange().to)
   const [analyticsTimeGrouping, setAnalyticsTimeGrouping] = useState<AnalyticsTimeGrouping>('day')
-  const [selectedAnalyticsOperatorId, setSelectedAnalyticsOperatorId] = useState<string | null>(() =>
-    isAdminUser ? getAnalyticsOperatorIdFromPath() : null,
+  const [selectedAnalyticsOperatorId, setSelectedAnalyticsOperatorId] = useState<AnalyticsSelection>(() =>
+    isAdminUser ? getAnalyticsSelectionFromPath() : null,
   )
   const [myWindowTickets, setMyWindowTickets] = useState<MyWindowTickets | null>(null)
   const [myWindowRealtimeStatus, setMyWindowRealtimeStatus] =
@@ -2171,7 +2172,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
       const nextSection = getSectionFromPath()
       setActiveSection(nextSection)
-      setSelectedAnalyticsOperatorId(nextSection === 'analytics' ? getAnalyticsOperatorIdFromPath() : null)
+      setSelectedAnalyticsOperatorId(nextSection === 'analytics' ? getAnalyticsSelectionFromPath() : null)
     }
 
     window.addEventListener('popstate', syncSectionFromPath)
@@ -2179,13 +2180,14 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     return () => window.removeEventListener('popstate', syncSectionFromPath)
   }, [isAdminUser])
 
-  function navigateToSection(section: DashboardSection, analyticsOperatorId: string | null = null) {
+  function navigateToSection(section: DashboardSection, analyticsSelection: AnalyticsSelection = null) {
     if (!isAdminUser && !canUseOperatorSection(section)) {
       section = 'myWindow'
     }
 
+    const nextAnalyticsSelection = section === 'analytics' && isAdminUser ? analyticsSelection : null
     setActiveSection(section)
-    setSelectedAnalyticsOperatorId(section === 'analytics' && isAdminUser ? analyticsOperatorId : null)
+    setSelectedAnalyticsOperatorId(nextAnalyticsSelection)
     closeFormModal()
     setDeleteTarget(null)
     setProfileMenuOpen(false)
@@ -2193,7 +2195,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     const sectionPath = buildSectionPath(
       lang,
       section,
-      section === 'analytics' && isAdminUser ? analyticsOperatorId : null,
+      nextAnalyticsSelection,
     )
     const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
 
@@ -4888,15 +4890,16 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 operatorStatusLabels[operator.status],
                 new Date(operator.created_at).toLocaleString(),
                 <div className="row-actions" key={operator.id}>
-                  <button
+                  <a
                     className="secondary-action compact"
-                    type="button"
-                    onClick={() => {
+                    href={buildSectionPath(lang, 'analytics', operator.id)}
+                    onClick={(event) => {
+                      event.preventDefault()
                       navigateToSection('analytics', operator.id)
                     }}
                   >
                     Отчет
-                  </button>
+                  </a>
                   <button
                     className="secondary-action compact"
                     type="button"
@@ -4940,14 +4943,17 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             {isAdminUser && (
               <div className="analytics-master">
                 {selectedAnalyticsOperatorId ? (
-                  <button
+                  <a
                     className="secondary-action compact"
-                    type="button"
-                    onClick={() => navigateToSection('analytics')}
+                    href={buildSectionPath(lang, 'analytics')}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      navigateToSection('analytics')
+                    }}
                   >
                     <Icon name="users" />
                     Все сотрудники
-                  </button>
+                  </a>
                 ) : (
                   <span className="profile-label">Выберите сотрудника для детального отчета</span>
                 )}
@@ -5220,10 +5226,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                   <div className="analytics-empty">Данных по операторам пока нет</div>
                 )}
                 {!loading && operatorAnalyticsRows.length > 0 && (
-                  <button
+                  <a
                     className="analytics-employee-card analytics-general-link-card"
-                    type="button"
-                    onClick={() => navigateToSection('analytics', 'general')}
+                    href={buildSectionPath(lang, 'analytics', 'general')}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      navigateToSection('analytics', 'general')
+                    }}
                   >
                     <div className="analytics-card-header">
                       <div>
@@ -5246,14 +5255,17 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         <strong>{operatorPerformanceUtilization}%</strong>
                       </span>
                     </div>
-                  </button>
+                  </a>
                 )}
                 {!loading && operatorAnalyticsRows.map(({ operator, stats }) => (
-                  <button
+                  <a
                     className="analytics-employee-card"
+                    href={buildSectionPath(lang, 'analytics', stats.operator_id)}
                     key={stats.operator_id}
-                    type="button"
-                    onClick={() => navigateToSection('analytics', stats.operator_id)}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      navigateToSection('analytics', stats.operator_id)
+                    }}
                   >
                     <div className="analytics-card-header">
                       <div>
@@ -5278,7 +5290,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         <strong>{getOperatorUtilizationPercent(stats)}%</strong>
                       </span>
                     </div>
-                  </button>
+                  </a>
                 ))}
               </div>
                 )}

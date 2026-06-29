@@ -510,6 +510,7 @@
   font-size: 18px;
   font-weight: 800;
   padding: 0 30px;
+  text-decoration: none;
 }
 
 .primary-action {
@@ -1173,6 +1174,7 @@
   font: inherit;
   padding: 18px;
   text-align: left;
+  text-decoration: none;
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
