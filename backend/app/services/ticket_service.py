@@ -1,6 +1,6 @@
 import uuid
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -337,12 +337,20 @@ class TicketService:
     async def get_export_tickets(
         db,
         operator_id: uuid.UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
     ) -> list[dict]:
         conditions = []
 
         if operator_id is not None:
             await TicketService.ensure_operator_exists(db, operator_id)
             conditions.append(Ticket.operator_id == operator_id)
+
+        if date_from is not None:
+            conditions.append(func.date(Ticket.created_at) >= date_from)
+
+        if date_to is not None:
+            conditions.append(func.date(Ticket.created_at) <= date_to)
 
         result = await db.execute(
             select(Ticket)

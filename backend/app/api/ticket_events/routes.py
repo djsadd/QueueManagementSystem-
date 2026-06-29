@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
@@ -58,8 +59,12 @@ async def create_ticket_event(
 
 
 @ticket_events_router.get("/", response_model=list[TicketEventResponse], dependencies=[Depends(require_admin)])
-async def get_ticket_events(db: AsyncSession = Depends(get_db)):
-    ticket_events = await TicketEventService.get_all(db)
+async def get_ticket_events(
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    ticket_events = await TicketEventService.get_all(db, date_from=date_from, date_to=date_to)
     return [await serialize_ticket_event(db, ticket_event) for ticket_event in ticket_events]
 
 
@@ -84,13 +89,22 @@ async def get_my_ticket_events(
 )
 async def get_ticket_event_analytics(
     operator_id: uuid.UUID | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    return await TicketEventService.get_operator_analytics(db, operator_id)
+    return await TicketEventService.get_operator_analytics(
+        db,
+        operator_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
 
 @ticket_events_router.get("/me/analytics", response_model=OperatorTicketAnalyticsResponse)
 async def get_my_ticket_event_analytics(
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -99,7 +113,12 @@ async def get_my_ticket_event_analytics(
     if operator is None:
         raise HTTPException(status_code=404, detail="Operator not found")
 
-    rows = await TicketEventService.get_operator_analytics(db, operator.id)
+    rows = await TicketEventService.get_operator_analytics(
+        db,
+        operator.id,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
     if not rows:
         raise HTTPException(status_code=404, detail="Operator not found")

@@ -1,9 +1,9 @@
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,8 +57,17 @@ class TicketEventService:
         return ticket_event
 
     @staticmethod
-    async def get_all(db: AsyncSession) -> list[TicketEvent]:
-        result = await db.execute(select(TicketEvent).order_by(TicketEvent.created_at.desc()))
+    async def get_all(
+        db: AsyncSession,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[TicketEvent]:
+        query = TicketEventService.apply_created_at_date_filter(
+            select(TicketEvent),
+            date_from,
+            date_to,
+        )
+        result = await db.execute(query.order_by(TicketEvent.created_at.desc()))
         return list(result.scalars().all())
 
     @staticmethod
@@ -90,6 +99,8 @@ class TicketEventService:
     async def get_operator_analytics(
         db: AsyncSession,
         operator_id: uuid.UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
     ) -> list[dict]:
         operator_query = select(Operator)
         if operator_id is not None:
@@ -102,6 +113,7 @@ class TicketEventService:
         event_query = select(TicketEvent)
         if operator_id is not None:
             event_query = event_query.where(TicketEvent.operator_id == operator_id)
+        event_query = TicketEventService.apply_created_at_date_filter(event_query, date_from, date_to)
 
         event_result = await db.execute(event_query.order_by(TicketEvent.created_at.desc()))
         events = list(event_result.scalars().all())
@@ -115,6 +127,11 @@ class TicketEventService:
         tickets_by_operator: dict[uuid.UUID, list[Ticket]] = {}
         if operator_ids:
             ticket_query = select(Ticket).where(Ticket.operator_id.in_(operator_ids))
+            ticket_query = TicketEventService.apply_ticket_created_at_date_filter(
+                ticket_query,
+                date_from,
+                date_to,
+            )
             ticket_result = await db.execute(ticket_query)
             for ticket in ticket_result.scalars().all():
                 if ticket.operator_id is None:
@@ -201,6 +218,26 @@ class TicketEventService:
             )
 
         return rows
+
+    @staticmethod
+    def apply_created_at_date_filter(query, date_from: date | None, date_to: date | None):
+        if date_from is not None:
+            query = query.where(func.date(TicketEvent.created_at) >= date_from)
+
+        if date_to is not None:
+            query = query.where(func.date(TicketEvent.created_at) <= date_to)
+
+        return query
+
+    @staticmethod
+    def apply_ticket_created_at_date_filter(query, date_from: date | None, date_to: date | None):
+        if date_from is not None:
+            query = query.where(func.date(Ticket.created_at) >= date_from)
+
+        if date_to is not None:
+            query = query.where(func.date(Ticket.created_at) <= date_to)
+
+        return query
 
     @staticmethod
     def event_matches(ticket_event: TicketEvent, event_type: str, new_status: str) -> bool:

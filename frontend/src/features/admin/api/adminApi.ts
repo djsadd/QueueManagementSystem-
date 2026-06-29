@@ -309,10 +309,19 @@ export type ReceptionTicketParams = {
 }
 
 export type TicketExportParams = {
+  date_from?: string
+  date_to?: string
   operator_id?: string
 }
 
+export type TicketEventListParams = {
+  date_from?: string
+  date_to?: string
+}
+
 export type TicketEventAnalyticsParams = {
+  date_from?: string
+  date_to?: string
   operator_id?: string
 }
 
@@ -499,7 +508,18 @@ export const adminApi = {
       request<ApplicantReportItem>('/applicant-reports/', { method: 'POST', body: payload }),
   },
   ticketEvents: {
-    list: () => request<TicketEventItem[]>('/ticket-events/'),
+    list: (params: TicketEventListParams = {}) => {
+      const searchParams = new URLSearchParams()
+
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          searchParams.set(key, String(value))
+        }
+      })
+
+      const queryString = searchParams.toString()
+      return request<TicketEventItem[]>(`/ticket-events/${queryString ? `?${queryString}` : ''}`)
+    },
     me: () => request<TicketEventItem[]>('/ticket-events/me'),
     analytics: (params: TicketEventAnalyticsParams = {}) => {
       const searchParams = new URLSearchParams()
@@ -513,7 +533,18 @@ export const adminApi = {
       const queryString = searchParams.toString()
       return request<OperatorTicketAnalyticsItem[]>(`/ticket-events/analytics${queryString ? `?${queryString}` : ''}`)
     },
-    myAnalytics: () => request<OperatorTicketAnalyticsItem>('/ticket-events/me/analytics'),
+    myAnalytics: (params: TicketEventAnalyticsParams = {}) => {
+      const searchParams = new URLSearchParams()
+
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          searchParams.set(key, String(value))
+        }
+      })
+
+      const queryString = searchParams.toString()
+      return request<OperatorTicketAnalyticsItem>(`/ticket-events/me/analytics${queryString ? `?${queryString}` : ''}`)
+    },
     create: (payload: TicketEventPayload) =>
       request<TicketEventItem>('/ticket-events/', { method: 'POST', body: payload }),
     update: (id: string, payload: Partial<TicketEventPayload>) =>

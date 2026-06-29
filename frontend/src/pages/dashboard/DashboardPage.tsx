@@ -430,6 +430,10 @@ function isSpecificAnalyticsOperatorSelection(selection: AnalyticsSelection) {
   return selection !== null && selection !== 'general' && selection !== ANALYTICS_OPERATORS_SELECTION
 }
 
+function buildAnalyticsDataScopeKey(selection: AnalyticsSelection, dateFrom: string, dateTo: string) {
+  return selection === null ? null : `${selection}:${dateFrom}:${dateTo}`
+}
+
 function canUseOperatorSection(section: DashboardSection) {
   return section === 'myWindow' || section === 'profile'
 }
@@ -2075,7 +2079,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [analyticsTickets, setAnalyticsTickets] = useState<TicketItem[]>([])
   const [analyticsBaseLoaded, setAnalyticsBaseLoaded] = useState(false)
   const [analyticsBaseLoading, setAnalyticsBaseLoading] = useState(false)
-  const [analyticsDataScope, setAnalyticsDataScope] = useState<AnalyticsSelection>(null)
+  const [analyticsDataScope, setAnalyticsDataScope] = useState<string | null>(null)
   const [analyticsDataLoading, setAnalyticsDataLoading] = useState(false)
   const [analyticsDataError, setAnalyticsDataError] = useState('')
   const [ticketExportingKey, setTicketExportingKey] = useState<string | null>(null)
@@ -2249,6 +2253,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
     if (sectionPath !== currentPath) {
       window.history.pushState(null, '', sectionPath)
+    }
+  }
+
+  function getAnalyticsDateParams() {
+    return {
+      date_from: analyticsDateFrom || undefined,
+      date_to: analyticsDateTo || undefined,
     }
   }
 
@@ -2596,15 +2607,27 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       return true
     }
 
+    const requestedScope = buildAnalyticsDataScopeKey(selection, analyticsDateFrom, analyticsDateTo)
+    const generalScope = buildAnalyticsDataScopeKey('general', analyticsDateFrom, analyticsDateTo)
+    const operatorsScope = buildAnalyticsDataScopeKey(
+      ANALYTICS_OPERATORS_SELECTION,
+      analyticsDateFrom,
+      analyticsDateTo,
+    )
+
     if (selection === 'general') {
-      return analyticsDataScope === 'general'
+      return analyticsDataScope === requestedScope
     }
 
     if (selection === ANALYTICS_OPERATORS_SELECTION) {
-      return analyticsDataScope === ANALYTICS_OPERATORS_SELECTION || analyticsDataScope === 'general'
+      return analyticsDataScope === operatorsScope || analyticsDataScope === generalScope
     }
 
-    return analyticsDataScope === selection || operatorAnalytics.some((stats) => stats.operator_id === selection)
+    return (
+      analyticsDataScope === requestedScope ||
+      ((analyticsDataScope === generalScope || analyticsDataScope === operatorsScope) &&
+        operatorAnalytics.some((stats) => stats.operator_id === selection))
+    )
   }
 
   async function loadAdminAnalyticsData(selection: AnalyticsSelection) {
@@ -2618,11 +2641,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setAnalyticsDataError('')
 
     try {
+      const analyticsDateParams = getAnalyticsDateParams()
+
       if (selection === 'general') {
         const [analyticsRows, ticketRows, ticketEventRows] = await Promise.all([
-          adminApi.ticketEvents.analytics(),
-          adminApi.tickets.export(),
-          adminApi.ticketEvents.list(),
+          adminApi.ticketEvents.analytics(analyticsDateParams),
+          adminApi.tickets.export(analyticsDateParams),
+          adminApi.ticketEvents.list(analyticsDateParams),
         ])
 
         if (analyticsRequestIdRef.current !== requestId) {
@@ -2632,23 +2657,26 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         setOperatorAnalytics(analyticsRows)
         setAnalyticsTickets(ticketRows)
         setTicketEvents(ticketEventRows)
-        setAnalyticsDataScope('general')
+        setAnalyticsDataScope(buildAnalyticsDataScopeKey(selection, analyticsDateFrom, analyticsDateTo))
         return
       }
 
       if (selection === ANALYTICS_OPERATORS_SELECTION) {
-        const analyticsRows = await adminApi.ticketEvents.analytics()
+        const analyticsRows = await adminApi.ticketEvents.analytics(analyticsDateParams)
 
         if (analyticsRequestIdRef.current !== requestId) {
           return
         }
 
         setOperatorAnalytics(analyticsRows)
-        setAnalyticsDataScope(ANALYTICS_OPERATORS_SELECTION)
+        setAnalyticsDataScope(buildAnalyticsDataScopeKey(selection, analyticsDateFrom, analyticsDateTo))
         return
       }
 
-      const analyticsRows = await adminApi.ticketEvents.analytics({ operator_id: selection })
+      const analyticsRows = await adminApi.ticketEvents.analytics({
+        ...analyticsDateParams,
+        operator_id: selection,
+      })
 
       if (analyticsRequestIdRef.current !== requestId) {
         return
@@ -2659,7 +2687,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         analyticsRows.forEach((row) => nextRowsByOperatorId.set(row.operator_id, row))
         return Array.from(nextRowsByOperatorId.values())
       })
-      setAnalyticsDataScope(selection)
+      setAnalyticsDataScope(buildAnalyticsDataScopeKey(selection, analyticsDateFrom, analyticsDateTo))
     } catch (requestError) {
       if (analyticsRequestIdRef.current === requestId) {
         setAnalyticsDataError(
@@ -2783,7 +2811,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     try {
       const [operator, analyticsRow] = await Promise.all([
         adminApi.operators.me(),
-        adminApi.ticketEvents.myAnalytics(),
+        adminApi.ticketEvents.myAnalytics(getAnalyticsDateParams()),
       ])
 
       setOperators([operator])
@@ -2817,18 +2845,34 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     ) {
       void loadAdminAnalyticsData(selectedAnalyticsOperatorId)
     }
-  }, [activeSection, analyticsBaseLoaded, analyticsDataScope, isAdminUser, selectedAnalyticsOperatorId])
+  }, [
+    activeSection,
+    analyticsBaseLoaded,
+    analyticsDataScope,
+    analyticsDateFrom,
+    analyticsDateTo,
+    isAdminUser,
+    selectedAnalyticsOperatorId,
+  ])
 
   useEffect(() => {
     if (
       isAdminUser &&
       activeSection === 'analytics' &&
       selectedAnalyticsOperatorId === 'general' &&
-      analyticsDataScope === 'general'
+      analyticsDataScope === buildAnalyticsDataScopeKey('general', analyticsDateFrom, analyticsDateTo)
     ) {
       void loadSavedApplicantReport(applicantReportDate)
     }
-  }, [activeSection, analyticsDataScope, isAdminUser, applicantReportDate, selectedAnalyticsOperatorId])
+  }, [
+    activeSection,
+    analyticsDataScope,
+    analyticsDateFrom,
+    analyticsDateTo,
+    isAdminUser,
+    applicantReportDate,
+    selectedAnalyticsOperatorId,
+  ])
 
   useEffect(() => {
     if (!savedApplicantReport) {
@@ -2868,7 +2912,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
 
     void loadMyWindowData()
-  }, [activeSection, isAdminUser])
+  }, [activeSection, analyticsDateFrom, analyticsDateTo, isAdminUser])
 
   useEffect(() => {
     if (activeSection !== 'myWindow') {
@@ -3874,7 +3918,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setError('')
 
     try {
-      const tickets = await adminApi.tickets.export(operatorId ? { operator_id: operatorId } : {})
+      const tickets = await adminApi.tickets.export({
+        ...getAnalyticsDateParams(),
+        ...(operatorId ? { operator_id: operatorId } : {}),
+      })
       downloadTicketExport(tickets, scopeLabel)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось выгрузить талоны')
@@ -4004,16 +4051,20 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     operatorPerformanceTotalPresenceSeconds > 0
       ? Math.round((operatorPerformanceTotalEffectiveSeconds / operatorPerformanceTotalPresenceSeconds) * 100)
       : 0
-  const selectedOperatorAnalyticsRow = selectedAnalyticsOperatorId
+  const selectedGeneralAnalytics = isAdminUser && selectedAnalyticsOperatorId === 'general'
+  const selectedOperatorsAnalytics = isAdminUser && selectedAnalyticsOperatorId === ANALYTICS_OPERATORS_SELECTION
+  const selectedAnalyticsDataReady = hasAnalyticsDataForSelection(selectedAnalyticsOperatorId)
+  const selectedOperatorAnalyticsCandidate = selectedAnalyticsOperatorId
     ? selectedAnalyticsOperatorId === 'general' || selectedAnalyticsOperatorId === ANALYTICS_OPERATORS_SELECTION
       ? null
       : operatorAnalyticsRows.find((row) => row.stats.operator_id === selectedAnalyticsOperatorId) ?? null
     : isAdminUser
       ? null
       : operatorAnalyticsRows[0] ?? null
-  const selectedGeneralAnalytics = isAdminUser && selectedAnalyticsOperatorId === 'general'
-  const selectedOperatorsAnalytics = isAdminUser && selectedAnalyticsOperatorId === ANALYTICS_OPERATORS_SELECTION
-  const selectedAnalyticsDataReady = hasAnalyticsDataForSelection(selectedAnalyticsOperatorId)
+  const selectedOperatorAnalyticsRow =
+    isAdminUser && selectedAnalyticsOperatorId !== null && !selectedAnalyticsDataReady
+      ? null
+      : selectedOperatorAnalyticsCandidate
   const selectedOperatorAnalyticsIsLoading =
     isAdminUser &&
     activeSection === 'analytics' &&
@@ -5198,6 +5249,53 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               </div>
             )}
 
+            <div className="analytics-date-filter analytics-date-filter-top">
+              <div className="analytics-grouping-toggle" role="group" aria-label="Группировка аналитики">
+                <button
+                  className={analyticsTimeGrouping === 'day' ? 'selected' : ''}
+                  type="button"
+                  onClick={() => setAnalyticsTimeGrouping('day')}
+                >
+                  Дни
+                </button>
+                <button
+                  className={analyticsTimeGrouping === 'month' ? 'selected' : ''}
+                  type="button"
+                  onClick={() => setAnalyticsTimeGrouping('month')}
+                >
+                  Месяцы
+                </button>
+              </div>
+              <label>
+                <span>С даты</span>
+                <input
+                  type="date"
+                  value={analyticsDateFrom}
+                  onChange={(event) => setAnalyticsDateFrom(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>По дату</span>
+                <input
+                  type="date"
+                  value={analyticsDateTo}
+                  onChange={(event) => setAnalyticsDateTo(event.target.value)}
+                />
+              </label>
+              <div className="analytics-month-filter" role="group" aria-label="Быстрый выбор месяца">
+                {ANALYTICS_QUICK_MONTHS.map((monthOption) => (
+                  <button
+                    className={selectedAnalyticsMonth === monthOption.month ? 'selected' : ''}
+                    key={monthOption.month}
+                    type="button"
+                    onClick={() => selectAnalyticsMonth(monthOption.month)}
+                  >
+                    {monthOption.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {isAdminUser && !selectedOperatorAnalyticsRow && (
               <>
                 {!selectedAnalyticsOperatorId && (
@@ -5398,52 +5496,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                           {generalDailyAnalyticsRows.length} {generalDailyAnalyticsUnitLabel}
                         </span>
                       </div>
-                      <div className="analytics-date-filter">
-                        <div className="analytics-grouping-toggle" role="group" aria-label="Группировка общей аналитики">
-                          <button
-                            className={analyticsTimeGrouping === 'day' ? 'selected' : ''}
-                            type="button"
-                            onClick={() => setAnalyticsTimeGrouping('day')}
-                          >
-                            Дни
-                          </button>
-                          <button
-                            className={analyticsTimeGrouping === 'month' ? 'selected' : ''}
-                            type="button"
-                            onClick={() => setAnalyticsTimeGrouping('month')}
-                          >
-                            Месяцы
-                          </button>
-                        </div>
-                        <label>
-                          <span>С даты</span>
-                          <input
-                            type="date"
-                            value={analyticsDateFrom}
-                            onChange={(event) => setAnalyticsDateFrom(event.target.value)}
-                          />
-                        </label>
-                        <label>
-                          <span>По дату</span>
-                          <input
-                            type="date"
-                            value={analyticsDateTo}
-                            onChange={(event) => setAnalyticsDateTo(event.target.value)}
-                          />
-                        </label>
-                        <div className="analytics-month-filter" role="group" aria-label="Быстрый выбор месяца">
-                          {ANALYTICS_QUICK_MONTHS.map((monthOption) => (
-                            <button
-                              className={selectedAnalyticsMonth === monthOption.month ? 'selected' : ''}
-                              key={monthOption.month}
-                              type="button"
-                              onClick={() => selectAnalyticsMonth(monthOption.month)}
-                            >
-                              {monthOption.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
                       {generalDailyAnalyticsRows.length === 0 ? (
                         <div className="analytics-empty">{generalDailyAnalyticsEmptyLabel}</div>
                       ) : (
@@ -5533,7 +5585,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                     {!analyticsBaseLoading && analyticsOperatorCards.length === 0 && (
                       <div className="analytics-empty">Данных по операторам пока нет</div>
                     )}
-                    {!analyticsBaseLoading && analyticsOperatorCards.map(({ operator, stats }) => (
+                    {!analyticsBaseLoading && selectedAnalyticsDataReady && analyticsOperatorCards.map(({ operator, stats }) => (
                       <a
                         className="analytics-employee-card"
                         href={buildSectionPath(lang, 'analytics', operator.id)}
@@ -5668,52 +5720,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       <span className="analytics-status">
                         {selectedDailyAnalyticsRows.length} {selectedDailyAnalyticsUnitLabel}
                       </span>
-                    </div>
-                    <div className="analytics-date-filter">
-                      <div className="analytics-grouping-toggle" role="group" aria-label="Группировка графика">
-                        <button
-                          className={analyticsTimeGrouping === 'day' ? 'selected' : ''}
-                          type="button"
-                          onClick={() => setAnalyticsTimeGrouping('day')}
-                        >
-                          Дни
-                        </button>
-                        <button
-                          className={analyticsTimeGrouping === 'month' ? 'selected' : ''}
-                          type="button"
-                          onClick={() => setAnalyticsTimeGrouping('month')}
-                        >
-                          Месяцы
-                        </button>
-                      </div>
-                      <label>
-                        <span>С даты</span>
-                        <input
-                          type="date"
-                          value={analyticsDateFrom}
-                          onChange={(event) => setAnalyticsDateFrom(event.target.value)}
-                        />
-                      </label>
-                      <label>
-                        <span>По дату</span>
-                        <input
-                          type="date"
-                          value={analyticsDateTo}
-                          onChange={(event) => setAnalyticsDateTo(event.target.value)}
-                        />
-                      </label>
-                      <div className="analytics-month-filter" role="group" aria-label="Быстрый выбор месяца">
-                        {ANALYTICS_QUICK_MONTHS.map((monthOption) => (
-                          <button
-                            className={selectedAnalyticsMonth === monthOption.month ? 'selected' : ''}
-                            key={monthOption.month}
-                            type="button"
-                            onClick={() => selectAnalyticsMonth(monthOption.month)}
-                          >
-                            {monthOption.label}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                     {selectedDailyAnalyticsRows.length === 0 ? (
                       <div className="analytics-empty">{selectedDailyAnalyticsEmptyLabel}</div>

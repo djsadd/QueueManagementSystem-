@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -288,9 +289,16 @@ async def get_tickets(
 @tickets_router.get("/export", response_model=list[TicketResponse], dependencies=[Depends(require_admin)])
 async def export_tickets(
     operator_id: uuid.UUID | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    return await TicketService.get_export_tickets(db, operator_id)
+    return await TicketService.get_export_tickets(
+        db,
+        operator_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
 
 @tickets_router.get("/{ticket_id}", response_model=TicketResponse, dependencies=[Depends(require_admin)])

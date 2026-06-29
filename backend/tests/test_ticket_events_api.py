@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from app.api.ticket_events import routes as ticket_event_routes
 from app.dependencies.auth import require_admin
@@ -9,8 +10,10 @@ def test_admin_can_filter_ticket_event_analytics_by_operator(client, monkeypatch
     app.dependency_overrides[require_admin] = lambda: admin_user
     operator_id = uuid.uuid4()
 
-    async def get_operator_analytics(db, requested_operator_id=None):
+    async def get_operator_analytics(db, requested_operator_id=None, date_from=None, date_to=None):
         assert requested_operator_id == operator_id
+        assert date_from == date(2026, 6, 1)
+        assert date_to == date(2026, 6, 30)
         return []
 
     monkeypatch.setattr(
@@ -19,7 +22,9 @@ def test_admin_can_filter_ticket_event_analytics_by_operator(client, monkeypatch
         get_operator_analytics,
     )
 
-    response = client.get(f"/ticket-events/analytics?operator_id={operator_id}")
+    response = client.get(
+        f"/ticket-events/analytics?operator_id={operator_id}&date_from=2026-06-01&date_to=2026-06-30",
+    )
 
     assert response.status_code == 200
     assert response.json() == []
