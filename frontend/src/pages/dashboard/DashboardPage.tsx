@@ -58,10 +58,21 @@ type AnalyticsPieSegment = {
   label: string
   value: number
 }
+type AnalyticsVisiblePieSegment = {
+  currentOffset: number
+  midpointRadians: number
+  percent: number
+  segment: AnalyticsPieSegment
+}
 type AnalyticsDistributionItem = {
   id: string
   label: string
   value: number
+}
+type TicketEventActionBreakdownRow = {
+  id: string
+  label: string
+  total: number
 }
 type ApplicantReportStageId =
   | 'saved_not_submitted'
@@ -142,6 +153,7 @@ const ANALYTICS_STATUS_COLORS = {
   skipped: '#b45309',
   active: '#2563eb',
 }
+const WAITING_TICKET_EVENT_STATUSES = new Set(['WAITING'])
 const APPLICANT_REPORT_STAGE_DEFINITIONS: Array<{
   color: string
   id: Exclude<ApplicantReportStageId, 'unknown'>
@@ -259,6 +271,9 @@ const ticketStatusLabels: Record<string, string> = {
   COMPLETED: 'Завершен',
   SKIPPED: 'Пропущен',
   CANCELLED: 'Отменен',
+}
+const ticketEventStatusLabels: Record<string, string> = {
+  DECLINED: 'Отказано',
 }
 
 const studyLanguageLabels: Record<StudyLanguage, string> = {
@@ -502,8 +517,32 @@ function AnalyticsDonutChart({
     x: number
     y: number
   } | null>(null)
-  let offset = 0
   const visibleSegments = segments.filter((segment) => segment.value > 0)
+  const visibleSegmentsWithGeometry = visibleSegments.reduce<{
+    offset: number
+    rows: AnalyticsVisiblePieSegment[]
+  }>(
+    (result, segment) => {
+      const percent = total > 0 ? (segment.value / total) * 100 : 0
+      const currentOffset = result.offset
+      const midpoint = currentOffset + percent / 2
+      const midpointRadians = (midpoint / 100) * Math.PI * 2 - Math.PI / 2
+
+      return {
+        offset: result.offset + percent,
+        rows: [
+          ...result.rows,
+          {
+            currentOffset,
+            midpointRadians,
+            percent,
+            segment,
+          },
+        ],
+      }
+    },
+    { offset: 0, rows: [] },
+  ).rows
 
   function moveTooltip(event: MouseEvent<SVGCircleElement>, segment: AnalyticsPieSegment, percent: number) {
     const svg = event.currentTarget.ownerSVGElement
@@ -523,13 +562,7 @@ function AnalyticsDonutChart({
     <div className="analytics-donut">
       <svg viewBox="0 0 100 100" role="img" aria-label={centerLabel}>
         <circle className="analytics-donut-track" cx="50" cy="50" r="38" pathLength="100" />
-        {visibleSegments.map((segment) => {
-          const percent = total > 0 ? (segment.value / total) * 100 : 0
-          const currentOffset = offset
-          const midpoint = currentOffset + percent / 2
-          const midpointRadians = (midpoint / 100) * Math.PI * 2 - Math.PI / 2
-          offset += percent
-
+        {visibleSegmentsWithGeometry.map(({ currentOffset, midpointRadians, percent, segment }) => {
           return (
             <circle
               className="analytics-donut-segment"
@@ -605,6 +638,45 @@ function AnalyticsDonutPanel({
         segments={segments}
         total={total}
       />
+    </div>
+  )
+}
+
+function TicketEventActionDonutPanel({
+  eyebrow = 'Действия без ожидания',
+  emptyLabel,
+  segments,
+  title,
+  total,
+}: {
+  eyebrow?: string
+  emptyLabel: string
+  segments: AnalyticsPieSegment[]
+  title: string
+  total: number
+}) {
+  return (
+    <div className="analytics-event-donut-panel">
+      <div className="analytics-card-header">
+        <div>
+          <span className="profile-label">{eyebrow}</span>
+          <h3>{title}</h3>
+        </div>
+        <span className="analytics-status">{total} действий</span>
+      </div>
+
+      {segments.length === 0 ? (
+        <div className="analytics-empty">{emptyLabel}</div>
+      ) : (
+        <div className="analytics-event-donut-content">
+          <AnalyticsDonutChart
+            centerLabel="действий"
+            centerValue={total}
+            segments={segments}
+            total={total}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -1508,6 +1580,26 @@ function getAnalyticsServiceColor(index: number) {
   return ANALYTICS_SERVICE_COLORS[index % ANALYTICS_SERVICE_COLORS.length]
 }
 
+function getAnalyticsStatusColor(status: string, index: number) {
+  if (status === 'COMPLETED') {
+    return ANALYTICS_STATUS_COLORS.completed
+  }
+
+  if (status === 'SKIPPED') {
+    return ANALYTICS_STATUS_COLORS.skipped
+  }
+
+  if (status === 'WAITING' || status === 'CALLED') {
+    return ANALYTICS_STATUS_COLORS.active
+  }
+
+  if (status === 'DECLINED' || status === 'CANCELLED') {
+    return '#be123c'
+  }
+
+  return getAnalyticsServiceColor(index)
+}
+
 function formatDecimal(value: number, fractionDigits = 1) {
   return value.toLocaleString('ru-RU', {
     maximumFractionDigits: fractionDigits,
@@ -1709,6 +1801,104 @@ function buildTicketDistribution<T extends string>(
   })
 
   return [...rowsByKey.values()].sort((firstItem, secondItem) => secondItem.value - firstItem.value)
+}
+
+function getTicketEventStatusLabel(status: string) {
+  return ticketEventStatusLabels[status] ?? getTicketStatusLabel(status)
+}
+
+function getTicketEventActionStatus(ticketEvent: TicketEventItem) {
+  if (ticketEvent.ticket_id === null || ticketEvent.event_type === 'OPERATOR_STATUS_CHANGED') {
+    return null
+  }
+
+  if (ticketEvent.event_type === 'TICKET_DECLINED') {
+    return 'DECLINED'
+  }
+
+  if (ticketEvent.new_status === null) {
+    return null
+  }
+
+  if (ticketEvent.event_type === 'TICKET_CREATED') {
+    return ticketEvent.new_status
+  }
+
+  if (
+    ticketEvent.event_type === 'TICKET_CALLED' ||
+    ticketEvent.event_type === 'TICKET_COMPLETED' ||
+    ticketEvent.event_type === 'TICKET_SKIPPED'
+  ) {
+    return ticketEvent.new_status
+  }
+
+  if (ticketEvent.old_status !== ticketEvent.new_status) {
+    return ticketEvent.new_status
+  }
+
+  return null
+}
+
+function buildTicketEventStatusDistribution(ticketEvents: TicketEventItem[]) {
+  const rowsByStatus = new Map<string, AnalyticsDistributionItem>()
+
+  ticketEvents.forEach((ticketEvent) => {
+    const status = getTicketEventActionStatus(ticketEvent)
+
+    if (status === null) {
+      return
+    }
+
+    const current = rowsByStatus.get(status)
+
+    if (current) {
+      current.value += 1
+      return
+    }
+
+    rowsByStatus.set(status, {
+      id: status,
+      label: getTicketEventStatusLabel(status),
+      value: 1,
+    })
+  })
+
+  return [...rowsByStatus.values()].sort((firstItem, secondItem) => secondItem.value - firstItem.value)
+}
+
+function buildTicketEventActionBreakdown(
+  ticketEvents: TicketEventItem[],
+  getGroup: (ticketEvent: TicketEventItem) => AnalyticsDistributionItem,
+  excludedStatuses = new Set<string>(),
+) {
+  const rowsByGroup = new Map<string, TicketEventActionBreakdownRow>()
+
+  ticketEvents.forEach((ticketEvent) => {
+    const status = getTicketEventActionStatus(ticketEvent)
+
+    if (status === null || excludedStatuses.has(status)) {
+      return
+    }
+
+    const group = getGroup(ticketEvent)
+    const current = rowsByGroup.get(group.id)
+
+    if (current) {
+      current.total += 1
+      return
+    }
+
+    rowsByGroup.set(group.id, {
+      id: group.id,
+      label: group.label,
+      total: 1,
+    })
+  })
+
+  return [...rowsByGroup.values()].sort(
+    (firstItem, secondItem) =>
+      secondItem.total - firstItem.total || firstItem.label.localeCompare(secondItem.label, 'ru-RU'),
+  )
 }
 
 function distributionToPieSegments(
@@ -3677,17 +3867,71 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const generalServiceLanguagePieSegments = distributionToPieSegments(generalServiceLanguageRows, generalTicketsTotal)
   const generalStudyLanguagePieSegments = distributionToPieSegments(generalStudyLanguageRows, generalTicketsTotal)
   const generalStatusPieSegments = generalStatusRows.map((item, index) => ({
-    color:
-      item.id === 'COMPLETED'
-        ? ANALYTICS_STATUS_COLORS.completed
-        : item.id === 'SKIPPED'
-          ? ANALYTICS_STATUS_COLORS.skipped
-          : item.id === 'WAITING' || item.id === 'CALLED'
-            ? ANALYTICS_STATUS_COLORS.active
-            : getAnalyticsServiceColor(index),
+    color: getAnalyticsStatusColor(item.id, index),
     detail: `${generalTicketsTotal > 0 ? Math.round((item.value / generalTicketsTotal) * 100) : 0}% от всех талонов`,
     label: item.label,
     value: item.value,
+  }))
+  const generalEventStatusRows = buildTicketEventStatusDistribution(ticketEvents)
+  const generalEventStatusActionsTotal = generalEventStatusRows.reduce((total, item) => total + item.value, 0)
+  const generalEventStatusPieSegments = generalEventStatusRows.map((item, index) => ({
+    color: getAnalyticsStatusColor(item.id, index),
+    detail: `${generalEventStatusActionsTotal > 0 ? Math.round((item.value / generalEventStatusActionsTotal) * 100) : 0}% от действий талонов`,
+    label: item.label,
+    value: item.value,
+  }))
+  const generalTicketById = new Map(analyticsTickets.map((ticket) => [ticket.id, ticket]))
+  const generalEventOperatorRows = buildTicketEventActionBreakdown(
+    ticketEvents,
+    (ticketEvent) => ({
+      id: ticketEvent.operator_id ?? 'none',
+      label:
+        ticketEvent.operator_name ??
+        ticketEvent.operator_email ??
+        (ticketEvent.operator_id ? ticketEvent.operator_id.slice(0, 8) : 'Регистратура / без оператора'),
+      value: 0,
+    }),
+    WAITING_TICKET_EVENT_STATUSES,
+  )
+  const generalEventProgramRows = buildTicketEventActionBreakdown(
+    ticketEvents,
+    (ticketEvent) => {
+      const ticket = ticketEvent.ticket_id ? generalTicketById.get(ticketEvent.ticket_id) : undefined
+
+      if (!ticket) {
+        return {
+          id: 'unknown',
+          label: 'Без данных по талону',
+          value: 0,
+        }
+      }
+
+      return {
+        id: ticket.educational_program_id === null ? 'none' : String(ticket.educational_program_id),
+        label:
+          ticket.educational_program_name ??
+          ticket.educational_program_code ??
+          (ticket.educational_program_id === null
+            ? 'Без образовательной программы'
+            : `ОП ${ticket.educational_program_id}`),
+        value: 0,
+      }
+    },
+    WAITING_TICKET_EVENT_STATUSES,
+  )
+  const generalEventOperatorActionsTotal = generalEventOperatorRows.reduce((total, item) => total + item.total, 0)
+  const generalEventProgramActionsTotal = generalEventProgramRows.reduce((total, item) => total + item.total, 0)
+  const generalEventOperatorPieSegments = generalEventOperatorRows.map((item, index) => ({
+    color: getAnalyticsServiceColor(index),
+    detail: `${generalEventOperatorActionsTotal > 0 ? Math.round((item.total / generalEventOperatorActionsTotal) * 100) : 0}% от действий без ожидания`,
+    label: item.label,
+    value: item.total,
+  }))
+  const generalEventProgramPieSegments = generalEventProgramRows.map((item, index) => ({
+    color: getAnalyticsServiceColor(index),
+    detail: `${generalEventProgramActionsTotal > 0 ? Math.round((item.total / generalEventProgramActionsTotal) * 100) : 0}% от действий без ожидания`,
+    label: item.label,
+    value: item.total,
   }))
   const selectedDailyAnalyticsRows =
     analyticsTimeGrouping === 'month'
@@ -4942,6 +5186,28 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                         segments={generalOperatorPieSegments}
                         title="Талоны по операторам"
                         total={generalTicketsTotal}
+                      />
+                    </div>
+
+                    <div className="analytics-event-donut-grid">
+                      <TicketEventActionDonutPanel
+                        emptyLabel="В истории талонов пока нет действий со статусами"
+                        eyebrow="История талонов"
+                        segments={generalEventStatusPieSegments}
+                        title="Статусы по действиям"
+                        total={generalEventStatusActionsTotal}
+                      />
+                      <TicketEventActionDonutPanel
+                        emptyLabel="Нет действий талонов по операторам без ожидания"
+                        segments={generalEventOperatorPieSegments}
+                        title="Действия по операторам"
+                        total={generalEventOperatorActionsTotal}
+                      />
+                      <TicketEventActionDonutPanel
+                        emptyLabel="Нет действий талонов по образовательным программам без ожидания"
+                        segments={generalEventProgramPieSegments}
+                        title="Действия по образовательным программам"
+                        total={generalEventProgramActionsTotal}
                       />
                     </div>
                   </div>
