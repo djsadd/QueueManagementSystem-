@@ -115,6 +115,14 @@ type ApplicantReportAnalysis = {
   unmatchedTicketIinCount: number
   unknownMatchedCount: number
 }
+type ApplicantReportFunnelItem = {
+  color: string
+  detail: string
+  id: string
+  label: string
+  value: number
+  widthPercent: number
+}
 type OperatorPerformancePoint = {
   averageProcessingMinutes: number
   clientsPerHour: number
@@ -666,6 +674,30 @@ function AnalyticsDonutPanel({
         segments={segments}
         total={total}
       />
+    </div>
+  )
+}
+
+function ApplicantReportFunnel({ analysis }: { analysis: ApplicantReportAnalysis }) {
+  return (
+    <div className="applicant-funnel-visual">
+      {buildApplicantReportFunnelItems(analysis).map((item) => (
+        <div className="applicant-funnel-step" key={item.id}>
+          <div
+            className={`applicant-funnel-block${item.value === 0 ? ' empty' : ''}`}
+            style={{
+              background: item.color,
+              width: item.value > 0 ? `${item.widthPercent}%` : '44px',
+            }}
+          >
+            <strong>{item.value}</strong>
+          </div>
+          <div className="applicant-funnel-caption">
+            <strong>{item.label}</strong>
+            <span>{item.detail}</span>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -1463,6 +1495,35 @@ function getApplicantFunnelStepWidth(value: number, total: number) {
   return Math.max(6, Math.round((value / total) * 100))
 }
 
+function buildApplicantReportFunnelItems(analysis: ApplicantReportAnalysis): ApplicantReportFunnelItem[] {
+  return [
+    {
+      color: '#b8bec8',
+      detail: `${analysis.ticketsWithIinCount} талонов с ИИН`,
+      id: 'ticket-iin-total',
+      label: 'Уникальные ИИН по талонам',
+      value: analysis.uniqueTicketIinCount,
+    },
+    {
+      color: '#6fac95',
+      detail: `${analysis.matchPercent}% от уникальных ИИН по талонам`,
+      id: 'matched-iin',
+      label: 'Сопоставлено по ИИН',
+      value: analysis.matchedIinCount,
+    },
+    ...analysis.stages.map((stage) => ({
+      color: stage.color,
+      detail: `${stage.percentOfTickets}% от уникальных ИИН по талонам`,
+      id: stage.id,
+      label: stage.label,
+      value: stage.value,
+    })),
+  ].map((item) => ({
+    ...item,
+    widthPercent: getApplicantFunnelStepWidth(item.value, analysis.uniqueTicketIinCount),
+  }))
+}
+
 function getMyWindowTicketStatusClassName(status: string) {
   if (status === 'WAITING') {
     return 'pill status-waiting'
@@ -2077,6 +2138,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [ticketEvents, setTicketEvents] = useState<TicketEventItem[]>([])
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
   const [analyticsTickets, setAnalyticsTickets] = useState<TicketItem[]>([])
+  const [operatorAnalyticsTickets, setOperatorAnalyticsTickets] = useState<TicketItem[]>([])
+  const [operatorAnalyticsTicketsScope, setOperatorAnalyticsTicketsScope] = useState<string | null>(null)
   const [analyticsBaseLoaded, setAnalyticsBaseLoaded] = useState(false)
   const [analyticsBaseLoading, setAnalyticsBaseLoading] = useState(false)
   const [analyticsDataScope, setAnalyticsDataScope] = useState<string | null>(null)
@@ -2084,6 +2147,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [analyticsDataError, setAnalyticsDataError] = useState('')
   const [ticketExportingKey, setTicketExportingKey] = useState<string | null>(null)
   const [applicantReportAnalysis, setApplicantReportAnalysis] =
+    useState<ApplicantReportAnalysis | null>(null)
+  const [operatorApplicantReportAnalysis, setOperatorApplicantReportAnalysis] =
     useState<ApplicantReportAnalysis | null>(null)
   const [savedApplicantReport, setSavedApplicantReport] = useState<ApplicantReportItem | null>(null)
   const [applicantReportDate, setApplicantReportDate] = useState(() => formatDateInputValue(new Date()))
@@ -2623,11 +2688,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       return analyticsDataScope === operatorsScope || analyticsDataScope === generalScope
     }
 
-    return (
+    const hasOperatorStats =
       analyticsDataScope === requestedScope ||
       ((analyticsDataScope === generalScope || analyticsDataScope === operatorsScope) &&
         operatorAnalytics.some((stats) => stats.operator_id === selection))
-    )
+
+    return hasOperatorStats && operatorAnalyticsTicketsScope === requestedScope
   }
 
   async function loadAdminAnalyticsData(selection: AnalyticsSelection) {
@@ -2673,21 +2739,31 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         return
       }
 
-      const analyticsRows = await adminApi.ticketEvents.analytics({
-        ...analyticsDateParams,
-        operator_id: selection,
-      })
+      const [analyticsRows, ticketRows] = await Promise.all([
+        adminApi.ticketEvents.analytics({
+          ...analyticsDateParams,
+          operator_id: selection,
+        }),
+        adminApi.tickets.export({
+          ...analyticsDateParams,
+          operator_id: selection,
+        }),
+      ])
 
       if (analyticsRequestIdRef.current !== requestId) {
         return
       }
 
+      const requestedScope = buildAnalyticsDataScopeKey(selection, analyticsDateFrom, analyticsDateTo)
+
+      setOperatorAnalyticsTickets(ticketRows)
+      setOperatorAnalyticsTicketsScope(requestedScope)
       setOperatorAnalytics((currentRows) => {
         const nextRowsByOperatorId = new Map(currentRows.map((row) => [row.operator_id, row]))
         analyticsRows.forEach((row) => nextRowsByOperatorId.set(row.operator_id, row))
         return Array.from(nextRowsByOperatorId.values())
       })
-      setAnalyticsDataScope(buildAnalyticsDataScopeKey(selection, analyticsDateFrom, analyticsDateTo))
+      setAnalyticsDataScope(requestedScope)
     } catch (requestError) {
       if (analyticsRequestIdRef.current === requestId) {
         setAnalyticsDataError(
@@ -2856,12 +2932,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   ])
 
   useEffect(() => {
-    if (
-      isAdminUser &&
-      activeSection === 'analytics' &&
-      selectedAnalyticsOperatorId === 'general' &&
-      analyticsDataScope === buildAnalyticsDataScopeKey('general', analyticsDateFrom, analyticsDateTo)
-    ) {
+    const canBuildApplicantReport =
+      selectedAnalyticsOperatorId === 'general'
+        ? analyticsDataScope === buildAnalyticsDataScopeKey('general', analyticsDateFrom, analyticsDateTo)
+        : isSpecificAnalyticsOperatorSelection(selectedAnalyticsOperatorId) &&
+          hasAnalyticsDataForSelection(selectedAnalyticsOperatorId)
+
+    if (isAdminUser && activeSection === 'analytics' && canBuildApplicantReport) {
       void loadSavedApplicantReport(applicantReportDate)
     }
   }, [
@@ -2869,6 +2946,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     analyticsDataScope,
     analyticsDateFrom,
     analyticsDateTo,
+    operatorAnalytics,
+    operatorAnalyticsTicketsScope,
     isAdminUser,
     applicantReportDate,
     selectedAnalyticsOperatorId,
@@ -2892,9 +2971,49 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       setApplicantReportError('')
     } catch (requestError) {
       setApplicantReportAnalysis(null)
-      setApplicantReportError(requestError instanceof Error ? requestError.message : 'РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕС‡РёС‚Р°С‚СЊ СЃРѕС…СЂР°РЅРµРЅРЅС‹Р№ РѕС‚С‡РµС‚')
+      setApplicantReportError(requestError instanceof Error ? requestError.message : 'Не удалось прочитать сохраненный отчет')
     }
   }, [savedApplicantReport, analyticsTickets])
+
+  useEffect(() => {
+    const requestedScope = buildAnalyticsDataScopeKey(
+      selectedAnalyticsOperatorId,
+      analyticsDateFrom,
+      analyticsDateTo,
+    )
+
+    if (
+      !savedApplicantReport ||
+      !isSpecificAnalyticsOperatorSelection(selectedAnalyticsOperatorId) ||
+      operatorAnalyticsTicketsScope !== requestedScope
+    ) {
+      setOperatorApplicantReportAnalysis(null)
+      return
+    }
+
+    try {
+      setOperatorApplicantReportAnalysis(
+        buildApplicantReportAnalysis(
+          savedApplicantReport.file_name,
+          savedApplicantReport.content,
+          operatorAnalyticsTickets,
+          savedApplicantReport.report_date,
+          savedApplicantReport.is_latest_fallback,
+        ),
+      )
+      setApplicantReportError('')
+    } catch (requestError) {
+      setOperatorApplicantReportAnalysis(null)
+      setApplicantReportError(requestError instanceof Error ? requestError.message : 'Не удалось прочитать сохраненный отчет')
+    }
+  }, [
+    analyticsDateFrom,
+    analyticsDateTo,
+    operatorAnalyticsTickets,
+    operatorAnalyticsTicketsScope,
+    savedApplicantReport,
+    selectedAnalyticsOperatorId,
+  ])
 
   useEffect(() => {
     if (isAdminUser) {
@@ -3940,12 +4059,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     } catch (requestError) {
       setSavedApplicantReport(null)
       setApplicantReportAnalysis(null)
+      setOperatorApplicantReportAnalysis(null)
 
       if (requestError && typeof requestError === 'object' && 'status' in requestError && requestError.status === 404) {
         return
       }
 
-      setApplicantReportError(requestError instanceof Error ? requestError.message : 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРѕС…СЂР°РЅРµРЅРЅС‹Р№ РѕС‚С‡РµС‚')
+      setApplicantReportError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить сохраненный отчет')
     } finally {
       setApplicantReportLoading(false)
     }
@@ -4263,34 +4383,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       value: selectedStatusActive,
     },
   ]
-  const applicantReportFunnelItems = applicantReportAnalysis
-    ? [
-        {
-          color: '#b8bec8',
-          detail: `${applicantReportAnalysis.ticketsWithIinCount} талонов с ИИН`,
-          id: 'ticket-iin-total',
-          label: 'Уникальные ИИН по талонам',
-          value: applicantReportAnalysis.uniqueTicketIinCount,
-        },
-        {
-          color: '#6fac95',
-          detail: `${applicantReportAnalysis.matchPercent}% от уникальных ИИН по талонам`,
-          id: 'matched-iin',
-          label: 'Сопоставлено по ИИН',
-          value: applicantReportAnalysis.matchedIinCount,
-        },
-        ...applicantReportAnalysis.stages.map((stage) => ({
-          color: stage.color,
-          detail: `${stage.percentOfTickets}% от уникальных ИИН по талонам`,
-          id: stage.id,
-          label: stage.label,
-          value: stage.value,
-        })),
-      ].map((item) => ({
-        ...item,
-        widthPercent: getApplicantFunnelStepWidth(item.value, applicantReportAnalysis.uniqueTicketIinCount),
-      }))
-    : []
   const operatorAnalyticsProcessedTotal = operatorAnalyticsRows.reduce(
     (total, row) => total + row.stats.processed,
     0,
@@ -5452,25 +5544,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                             <div className="admin-alert">В отчете не найден ИИН для сопоставления с талонами</div>
                           )}
 
-                          <div className="applicant-funnel-visual">
-                            {applicantReportFunnelItems.map((item) => (
-                              <div className="applicant-funnel-step" key={item.id}>
-                                <div
-                                  className={`applicant-funnel-block${item.value === 0 ? ' empty' : ''}`}
-                                  style={{
-                                    background: item.color,
-                                    width: item.value > 0 ? `${item.widthPercent}%` : '52px',
-                                  }}
-                                >
-                                  <strong>{item.value}</strong>
-                                </div>
-                                <div className="applicant-funnel-caption">
-                                  <strong>{item.label}</strong>
-                                  <span>{item.detail}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
+                          <ApplicantReportFunnel analysis={applicantReportAnalysis} />
 
                           <div className="applicant-report-details">
                             <span>Распознано в этапах: {applicantReportAnalysis.recognizedMatchedCount}</span>
@@ -5682,6 +5756,58 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                           : 'Пока нет обработанных услуг'}
                       </p>
                     </div>
+                  </div>
+
+                  <div className="applicant-report-panel">
+                    <div className="analytics-card-header">
+                      <div>
+                        <span className="profile-label">Отчет абитуриентов</span>
+                        <h3>Воронка по ИИН оператора</h3>
+                      </div>
+                      <div className="applicant-report-actions">
+                        {operatorApplicantReportAnalysis && (
+                          <span className="analytics-status">
+                            {operatorApplicantReportAnalysis.isLatestFallback
+                              ? `Latest report: ${operatorApplicantReportAnalysis.reportDate}`
+                              : operatorApplicantReportAnalysis.fileName}
+                          </span>
+                        )}
+                        <label className="applicant-report-date">
+                          <span>Report date</span>
+                          <input
+                            disabled={applicantReportLoading || applicantReportParsing}
+                            type="date"
+                            value={applicantReportDate}
+                            onChange={(event) => setApplicantReportDate(event.currentTarget.value)}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {applicantReportError && <div className="admin-alert">{applicantReportError}</div>}
+
+                    {applicantReportLoading ? (
+                      <div className="analytics-empty">Загрузка отчета абитуриентов...</div>
+                    ) : operatorApplicantReportAnalysis ? (
+                      <>
+                        {operatorApplicantReportAnalysis.reportIinCount === 0 && (
+                          <div className="admin-alert">В отчете не найден ИИН для сопоставления с талонами</div>
+                        )}
+
+                        <ApplicantReportFunnel analysis={operatorApplicantReportAnalysis} />
+
+                        <div className="applicant-report-details">
+                          <span>Распознано в этапах: {operatorApplicantReportAnalysis.recognizedMatchedCount}</span>
+                          <span>Не распознано: {operatorApplicantReportAnalysis.unknownMatchedCount}</span>
+                          <span>Без ИИН в отчете: {operatorApplicantReportAnalysis.rowsWithoutIinCount}</span>
+                          <span>Дубликаты ИИН: {operatorApplicantReportAnalysis.duplicateReportIinCount}</span>
+                          <span>ИИН отчета без талона оператора: {operatorApplicantReportAnalysis.unmatchedReportIinCount}</span>
+                          <span>Совпавших талонов оператора: {operatorApplicantReportAnalysis.matchedTicketCount}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="analytics-empty">Отчет абитуриентов пока не загружен</div>
+                    )}
                   </div>
 
                   <div className="analytics-service-pie-panel">
