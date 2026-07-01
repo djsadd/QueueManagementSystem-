@@ -1,9 +1,11 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 from app.api.ticket_events import routes as ticket_event_routes
 from app.dependencies.auth import require_admin
 from app.main import app
+from app.services.ticket_event_service import TicketEventService
 
 
 def test_admin_can_filter_ticket_event_analytics_by_operator(client, monkeypatch, admin_user):
@@ -47,3 +49,92 @@ def test_admin_can_load_ticket_events_without_metadata(client, monkeypatch, admi
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_operator_service_analytics_uses_ticket_event_snapshots():
+    ticket_id = uuid.uuid4()
+    service_id = 10
+    current_ticket = SimpleNamespace(
+        id=ticket_id,
+        service_id=99,
+        status="WAITING",
+        created_at=datetime(2026, 6, 1, 9, 0),
+        called_at=None,
+        started_at=None,
+        completed_at=None,
+    )
+    service = SimpleNamespace(name="Admissions", code="ADM")
+    called_at = datetime(2026, 6, 1, 9, 5, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 6, 1, 9, 20, tzinfo=timezone.utc)
+    base_snapshot = {
+        "service_id": service_id,
+        "created_at": "2026-06-01T09:00:00+00:00",
+        "called_at": "2026-06-01T09:05:00+00:00",
+        "started_at": "2026-06-01T09:05:00+00:00",
+    }
+    events = [
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            ticket_id=ticket_id,
+            event_type="TICKET_CALLED",
+            new_status="CALLED",
+            metadata_={"ticket_snapshot": base_snapshot},
+            created_at=called_at,
+        ),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            ticket_id=ticket_id,
+            event_type="TICKET_COMPLETED",
+            new_status="COMPLETED",
+            metadata_={
+                "ticket_snapshot": {
+                    **base_snapshot,
+                    "completed_at": "2026-06-01T09:20:00+00:00",
+                    "status": "COMPLETED",
+                }
+            },
+            created_at=completed_at,
+        ),
+    ]
+
+    rows = TicketEventService.get_service_analytics_from_events(
+        events,
+        {ticket_id: current_ticket},
+        {service_id: service},
+    )
+    daily_rows = TicketEventService.get_daily_analytics_from_events(events)
+    processing_seconds = TicketEventService.get_event_processing_seconds(
+        events,
+        {ticket_id: current_ticket},
+    )
+
+    assert rows == [
+        {
+            "service_id": service_id,
+            "service_name": "Admissions",
+            "service_code": "ADM",
+            "tickets_count": 1,
+            "completed": 1,
+            "skipped": 0,
+            "active": 0,
+            "processed": 1,
+            "completion_rate": 100,
+            "share_percent": 100,
+            "average_processing_seconds": 900,
+            "total_processing_seconds": 900,
+            "fastest_processing_seconds": 900,
+            "slowest_processing_seconds": 900,
+            "average_wait_seconds": 300,
+            "last_ticket_at": completed_at,
+        }
+    ]
+    assert daily_rows == [
+        {
+            "date": "2026-06-01",
+            "tickets_count": 1,
+            "completed": 1,
+            "skipped": 0,
+            "active": 0,
+        }
+    ]
+    assert processing_seconds == [900]

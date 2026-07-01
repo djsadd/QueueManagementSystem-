@@ -1,6 +1,6 @@
 import uuid
 import enum
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -340,11 +340,53 @@ class TicketService:
         date_from: date | None = None,
         date_to: date | None = None,
     ) -> list[dict]:
-        conditions = []
-
         if operator_id is not None:
             await TicketService.ensure_operator_exists(db, operator_id)
-            conditions.append(Ticket.operator_id == operator_id)
+            event_conditions = [
+                TicketEvent.operator_id == operator_id,
+                TicketEvent.ticket_id.is_not(None),
+            ]
+
+            if date_from is not None:
+                event_conditions.append(
+                    TicketEvent.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc)
+                )
+
+            if date_to is not None:
+                event_conditions.append(
+                    TicketEvent.created_at
+                    < datetime.combine(date_to, time.min, tzinfo=timezone.utc) + timedelta(days=1)
+                )
+
+            event_result = await db.execute(
+                select(TicketEvent.ticket_id)
+                .where(*event_conditions)
+                .order_by(TicketEvent.created_at.desc())
+            )
+            ordered_ticket_ids = []
+            seen_ticket_ids = set()
+
+            for ticket_id in event_result.scalars().all():
+                if ticket_id is None or ticket_id in seen_ticket_ids:
+                    continue
+
+                ordered_ticket_ids.append(ticket_id)
+                seen_ticket_ids.add(ticket_id)
+
+            if not ordered_ticket_ids:
+                return []
+
+            result = await db.execute(select(Ticket).where(Ticket.id.in_(ordered_ticket_ids)))
+            tickets_by_id = {ticket.id: ticket for ticket in result.scalars().all()}
+            tickets = [
+                tickets_by_id[ticket_id]
+                for ticket_id in ordered_ticket_ids
+                if ticket_id in tickets_by_id
+            ]
+
+            return await TicketService.build_ticket_responses(db, tickets)
+
+        conditions = []
 
         if date_from is not None:
             conditions.append(Ticket.created_at >= TicketService.get_day_start(date_from))

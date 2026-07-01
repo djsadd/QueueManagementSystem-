@@ -5559,7 +5559,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                     <div>
                       <span className="profile-label">Всего талонов по услугам</span>
                       <strong>{selectedServiceAnalyticsTotalTickets}</strong>
-                      <p>Все талоны, закрепленные за сотрудником</p>
+                      <p>Все талоны по событиям сотрудника</p>
                     </div>
                     <div>
                       <span className="profile-label">Общее время оказания</span>
