@@ -165,6 +165,20 @@ export type TicketEventItem = {
   created_at: string
 }
 
+export type TicketEventTicketSummaryItem = {
+  ticket_id: string
+  ticket_number: string | null
+  iin: string | null
+  full_name: string | null
+  service_label: string | null
+  status: string | null
+  latest_event: TicketEventItem
+  first_event_at: string
+  last_event_at: string
+  events_count: number
+  change_events_count: number
+}
+
 export type TicketEventPayload = {
   ticket_id: string | null
   event_type: string | null
@@ -331,6 +345,14 @@ export type TicketEventPageParams = TicketEventListParams & {
 
 export type TicketEventPage = {
   items: TicketEventItem[]
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+}
+
+export type TicketEventTicketPage = {
+  items: TicketEventTicketSummaryItem[]
   page: number
   page_size: number
   total: number
@@ -550,6 +572,19 @@ export const adminApi = {
       const queryString = searchParams.toString()
       return request<TicketEventPage>(`/ticket-events/page${queryString ? `?${queryString}` : ''}`)
     },
+    ticketPage: (params: TicketEventPageParams = {}) => {
+      const searchParams = new URLSearchParams()
+
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          searchParams.set(key, String(value))
+        }
+      })
+
+      const queryString = searchParams.toString()
+      return request<TicketEventTicketPage>(`/ticket-events/tickets/page${queryString ? `?${queryString}` : ''}`)
+    },
+    byTicket: (ticketId: string) => request<TicketEventItem[]>(`/ticket-events/ticket/${ticketId}`),
     me: () => request<TicketEventItem[]>('/ticket-events/me'),
     analytics: (params: TicketEventAnalyticsParams = {}) => {
       const searchParams = new URLSearchParams()

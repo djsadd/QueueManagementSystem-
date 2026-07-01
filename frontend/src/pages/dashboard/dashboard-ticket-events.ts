@@ -1,4 +1,7 @@
-import type { TicketEventItem } from '../../features/admin/api/adminApi'
+import type {
+  TicketEventItem,
+  TicketEventTicketSummaryItem,
+} from '../../features/admin/api/adminApi'
 
 const TICKET_EVENT_TYPE_LABELS: Record<string, string> = {
   OPERATOR_STATUS_CHANGED: 'Статус оператора',
@@ -33,6 +36,14 @@ const TICKET_EVENT_FIELD_LABELS: Record<string, string> = {
   study_language: 'Язык обучения',
   window_id: 'Окно',
 }
+
+const TICKET_EVENT_CHANGE_TYPES = new Set([
+  'SERVICE_CHANGED',
+  'STATUS_CHANGED',
+  'TICKET_ASSIGNED',
+  'TICKET_STUDY_LANGUAGE_UPDATED',
+  'TICKET_UPDATED',
+])
 
 export type TicketEventDetailRow = {
   label: string
@@ -132,6 +143,26 @@ export function getTicketEventTicketLabel(ticketEvent: TicketEventItem) {
   return ticketEvent.ticket_id ? ticketEvent.ticket_id.slice(0, 8) : 'Без талона'
 }
 
+export function getTicketEventTicketSummaryLabel(ticketSummary: TicketEventTicketSummaryItem) {
+  return ticketSummary.ticket_number ?? getTicketEventTicketLabel(ticketSummary.latest_event)
+}
+
+export function getTicketEventTicketSummaryIinLabel(ticketSummary: TicketEventTicketSummaryItem) {
+  return ticketSummary.iin ?? getTicketEventIinLabel(ticketSummary.latest_event)
+}
+
+export function getTicketEventTicketSummaryFullNameLabel(ticketSummary: TicketEventTicketSummaryItem) {
+  return ticketSummary.full_name ?? getTicketEventFullNameLabel(ticketSummary.latest_event)
+}
+
+export function getTicketEventTicketSummaryServiceLabel(ticketSummary: TicketEventTicketSummaryItem) {
+  return ticketSummary.service_label ?? getTicketEventServiceLabel(ticketSummary.latest_event)
+}
+
+export function getTicketEventTicketSummaryStatusLabel(ticketSummary: TicketEventTicketSummaryItem) {
+  return ticketSummary.status ?? getTicketEventStatusFlowLabel(ticketSummary.latest_event)
+}
+
 export function getTicketEventIinLabel(ticketEvent: TicketEventItem) {
   return getStringValue(getTicketEventSnapshot(ticketEvent), 'iin') ?? 'Не указано'
 }
@@ -222,6 +253,28 @@ export function getTicketEventChangeRows(ticketEvent: TicketEventItem): TicketEv
       newValue: formatUnknownValue(changeRecord?.new),
     }
   })
+}
+
+export function isTicketEventChangeLike(ticketEvent: TicketEventItem) {
+  return (
+    getTicketEventChangeRows(ticketEvent).length > 0 ||
+    TICKET_EVENT_CHANGE_TYPES.has(ticketEvent.event_type ?? '')
+  )
+}
+
+export function getTicketEventTicketSummaryDetailRows(
+  ticketSummary: TicketEventTicketSummaryItem,
+): TicketEventDetailRow[] {
+  return [
+    { label: 'Талон', value: getTicketEventTicketSummaryLabel(ticketSummary) },
+    { label: 'ИИН', value: getTicketEventTicketSummaryIinLabel(ticketSummary) },
+    { label: 'ФИО', value: getTicketEventTicketSummaryFullNameLabel(ticketSummary) },
+    { label: 'Услуга', value: getTicketEventTicketSummaryServiceLabel(ticketSummary) },
+    { label: 'Текущий статус', value: getTicketEventTicketSummaryStatusLabel(ticketSummary) },
+    { label: 'Первое событие', value: formatTicketEventDate(ticketSummary.first_event_at) },
+    { label: 'Последнее событие', value: formatTicketEventDate(ticketSummary.last_event_at) },
+    { label: 'Событий в истории', value: String(ticketSummary.events_count) },
+  ]
 }
 
 export function getTicketEventMetadataText(ticketEvent: TicketEventItem) {

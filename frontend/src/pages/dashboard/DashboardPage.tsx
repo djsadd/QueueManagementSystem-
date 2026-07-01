@@ -23,7 +23,7 @@ import {
   type TicketCreatePayload,
   type TicketItem,
   type TicketEventItem,
-  type TicketEventPayload,
+  type TicketEventTicketSummaryItem,
   type UserItem,
   type UserPayload,
   type UserRole,
@@ -55,7 +55,6 @@ import {
   ANALYTICS_SELECTION_STORAGE_KEY,
   LANG_STORAGE_KEY,
   buildAnalyticsDataScopeKey,
-  buildOperatorDisplayPath,
   buildSectionPath,
   canUseOperatorSection,
   getAnalyticsSelectionFromPath,
@@ -76,7 +75,10 @@ import {
   getTicketEventChangeRows,
   getTicketEventDetailRows,
   getTicketEventMetadataText,
-  getTicketEventTicketLabel,
+  getTicketEventTicketSummaryDetailRows,
+  getTicketEventTicketSummaryLabel,
+  getTicketEventTypeLabel,
+  isTicketEventChangeLike,
 } from './dashboard-ticket-events'
 import {
   AcademicDegreesRoute,
@@ -303,14 +305,6 @@ const emptyApplicant: ApplicantPayload = {
   phone: '',
   telegram_chat_id: null,
 }
-const emptyTicketEvent: TicketEventPayload = {
-  ticket_id: null,
-  event_type: 'TICKET_CREATED',
-  old_status: null,
-  new_status: null,
-  operator_id: null,
-  metadata: null,
-}
 
 const operatorStatusActions: Array<{ status: OperatorStatus; label: string }> = [
   { status: 'ONLINE', label: 'Готов' },
@@ -353,59 +347,6 @@ const myWindowStatusActions: Array<{ status: WindowStatus; label: string }> = [
   { status: 'BUSY', label: 'Занято' },
   { status: 'CLOSED', label: 'Закрыто' },
 ]
-
-type BrowserScreen = {
-  availHeight?: number
-  availLeft?: number
-  availTop?: number
-  availWidth?: number
-  height: number
-  isPrimary?: boolean
-  left: number
-  top: number
-  width: number
-}
-
-type BrowserScreenDetails = {
-  screens: BrowserScreen[]
-}
-
-async function openOperatorDisplayOnSecondScreen(url: string) {
-  const popup = window.open(
-    'about:blank',
-    'operator-second-display',
-    'popup=yes,fullscreen=yes,width=1280,height=720',
-  )
-
-  if (!popup) {
-    return 'Браузер заблокировал открытие окна. Разрешите всплывающие окна для этого сайта.'
-  }
-
-  try {
-    const screenApi = window as Window & {
-      getScreenDetails?: () => Promise<BrowserScreenDetails>
-    }
-    const screenDetails = screenApi.getScreenDetails ? await screenApi.getScreenDetails() : null
-    const secondScreen =
-      screenDetails?.screens.find((screen) => !screen.isPrimary) ?? screenDetails?.screens[1] ?? null
-
-    if (secondScreen) {
-      const left = secondScreen.availLeft ?? secondScreen.left
-      const top = secondScreen.availTop ?? secondScreen.top
-      const width = secondScreen.availWidth ?? secondScreen.width
-      const height = secondScreen.availHeight ?? secondScreen.height
-
-      popup.moveTo(left, top)
-      popup.resizeTo(width, height)
-    }
-  } catch {
-    // The display still opens even when the browser denies multi-screen placement.
-  }
-
-  popup.location.replace(url)
-  popup.focus()
-  return null
-}
 
 function Icon({ name }: { name: string }) {
   return (
@@ -2066,7 +2007,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [academicDegrees, setAcademicDegrees] = useState<AcademicDegreeItem[]>([])
   const [educationalPrograms, setEducationalPrograms] = useState<EducationalProgramItem[]>([])
   const [applicants, setApplicants] = useState<ApplicantItem[]>([])
-  const [ticketEvents, setTicketEvents] = useState<TicketEventItem[]>([])
+  const [ticketEventTickets, setTicketEventTickets] = useState<TicketEventTicketSummaryItem[]>([])
   const [analyticsTicketEvents, setAnalyticsTicketEvents] = useState<TicketEventItem[]>([])
   const [ticketEventSearch, setTicketEventSearch] = useState('')
   const [ticketEventTypeFilter, setTicketEventTypeFilter] = useState('')
@@ -2077,6 +2018,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [ticketEventPage, setTicketEventPage] = useState(1)
   const [ticketEventTotal, setTicketEventTotal] = useState(0)
   const [ticketEventTotalPages, setTicketEventTotalPages] = useState(1)
+  const [selectedTicketEventTicket, setSelectedTicketEventTicket] =
+    useState<TicketEventTicketSummaryItem | null>(null)
+  const [selectedTicketEvents, setSelectedTicketEvents] = useState<TicketEventItem[]>([])
+  const [selectedTicketEventsLoading, setSelectedTicketEventsLoading] = useState(false)
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
   const [analyticsTickets, setAnalyticsTickets] = useState<TicketItem[]>([])
   const [operatorAnalyticsTickets, setOperatorAnalyticsTickets] = useState<TicketItem[]>([])
@@ -2149,8 +2094,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [educationalProgramForm, setEducationalProgramForm] =
     useState<EducationalProgramPayload>(emptyEducationalProgram)
   const [applicantForm, setApplicantForm] = useState<ApplicantPayload>(emptyApplicant)
-  const [ticketEventForm, setTicketEventForm] = useState<TicketEventPayload>(emptyTicketEvent)
-  const [ticketEventMetadataText, setTicketEventMetadataText] = useState('')
   const [selectedOperatorProgramIds, setSelectedOperatorProgramIds] = useState<number[]>([])
   const [selectedOperatorProgramLanguages, setSelectedOperatorProgramLanguages] = useState<
     Record<number, StudyLanguage[]>
@@ -2174,7 +2117,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [editingAcademicDegreeId, setEditingAcademicDegreeId] = useState<number | null>(null)
   const [editingEducationalProgramId, setEditingEducationalProgramId] = useState<number | null>(null)
   const [editingApplicantId, setEditingApplicantId] = useState<string | null>(null)
-  const [editingTicketEventId, setEditingTicketEventId] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(() => new Date())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -2369,15 +2311,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     })
   }
 
-  async function openSecondDisplay() {
-    setError('')
-    const launchError = await openOperatorDisplayOnSecondScreen(buildOperatorDisplayPath(lang))
-
-    if (launchError) {
-      setError(launchError)
-    }
-  }
-
   function highlightMyWindowChanges(nextRows: MyWindowTickets) {
     const previousRows = myWindowTicketsRef.current
     if (!previousRows) {
@@ -2489,8 +2422,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       setApplicants(data.applicants)
     }
 
-    if (data.ticketEvents) {
-      setTicketEvents(data.ticketEvents)
+    if (data.ticketEventTickets) {
+      setTicketEventTickets(data.ticketEventTickets)
     }
 
     if (data.operatorProgramsRows) {
@@ -2598,12 +2531,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setError('')
 
     try {
-      const [ticketEventRows, operatorRows, userRows] = await Promise.all([
-        adminApi.ticketEvents.page({
+      const [ticketEventTicketRows, operatorRows, userRows] = await Promise.all([
+        adminApi.ticketEvents.ticketPage({
           date_from: ticketEventDateFrom || undefined,
           date_to: ticketEventDateTo || undefined,
           event_type: ticketEventTypeFilter || undefined,
-          include_metadata: true,
           operator_id: ticketEventOperatorFilter || undefined,
           page: ticketEventPage,
           page_size: TICKET_EVENTS_PAGE_SIZE,
@@ -2614,16 +2546,34 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         adminApi.users.list(),
       ])
 
-      setTicketEvents(ticketEventRows.items)
-      setTicketEventPage(ticketEventRows.page)
-      setTicketEventTotal(ticketEventRows.total)
-      setTicketEventTotalPages(ticketEventRows.total_pages)
+      setTicketEventTickets(ticketEventTicketRows.items)
+      setTicketEventPage(ticketEventTicketRows.page)
+      setTicketEventTotal(ticketEventTicketRows.total)
+      setTicketEventTotalPages(ticketEventTicketRows.total_pages)
       setOperators(operatorRows)
       setUsers(userRows)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить историю талонов')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function openTicketEventTicketDetails(ticketSummary: TicketEventTicketSummaryItem) {
+    setError('')
+    setSelectedTicketEventTicket(ticketSummary)
+    setSelectedTicketEvents([])
+    setSelectedTicketEventsLoading(true)
+    setFormModal('ticketEvents')
+
+    try {
+      const ticketEvents = await adminApi.ticketEvents.byTicket(ticketSummary.ticket_id)
+      setSelectedTicketEvents(ticketEvents)
+    } catch (requestError) {
+      setSelectedTicketEvents([])
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить события талона')
+    } finally {
+      setSelectedTicketEventsLoading(false)
     }
   }
 
@@ -3176,7 +3126,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setEditingAcademicDegreeId(null)
     setEditingEducationalProgramId(null)
     setEditingApplicantId(null)
-    setEditingTicketEventId(null)
+    setSelectedTicketEventTicket(null)
+    setSelectedTicketEvents([])
+    setSelectedTicketEventsLoading(false)
     setServiceForm(emptyService)
     setWindowForm(emptyWindow)
     setUserForm(emptyUser)
@@ -3184,8 +3136,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setAcademicDegreeForm(emptyAcademicDegree)
     setEducationalProgramForm(emptyEducationalProgram)
     setApplicantForm(emptyApplicant)
-    setTicketEventForm(emptyTicketEvent)
-    setTicketEventMetadataText('')
     setSelectedWindowOperatorId('')
     setSelectedOperatorProgramIds([])
     setSelectedOperatorProgramLanguages({})
@@ -3439,47 +3389,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await loadAdminSectionData('applicants')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить абитуриента')
-    }
-  }
-
-  async function submitTicketEvent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError('')
-
-    let metadata: Record<string, unknown> | null = null
-
-    if (ticketEventMetadataText.trim()) {
-      try {
-        const parsedMetadata = JSON.parse(ticketEventMetadataText) as unknown
-
-        if (parsedMetadata === null || Array.isArray(parsedMetadata) || typeof parsedMetadata !== 'object') {
-          setError('Metadata должен быть JSON-объектом')
-          return
-        }
-
-        metadata = parsedMetadata as Record<string, unknown>
-      } catch {
-        setError('Metadata содержит некорректный JSON')
-        return
-      }
-    }
-
-    const payload: TicketEventPayload = {
-      ...ticketEventForm,
-      metadata,
-    }
-
-    try {
-      if (editingTicketEventId === null) {
-        await adminApi.ticketEvents.create(payload)
-      } else {
-        await adminApi.ticketEvents.update(editingTicketEventId, payload)
-      }
-
-      closeFormModal()
-      await loadAdminTicketEventsData()
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить событие талона')
     }
   }
 
@@ -4140,19 +4049,14 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
-  const selectedTicketEvent =
-    editingTicketEventId !== null
-      ? ticketEvents.find((ticketEvent) => ticketEvent.id === editingTicketEventId) ?? null
-      : null
-  const selectedTicketEventDetailRows = selectedTicketEvent
-    ? getTicketEventDetailRows(selectedTicketEvent)
+  const selectedTicketEventSummaryRows = selectedTicketEventTicket
+    ? getTicketEventTicketSummaryDetailRows(selectedTicketEventTicket)
     : []
-  const selectedTicketEventChangeRows = selectedTicketEvent
-    ? getTicketEventChangeRows(selectedTicketEvent)
-    : []
-  const selectedTicketEventMetadataText = selectedTicketEvent
-    ? getTicketEventMetadataText(selectedTicketEvent)
-    : ''
+  const selectedTicketEventTimeline = [...selectedTicketEvents].sort(
+    (firstEvent, secondEvent) =>
+      new Date(firstEvent.created_at).getTime() - new Date(secondEvent.created_at).getTime(),
+  )
+  const selectedTicketEventChangeEvents = selectedTicketEventTimeline.filter(isTicketEventChangeLike)
   const ticketEventOperatorOptions = operators
     .map((operator) => ({
       id: operator.id,
@@ -4166,11 +4070,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     (formModal === 'operators' && editingOperatorId !== null) ||
     (formModal === 'academicDegrees' && editingAcademicDegreeId !== null) ||
     (formModal === 'educationalPrograms' && editingEducationalProgramId !== null) ||
-    (formModal === 'applicants' && editingApplicantId !== null) ||
-    (formModal === 'ticketEvents' && editingTicketEventId !== null)
+    (formModal === 'applicants' && editingApplicantId !== null)
   const modalTitle =
-    formModal === 'ticketEvents' && selectedTicketEvent
-      ? `Детали события: ${getTicketEventTicketLabel(selectedTicketEvent)}`
+    formModal === 'ticketEvents' && selectedTicketEventTicket
+      ? `История талона: ${getTicketEventTicketSummaryLabel(selectedTicketEventTicket)}`
       : formModal === null
         ? ''
         : `${isEditing ? 'Изменить' : 'Создать'}: ${sectionLabels[formModal]}`
@@ -4601,10 +4504,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               <span>{sectionLabels[section]}</span>
             </a>
           ))}
-          <button className="nav-item nav-item-display" type="button" onClick={() => void openSecondDisplay()}>
-            <Icon name="display" />
-            <span>Второй дисплей</span>
-          </button>
           {isAdminUser && (
             <a className="nav-item" href={`/${lang}/queue-display`} target="_blank" rel="noreferrer">
               <Icon name="display" />
@@ -4689,7 +4588,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           </section>
         )}
 
-        {activeSection !== 'profile' && activeSection !== 'myWindow' && activeSection !== 'analytics' && activeSection !== 'reception' && (
+        {activeSection !== 'profile' &&
+          activeSection !== 'myWindow' &&
+          activeSection !== 'analytics' &&
+          activeSection !== 'reception' &&
+          activeSection !== 'ticketEvents' && (
           <div className="dashboard-toolbar">
             <button className="primary-action" type="button" onClick={() => openCreateModal(activeSection)}>
               <Icon name="plus" />
@@ -6012,7 +5915,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             page={ticketEventPage}
             search={ticketEventSearch}
             status={ticketEventStatusFilter}
-            ticketEvents={ticketEvents}
+            ticketSummaries={ticketEventTickets}
             total={ticketEventTotal}
             totalPages={ticketEventTotalPages}
             onDateFromChange={(value) => {
@@ -6049,26 +5952,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               setTicketEventStatusFilter(value)
               setTicketEventPage(1)
             }}
-            onEdit={(ticketEvent) => {
-              setEditingTicketEventId(ticketEvent.id)
-              setTicketEventForm({
-                ticket_id: ticketEvent.ticket_id,
-                event_type: ticketEvent.event_type,
-                old_status: ticketEvent.old_status,
-                new_status: ticketEvent.new_status,
-                operator_id: ticketEvent.operator_id,
-                metadata: ticketEvent.metadata,
-              })
-              setTicketEventMetadataText(getTicketEventMetadataText(ticketEvent))
-              setFormModal('ticketEvents')
-            }}
-            onDelete={(ticketEvent) =>
-              setDeleteTarget({
-                section: 'ticketEvents',
-                id: ticketEvent.id,
-                label: ticketEvent.event_type ?? ticketEvent.id,
-              })
-            }
+            onDetails={(ticketSummary) => void openTicketEventTicketDetails(ticketSummary)}
           />
         )}
       </main>
@@ -6585,116 +6469,144 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           )}
 
           {formModal === 'ticketEvents' && (
-            <form className="admin-form modal-form" onSubmit={submitTicketEvent}>
-              {selectedTicketEvent && (
-                <div className="ticket-event-details">
-                  <div className="ticket-event-detail-grid">
-                    {selectedTicketEventDetailRows.map((row) => (
-                      <div key={row.label}>
-                        <span className="profile-label">{row.label}</span>
-                        <strong>{row.value}</strong>
-                      </div>
-                    ))}
-                  </div>
-
-                  {selectedTicketEventChangeRows.length > 0 && (
-                    <div className="ticket-event-change-panel">
-                      <h3>Изменения</h3>
-                      {selectedTicketEventChangeRows.map((row) => (
-                        <div className="ticket-event-change-row" key={row.field}>
-                          <span>{row.field}</span>
-                          <strong>{row.oldValue}</strong>
-                          <strong>{row.newValue}</strong>
-                        </div>
-                      ))}
+            <div className="ticket-event-details">
+              {selectedTicketEventTicket && (
+                <div className="ticket-event-detail-grid">
+                  {selectedTicketEventSummaryRows.map((row) => (
+                    <div key={row.label}>
+                      <span className="profile-label">{row.label}</span>
+                      <strong>{row.value}</strong>
                     </div>
-                  )}
-
-                  {selectedTicketEventMetadataText && (
-                    <details className="ticket-event-metadata">
-                      <summary>Metadata JSON</summary>
-                      <pre>{selectedTicketEventMetadataText}</pre>
-                    </details>
-                  )}
+                  ))}
                 </div>
               )}
 
-              <input
-                type="text"
-                placeholder="ID талона"
-                value={ticketEventForm.ticket_id ?? ''}
-                onChange={(event) =>
-                  setTicketEventForm({
-                    ...ticketEventForm,
-                    ticket_id: event.target.value || null,
-                  })
-                }
-              />
-              <select
-                value={ticketEventForm.event_type ?? ''}
-                onChange={(event) =>
-                  setTicketEventForm({
-                    ...ticketEventForm,
-                    event_type: event.target.value || null,
-                  })
-                }
-              >
-                <option value="">Выберите тип события</option>
-                <option value="TICKET_CREATED">TICKET_CREATED</option>
-                <option value="TICKET_CALLED">TICKET_CALLED</option>
-                <option value="TICKET_DECLINED">TICKET_DECLINED</option>
-                <option value="TICKET_SKIPPED">TICKET_SKIPPED</option>
-                <option value="TICKET_COMPLETED">TICKET_COMPLETED</option>
-                <option value="STATUS_CHANGED">STATUS_CHANGED</option>
-              </select>
-              <input
-                maxLength={50}
-                placeholder="Старый статус"
-                value={ticketEventForm.old_status ?? ''}
-                onChange={(event) =>
-                  setTicketEventForm({
-                    ...ticketEventForm,
-                    old_status: event.target.value || null,
-                  })
-                }
-              />
-              <input
-                maxLength={50}
-                placeholder="Новый статус"
-                value={ticketEventForm.new_status ?? ''}
-                onChange={(event) =>
-                  setTicketEventForm({
-                    ...ticketEventForm,
-                    new_status: event.target.value || null,
-                  })
-                }
-              />
-              <select
-                value={ticketEventForm.operator_id ?? ''}
-                onChange={(event) =>
-                  setTicketEventForm({
-                    ...ticketEventForm,
-                    operator_id: event.target.value || null,
-                  })
-                }
-              >
-                <option value="">Оператор не указан</option>
-                {operators.map((operator) => (
-                  <option value={operator.id} key={operator.id}>
-                    {getUserLabel(users, operator.user_id)}
-                  </option>
-                ))}
-              </select>
-              <textarea
-                placeholder='Metadata JSON, например {"source":"operator-panel"}'
-                value={ticketEventMetadataText}
-                onChange={(event) => setTicketEventMetadataText(event.target.value)}
-              />
-              <ModalActions
-                onCancel={closeFormModal}
-                submitText={editingTicketEventId === null ? 'Создать' : 'Сохранить'}
-              />
-            </form>
+              <section className="ticket-event-change-panel ticket-event-change-overview">
+                <div className="ticket-event-section-heading">
+                  <h3>Изменения и переназначения</h3>
+                  <span>{selectedTicketEventChangeEvents.length}</span>
+                </div>
+
+                {selectedTicketEventsLoading && <p className="ticket-event-empty">Загрузка событий...</p>}
+
+                {!selectedTicketEventsLoading && selectedTicketEventChangeEvents.length === 0 && (
+                  <p className="ticket-event-empty">Изменений и переназначений по талону нет.</p>
+                )}
+
+                {!selectedTicketEventsLoading &&
+                  selectedTicketEventChangeEvents.map((ticketEvent) => {
+                    const changeRows = getTicketEventChangeRows(ticketEvent)
+
+                    return (
+                      <article className="ticket-event-change-card" key={ticketEvent.id}>
+                        <div>
+                          <strong>{getTicketEventTypeLabel(ticketEvent.event_type)}</strong>
+                          <span>
+                            {new Date(ticketEvent.created_at).toLocaleString('ru-RU')} ·{' '}
+                            {ticketEvent.operator_name ??
+                              ticketEvent.operator_email ??
+                              ticketEvent.operator_id ??
+                              'Оператор не указан'}
+                          </span>
+                        </div>
+
+                        {changeRows.length > 0 ? (
+                          changeRows.map((row) => (
+                            <div className="ticket-event-change-row" key={`${ticketEvent.id}-${row.field}`}>
+                              <span>{row.field}</span>
+                              <strong>{row.oldValue}</strong>
+                              <strong>{row.newValue}</strong>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="ticket-event-empty">
+                            {ticketEvent.old_status || ticketEvent.new_status
+                              ? `${ticketEvent.old_status ?? 'Не указано'} -> ${ticketEvent.new_status ?? 'Не указано'}`
+                              : 'Событие изменения без детализации полей.'}
+                          </p>
+                        )}
+                      </article>
+                    )
+                  })}
+              </section>
+
+              <section className="ticket-event-timeline-panel">
+                <div className="ticket-event-section-heading">
+                  <h3>Все события талона</h3>
+                  <span>{selectedTicketEventTimeline.length}</span>
+                </div>
+
+                {selectedTicketEventsLoading && <p className="ticket-event-empty">Загрузка истории...</p>}
+
+                {!selectedTicketEventsLoading && selectedTicketEventTimeline.length === 0 && (
+                  <p className="ticket-event-empty">События по талону не найдены.</p>
+                )}
+
+                {!selectedTicketEventsLoading &&
+                  selectedTicketEventTimeline.map((ticketEvent) => {
+                    const detailRows = getTicketEventDetailRows(ticketEvent)
+                    const metadataText = getTicketEventMetadataText(ticketEvent)
+                    const changeRows = getTicketEventChangeRows(ticketEvent)
+
+                    return (
+                      <article className="ticket-event-timeline-item" key={ticketEvent.id}>
+                        <div className="ticket-event-timeline-marker" aria-hidden="true" />
+                        <div className="ticket-event-timeline-body">
+                          <div className="ticket-event-timeline-head">
+                            <div>
+                              <strong>{getTicketEventTypeLabel(ticketEvent.event_type)}</strong>
+                              <span>{new Date(ticketEvent.created_at).toLocaleString('ru-RU')}</span>
+                            </div>
+                            <em>{ticketEvent.new_status ?? ticketEvent.old_status ?? 'Без статуса'}</em>
+                          </div>
+                          <p>
+                            Оператор:{' '}
+                            {ticketEvent.operator_name ??
+                              ticketEvent.operator_email ??
+                              ticketEvent.operator_id ??
+                              'Не указан'}
+                          </p>
+
+                          {changeRows.length > 0 && (
+                            <div className="ticket-event-inline-changes">
+                              {changeRows.map((row) => (
+                                <span key={`${ticketEvent.id}-${row.field}`}>
+                                  {row.field}: {row.oldValue} {'->'} {row.newValue}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          <details className="ticket-event-event-details">
+                            <summary>Данные события</summary>
+                            <div className="ticket-event-detail-grid compact">
+                              {detailRows.map((row) => (
+                                <div key={row.label}>
+                                  <span className="profile-label">{row.label}</span>
+                                  <strong>{row.value}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+
+                          {metadataText && (
+                            <details className="ticket-event-metadata">
+                              <summary>Metadata JSON</summary>
+                              <pre>{metadataText}</pre>
+                            </details>
+                          )}
+                        </div>
+                      </article>
+                    )
+                  })}
+              </section>
+
+              <div className="modal-actions">
+                <button className="secondary-action" type="button" onClick={closeFormModal}>
+                  Закрыть
+                </button>
+              </div>
+            </div>
           )}
         </AdminModal>
       )}

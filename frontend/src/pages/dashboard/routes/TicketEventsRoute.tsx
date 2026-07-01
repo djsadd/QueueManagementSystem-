@@ -1,15 +1,16 @@
-import type { TicketEventItem } from '../../../features/admin/api/adminApi'
+import type { TicketEventTicketSummaryItem } from '../../../features/admin/api/adminApi'
 import {
   formatTicketEventDate,
-  getTicketEventIinLabel,
   getTicketEventOperatorLabel,
-  getTicketEventServiceLabel,
   getTicketEventStatusFlowLabel,
-  getTicketEventTicketLabel,
+  getTicketEventTicketSummaryFullNameLabel,
+  getTicketEventTicketSummaryIinLabel,
+  getTicketEventTicketSummaryLabel,
+  getTicketEventTicketSummaryServiceLabel,
+  getTicketEventTicketSummaryStatusLabel,
   getTicketEventTypeLabel,
 } from '../dashboard-ticket-events'
 import { CrudTable } from '../components/CrudTable'
-import { RowActions } from '../components/RowActions'
 
 const TICKET_EVENT_TYPE_FILTER_OPTIONS = [
   { label: 'Все действия', value: '' },
@@ -38,8 +39,7 @@ export function TicketEventsRoute({
   dateTo,
   eventType,
   loading,
-  onDelete,
-  onEdit,
+  onDetails,
   onFilterReset,
   onDateFromChange,
   onDateToChange,
@@ -53,7 +53,7 @@ export function TicketEventsRoute({
   page,
   search,
   status,
-  ticketEvents,
+  ticketSummaries,
   total,
   totalPages,
 }: {
@@ -61,8 +61,7 @@ export function TicketEventsRoute({
   dateTo: string
   eventType: string
   loading: boolean
-  onDelete: (ticketEvent: TicketEventItem) => void
-  onEdit: (ticketEvent: TicketEventItem) => void
+  onDetails: (ticketSummary: TicketEventTicketSummaryItem) => void
   onFilterReset: () => void
   onDateFromChange: (value: string) => void
   onDateToChange: (value: string) => void
@@ -76,7 +75,7 @@ export function TicketEventsRoute({
   page: number
   search: string
   status: string
-  ticketEvents: TicketEventItem[]
+  ticketSummaries: TicketEventTicketSummaryItem[]
   total: number
   totalPages: number
 }) {
@@ -138,36 +137,56 @@ export function TicketEventsRoute({
       <CrudTable
         columns={[
           'Талон',
-          'Дата',
-          'ИИН',
-          'Действие',
-          'Оператор',
+          'Абитуриент',
+          'Услуга',
           'Статус',
+          'Последнее действие',
+          'История',
           'Действия',
         ]}
         loading={loading}
-        rows={ticketEvents.map((ticketEvent) => [
-          <div className="ticket-event-ticket-cell" key={`${ticketEvent.id}-ticket`}>
-            <strong>{getTicketEventTicketLabel(ticketEvent)}</strong>
-            <span>{getTicketEventServiceLabel(ticketEvent)}</span>
+        rowKeys={ticketSummaries.map((ticketSummary) => ticketSummary.ticket_id)}
+        rows={ticketSummaries.map((ticketSummary) => [
+          <div className="ticket-event-ticket-cell" key={`${ticketSummary.ticket_id}-ticket`}>
+            <strong>{getTicketEventTicketSummaryLabel(ticketSummary)}</strong>
+            <span>{ticketSummary.ticket_id.slice(0, 8)}</span>
           </div>,
-          formatTicketEventDate(ticketEvent.created_at),
-          getTicketEventIinLabel(ticketEvent),
-          getTicketEventTypeLabel(ticketEvent.event_type),
-          getTicketEventOperatorLabel(ticketEvent),
-          getTicketEventStatusFlowLabel(ticketEvent),
-          <RowActions
-            key={ticketEvent.id}
-            editLabel="Детали"
-            onEdit={() => onEdit(ticketEvent)}
-            onDelete={() => onDelete(ticketEvent)}
-          />,
+          <div className="ticket-event-ticket-cell" key={`${ticketSummary.ticket_id}-person`}>
+            <strong>{getTicketEventTicketSummaryFullNameLabel(ticketSummary)}</strong>
+            <span>{getTicketEventTicketSummaryIinLabel(ticketSummary)}</span>
+          </div>,
+          getTicketEventTicketSummaryServiceLabel(ticketSummary),
+          getTicketEventTicketSummaryStatusLabel(ticketSummary),
+          <div className="ticket-event-ticket-cell" key={`${ticketSummary.ticket_id}-latest`}>
+            <strong>{getTicketEventTypeLabel(ticketSummary.latest_event.event_type)}</strong>
+            <span>
+              {formatTicketEventDate(ticketSummary.latest_event.created_at)}
+              {' · '}
+              {getTicketEventOperatorLabel(ticketSummary.latest_event)}
+            </span>
+            <span>{getTicketEventStatusFlowLabel(ticketSummary.latest_event)}</span>
+          </div>,
+          <div className="ticket-event-history-cell" key={`${ticketSummary.ticket_id}-history`}>
+            <strong>{ticketSummary.events_count}</strong>
+            <span>событий</span>
+            {ticketSummary.change_events_count > 0 && (
+              <em>{ticketSummary.change_events_count} изменений</em>
+            )}
+          </div>,
+          <button
+            className="secondary-action compact"
+            key={`${ticketSummary.ticket_id}-details`}
+            type="button"
+            onClick={() => onDetails(ticketSummary)}
+          >
+            Детали
+          </button>,
         ])}
       />
 
       <div className="queue-panel ticket-events-pagination" aria-label="Пагинация истории талонов">
         <span>
-          Показано {ticketEvents.length} из {total}
+          Показано {ticketSummaries.length} из {total}
         </span>
         <div className="pagination-pages">
           <button

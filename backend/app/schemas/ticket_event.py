@@ -47,6 +47,28 @@ class TicketEventPageResponse(BaseModel):
     total_pages: int
 
 
+class TicketEventTicketSummaryResponse(BaseModel):
+    ticket_id: uuid.UUID
+    ticket_number: str | None = None
+    iin: str | None = None
+    full_name: str | None = None
+    service_label: str | None = None
+    status: str | None = None
+    latest_event: TicketEventResponse
+    first_event_at: datetime
+    last_event_at: datetime
+    events_count: int
+    change_events_count: int
+
+
+class TicketEventTicketPageResponse(BaseModel):
+    items: list[TicketEventTicketSummaryResponse]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
 class OperatorServiceAnalyticsResponse(BaseModel):
     service_id: int
     service_name: str | None = None

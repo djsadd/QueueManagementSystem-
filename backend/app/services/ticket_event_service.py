@@ -123,6 +123,175 @@ class TicketEventService:
         }
 
     @staticmethod
+    async def get_ticket_page(
+        db: AsyncSession,
+        page: int = 1,
+        page_size: int = 20,
+        search: str | None = None,
+        event_type: str | None = None,
+        operator_id: uuid.UUID | None = None,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> dict:
+        conditions = TicketEventService.build_filter_conditions(
+            search=search,
+            event_type=event_type,
+            operator_id=operator_id,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        conditions.append(TicketEvent.ticket_id.is_not(None))
+
+        ticket_groups = (
+            select(
+                TicketEvent.ticket_id.label("ticket_id"),
+                func.max(TicketEvent.created_at).label("last_matching_event_at"),
+            )
+            .where(*conditions)
+            .group_by(TicketEvent.ticket_id)
+            .subquery()
+        )
+        total_result = await db.execute(select(func.count()).select_from(ticket_groups))
+        total = total_result.scalar_one()
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(page, total_pages)
+        offset = (current_page - 1) * page_size
+
+        page_result = await db.execute(
+            select(ticket_groups)
+            .order_by(ticket_groups.c.last_matching_event_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        group_rows = list(page_result.mappings().all())
+        ticket_ids = [row["ticket_id"] for row in group_rows if row["ticket_id"] is not None]
+
+        if not ticket_ids:
+            return {
+                "items": [],
+                "page": current_page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+            }
+
+        matching_events_result = await db.execute(
+            select(TicketEvent)
+            .where(TicketEvent.ticket_id.in_(ticket_ids), *conditions)
+            .order_by(TicketEvent.created_at.desc())
+        )
+        all_events_result = await db.execute(
+            select(TicketEvent)
+            .where(TicketEvent.ticket_id.in_(ticket_ids))
+            .order_by(TicketEvent.created_at.desc())
+        )
+
+        matching_events_by_ticket = TicketEventService.group_events_by_ticket(
+            list(matching_events_result.scalars().all())
+        )
+        all_events_by_ticket = TicketEventService.group_events_by_ticket(
+            list(all_events_result.scalars().all())
+        )
+
+        summaries = []
+        for row in group_rows:
+            ticket_id = row["ticket_id"]
+            if ticket_id is None:
+                continue
+
+            all_ticket_events = all_events_by_ticket.get(ticket_id, [])
+            matching_ticket_events = matching_events_by_ticket.get(ticket_id, [])
+            latest_event = matching_ticket_events[0] if matching_ticket_events else (
+                all_ticket_events[0] if all_ticket_events else None
+            )
+
+            if latest_event is None or not all_ticket_events:
+                continue
+
+            latest_snapshot = (
+                TicketEventService.get_event_ticket_snapshot(all_ticket_events[0])
+                or TicketEventService.get_event_ticket_snapshot(latest_event)
+                or {}
+            )
+
+            summaries.append(
+                {
+                    "ticket_id": ticket_id,
+                    "ticket_number": TicketEventService.get_snapshot_string(latest_snapshot, "ticket_number"),
+                    "iin": TicketEventService.get_snapshot_string(latest_snapshot, "iin"),
+                    "full_name": TicketEventService.get_snapshot_string(latest_snapshot, "full_name"),
+                    "service_label": TicketEventService.get_snapshot_service_label(latest_snapshot),
+                    "status": (
+                        TicketEventService.get_snapshot_string(latest_snapshot, "status")
+                        or latest_event.new_status
+                        or latest_event.old_status
+                    ),
+                    "latest_event": latest_event,
+                    "first_event_at": min(event.created_at for event in all_ticket_events),
+                    "last_event_at": max(event.created_at for event in all_ticket_events),
+                    "events_count": len(all_ticket_events),
+                    "change_events_count": sum(
+                        1 for event in all_ticket_events if TicketEventService.is_ticket_change_event(event)
+                    ),
+                }
+            )
+
+        return {
+            "items": summaries,
+            "page": current_page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+        }
+
+    @staticmethod
+    def group_events_by_ticket(events: list[TicketEvent]) -> dict[uuid.UUID, list[TicketEvent]]:
+        events_by_ticket: dict[uuid.UUID, list[TicketEvent]] = {}
+
+        for event in events:
+            if event.ticket_id is None:
+                continue
+
+            events_by_ticket.setdefault(event.ticket_id, []).append(event)
+
+        return events_by_ticket
+
+    @staticmethod
+    def get_snapshot_string(snapshot: dict[str, Any], field: str) -> str | None:
+        value = snapshot.get(field)
+
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+
+        return None
+
+    @staticmethod
+    def get_snapshot_service_label(snapshot: dict[str, Any]) -> str | None:
+        return (
+            TicketEventService.get_snapshot_string(snapshot, "service_name")
+            or TicketEventService.get_snapshot_string(snapshot, "service_code")
+            or TicketEventService.get_snapshot_string(snapshot, "service_id")
+        )
+
+    @staticmethod
+    def is_ticket_change_event(ticket_event: TicketEvent) -> bool:
+        metadata = ticket_event.metadata_
+        has_changes = isinstance(metadata, dict) and isinstance(metadata.get("changes"), dict)
+
+        return has_changes or ticket_event.event_type in {
+            "SERVICE_CHANGED",
+            "STATUS_CHANGED",
+            "TICKET_ASSIGNED",
+            "TICKET_STUDY_LANGUAGE_UPDATED",
+            "TICKET_UPDATED",
+        }
+
+    @staticmethod
     def build_filter_conditions(
         search: str | None = None,
         event_type: str | None = None,
