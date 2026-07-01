@@ -602,12 +602,14 @@ function ApplicantReportFunnel({ analysis }: { analysis: ApplicantReportAnalysis
 function TicketEventActionDonutPanel({
   eyebrow = 'Действия без ожидания',
   emptyLabel,
+  metricLabel = 'действий',
   segments,
   title,
   total,
 }: {
   eyebrow?: string
   emptyLabel: string
+  metricLabel?: string
   segments: AnalyticsPieSegment[]
   title: string
   total: number
@@ -619,7 +621,9 @@ function TicketEventActionDonutPanel({
           <span className="profile-label">{eyebrow}</span>
           <h3>{title}</h3>
         </div>
-        <span className="analytics-status">{total} действий</span>
+        <span className="analytics-status">
+          {total} {metricLabel}
+        </span>
       </div>
 
       {segments.length === 0 ? (
@@ -627,7 +631,7 @@ function TicketEventActionDonutPanel({
       ) : (
         <div className="analytics-event-donut-content">
           <AnalyticsDonutChart
-            centerLabel="действий"
+            centerLabel={metricLabel}
             centerValue={total}
             segments={segments}
             total={total}
@@ -1749,28 +1753,6 @@ function buildMonthlyAnalyticsRange(days: OperatorDailyAnalyticsItem[], from: st
   return rows
 }
 
-function aggregateDailyAnalytics(rows: OperatorDailyAnalyticsItem[]) {
-  const rowsByDate = new Map<string, OperatorDailyAnalyticsItem>()
-
-  rows.forEach((dayStats) => {
-    const current = rowsByDate.get(dayStats.date)
-
-    if (current) {
-      current.active += dayStats.active
-      current.completed += dayStats.completed
-      current.skipped += dayStats.skipped
-      current.tickets_count += dayStats.tickets_count
-      return
-    }
-
-    rowsByDate.set(dayStats.date, { ...dayStats })
-  })
-
-  return [...rowsByDate.values()].sort((firstStats, secondStats) =>
-    firstStats.date.localeCompare(secondStats.date),
-  )
-}
-
 function buildTicketDistribution<T extends string>(
   tickets: TicketItem[],
   getKey: (ticket: TicketItem) => T,
@@ -1833,16 +1815,100 @@ function getTicketEventActionStatus(ticketEvent: TicketEventItem) {
   return null
 }
 
-function buildTicketEventStatusDistribution(ticketEvents: TicketEventItem[]) {
-  const rowsByStatus = new Map<string, AnalyticsDistributionItem>()
+function getTicketEventTime(ticketEvent: TicketEventItem) {
+  const parsedTime = Date.parse(ticketEvent.created_at)
+  return Number.isNaN(parsedTime) ? 0 : parsedTime
+}
+
+function buildTicketEventTicketSummaries(ticketEvents: TicketEventItem[]) {
+  const summariesByTicketId = new Map<
+    string,
+    {
+      status: string
+      ticketEvent: TicketEventItem
+      time: number
+    }
+  >()
 
   ticketEvents.forEach((ticketEvent) => {
+    if (ticketEvent.ticket_id === null) {
+      return
+    }
+
     const status = getTicketEventActionStatus(ticketEvent)
 
     if (status === null) {
       return
     }
 
+    const time = getTicketEventTime(ticketEvent)
+    const current = summariesByTicketId.get(ticketEvent.ticket_id)
+
+    if (!current || time >= current.time) {
+      summariesByTicketId.set(ticketEvent.ticket_id, {
+        status,
+        ticketEvent,
+        time,
+      })
+    }
+  })
+
+  return [...summariesByTicketId.values()]
+}
+
+function buildTicketEventDailyAnalytics(ticketEvents: TicketEventItem[]): OperatorDailyAnalyticsItem[] {
+  const ticketsByDate = new Map<string, Map<string, { status: string; time: number }>>()
+
+  ticketEvents.forEach((ticketEvent) => {
+    if (ticketEvent.ticket_id === null) {
+      return
+    }
+
+    const status = getTicketEventActionStatus(ticketEvent)
+
+    if (status === null) {
+      return
+    }
+
+    const date = new Date(ticketEvent.created_at)
+
+    if (Number.isNaN(date.getTime())) {
+      return
+    }
+
+    const dateKey = date.toISOString().slice(0, 10)
+    const time = getTicketEventTime(ticketEvent)
+    const ticketsForDate = ticketsByDate.get(dateKey) ?? new Map<string, { status: string; time: number }>()
+    const current = ticketsForDate.get(ticketEvent.ticket_id)
+
+    if (!current || time >= current.time) {
+      ticketsForDate.set(ticketEvent.ticket_id, { status, time })
+    }
+
+    ticketsByDate.set(dateKey, ticketsForDate)
+  })
+
+  return [...ticketsByDate.entries()]
+    .map(([date, tickets]) => {
+      const statuses = [...tickets.values()].map((ticket) => ticket.status)
+      const completed = statuses.filter((status) => status === 'COMPLETED').length
+      const skipped = statuses.filter((status) => status === 'SKIPPED').length
+
+      return {
+        active: Math.max(0, tickets.size - completed - skipped),
+        completed,
+        date,
+        skipped,
+        tickets_count: tickets.size,
+      }
+    })
+    .sort((firstStats, secondStats) => firstStats.date.localeCompare(secondStats.date))
+}
+
+function buildTicketEventStatusDistribution(ticketEvents: TicketEventItem[]) {
+  const rowsByStatus = new Map<string, AnalyticsDistributionItem>()
+
+  buildTicketEventTicketSummaries(ticketEvents).forEach(({ status }) => {
     const current = rowsByStatus.get(status)
 
     if (current) {
@@ -1867,10 +1933,8 @@ function buildTicketEventActionBreakdown(
 ) {
   const rowsByGroup = new Map<string, TicketEventActionBreakdownRow>()
 
-  ticketEvents.forEach((ticketEvent) => {
-    const status = getTicketEventActionStatus(ticketEvent)
-
-    if (status === null || excludedStatuses.has(status)) {
+  buildTicketEventTicketSummaries(ticketEvents).forEach(({ status, ticketEvent }) => {
+    if (excludedStatuses.has(status)) {
       return
     }
 
@@ -2003,6 +2067,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [educationalPrograms, setEducationalPrograms] = useState<EducationalProgramItem[]>([])
   const [applicants, setApplicants] = useState<ApplicantItem[]>([])
   const [ticketEvents, setTicketEvents] = useState<TicketEventItem[]>([])
+  const [analyticsTicketEvents, setAnalyticsTicketEvents] = useState<TicketEventItem[]>([])
   const [ticketEventSearch, setTicketEventSearch] = useState('')
   const [ticketEventTypeFilter, setTicketEventTypeFilter] = useState('')
   const [ticketEventOperatorFilter, setTicketEventOperatorFilter] = useState('')
@@ -2641,7 +2706,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
         setOperatorAnalytics(analyticsRows)
         setAnalyticsTickets(ticketRows)
-        setTicketEvents(ticketEventRows)
+        setAnalyticsTicketEvents(ticketEventRows)
         setAnalyticsDataScope(buildAnalyticsDataScopeKey(selection, analyticsDateFrom, analyticsDateTo))
         return
       }
@@ -4192,9 +4257,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const analyticsExportKey = analyticsExportOperatorId ?? 'all'
   const selectedServiceAnalyticsRows = selectedOperatorAnalyticsRow?.stats.service_analytics ?? []
   const selectedRawDailyAnalyticsRows = selectedOperatorAnalyticsRow?.stats.daily_analytics ?? []
-  const generalRawDailyAnalyticsRows = aggregateDailyAnalytics(
-    operatorAnalyticsRows.flatMap((row) => row.stats.daily_analytics),
-  )
+  const generalRawDailyAnalyticsRows = buildTicketEventDailyAnalytics(analyticsTicketEvents)
   const generalDailyAnalyticsRows =
     analyticsTimeGrouping === 'month'
       ? buildMonthlyAnalyticsRange(generalRawDailyAnalyticsRows, analyticsDateFrom, analyticsDateTo)
@@ -4250,17 +4313,17 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     label: item.label,
     value: item.value,
   }))
-  const generalEventStatusRows = buildTicketEventStatusDistribution(ticketEvents)
-  const generalEventStatusActionsTotal = generalEventStatusRows.reduce((total, item) => total + item.value, 0)
+  const generalEventStatusRows = buildTicketEventStatusDistribution(analyticsTicketEvents)
+  const generalEventStatusTicketsTotal = generalEventStatusRows.reduce((total, item) => total + item.value, 0)
   const generalEventStatusPieSegments = generalEventStatusRows.map((item, index) => ({
     color: getAnalyticsStatusColor(item.id, index),
-    detail: `${generalEventStatusActionsTotal > 0 ? Math.round((item.value / generalEventStatusActionsTotal) * 100) : 0}% от действий талонов`,
+    detail: `${generalEventStatusTicketsTotal > 0 ? Math.round((item.value / generalEventStatusTicketsTotal) * 100) : 0}% от талонов`,
     label: item.label,
     value: item.value,
   }))
   const generalTicketById = new Map(analyticsTickets.map((ticket) => [ticket.id, ticket]))
   const generalEventOperatorRows = buildTicketEventActionBreakdown(
-    ticketEvents,
+    analyticsTicketEvents,
     (ticketEvent) => ({
       id: ticketEvent.operator_id ?? 'none',
       label:
@@ -4272,7 +4335,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     WAITING_TICKET_EVENT_STATUSES,
   )
   const generalEventProgramRows = buildTicketEventActionBreakdown(
-    ticketEvents,
+    analyticsTicketEvents,
     (ticketEvent) => {
       const ticket = ticketEvent.ticket_id ? generalTicketById.get(ticketEvent.ticket_id) : undefined
 
@@ -4297,17 +4360,17 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     },
     WAITING_TICKET_EVENT_STATUSES,
   )
-  const generalEventOperatorActionsTotal = generalEventOperatorRows.reduce((total, item) => total + item.total, 0)
-  const generalEventProgramActionsTotal = generalEventProgramRows.reduce((total, item) => total + item.total, 0)
+  const generalEventOperatorTicketsTotal = generalEventOperatorRows.reduce((total, item) => total + item.total, 0)
+  const generalEventProgramTicketsTotal = generalEventProgramRows.reduce((total, item) => total + item.total, 0)
   const generalEventOperatorPieSegments = generalEventOperatorRows.map((item, index) => ({
     color: getAnalyticsServiceColor(index),
-    detail: `${generalEventOperatorActionsTotal > 0 ? Math.round((item.total / generalEventOperatorActionsTotal) * 100) : 0}% от действий без ожидания`,
+    detail: `${generalEventOperatorTicketsTotal > 0 ? Math.round((item.total / generalEventOperatorTicketsTotal) * 100) : 0}% от талонов без ожидания`,
     label: item.label,
     value: item.total,
   }))
   const generalEventProgramPieSegments = generalEventProgramRows.map((item, index) => ({
     color: getAnalyticsServiceColor(index),
-    detail: `${generalEventProgramActionsTotal > 0 ? Math.round((item.total / generalEventProgramActionsTotal) * 100) : 0}% от действий без ожидания`,
+    detail: `${generalEventProgramTicketsTotal > 0 ? Math.round((item.total / generalEventProgramTicketsTotal) * 100) : 0}% от талонов без ожидания`,
     label: item.label,
     value: item.total,
   }))
@@ -4375,7 +4438,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     (total, row) => total + row.stats.processed,
     0,
   )
-  const sectionStats: Record<DashboardSection, { icon: string; label: string; value: number }> = {
+  const sectionStats: Partial<Record<DashboardSection, { icon: string; label: string; value: number }>> = {
     myWindow: { icon: 'monitor', label: 'Талонов всего', value: myWindowTotal },
     reception: { icon: 'id-card', label: 'Активных талонов', value: receptionTotal },
     profile: { icon: 'users', label: 'Выбранных программ', value: profileProgramIds.length },
@@ -4387,16 +4450,15 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     educationalPrograms: { icon: 'book', label: 'Образовательных программ', value: educationalPrograms.length },
     applicants: { icon: 'id-card', label: 'Абитуриентов', value: applicants.length },
     analytics: { icon: 'chart', label: 'Обработано талонов', value: operatorAnalyticsProcessedTotal },
-    ticketEvents: { icon: 'history', label: 'Событий талонов', value: ticketEvents.length },
   }
   const activeStat = sectionStats[activeSection]
   const activeStats =
-    activeSection === 'myWindow'
+    activeSection === 'myWindow' && activeStat
       ? [
           activeStat,
           { icon: 'users', label: 'Человек в очереди', value: myWindowWaitingCount },
         ]
-      : activeSection === 'reception'
+      : activeSection === 'reception' && activeStat
         ? [
             activeStat,
             { icon: 'users', label: 'Ожидают', value: receptionWaitingCount },
@@ -4412,7 +4474,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           : [
               { icon: 'badge', label: 'Сотрудников', value: operatorAnalyticsRows.length },
             ]
-      : [activeStat]
+      : activeStat
+        ? [activeStat]
+        : []
   const currentUser = users.find((user) => user.id === currentUserId) ?? authUser
   const currentOperator = operators.find((operator) => operator.user_id === currentUserId)
   const activeServices = services.filter((service) => service.is_active)
@@ -4605,7 +4669,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           </div>
         </header>
 
-        {activeSection !== 'analytics' && (
+        {activeSection !== 'analytics' && activeSection !== 'ticketEvents' && (
           <section
             className={activeSection === 'myWindow' ? 'stats-grid compact' : 'stats-grid'}
             aria-label="Admin counters"
@@ -5549,23 +5613,26 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
                     <div className="analytics-event-donut-grid">
                       <TicketEventActionDonutPanel
-                        emptyLabel="В истории талонов пока нет действий со статусами"
+                        emptyLabel="В истории талонов пока нет статусов по талонам"
                         eyebrow="История талонов"
+                        metricLabel="талонов"
                         segments={generalEventStatusPieSegments}
-                        title="Статусы по действиям"
-                        total={generalEventStatusActionsTotal}
+                        title="Статусы по талонам"
+                        total={generalEventStatusTicketsTotal}
                       />
                       <TicketEventActionDonutPanel
-                        emptyLabel="Нет действий талонов по операторам без ожидания"
+                        emptyLabel="Нет талонов по операторам без ожидания"
+                        metricLabel="талонов"
                         segments={generalEventOperatorPieSegments}
-                        title="Действия по операторам"
-                        total={generalEventOperatorActionsTotal}
+                        title="Талоны по операторам"
+                        total={generalEventOperatorTicketsTotal}
                       />
                       <TicketEventActionDonutPanel
-                        emptyLabel="Нет действий талонов по образовательным программам без ожидания"
+                        emptyLabel="Нет талонов по образовательным программам без ожидания"
+                        metricLabel="талонов"
                         segments={generalEventProgramPieSegments}
-                        title="Действия по образовательным программам"
-                        total={generalEventProgramActionsTotal}
+                        title="Талоны по образовательным программам"
+                        total={generalEventProgramTicketsTotal}
                       />
                     </div>
                   </div>
