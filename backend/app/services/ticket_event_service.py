@@ -1,11 +1,12 @@
 import uuid
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.models.operator import Operator
 from app.models.service import Service
@@ -61,12 +62,16 @@ class TicketEventService:
         db: AsyncSession,
         date_from: date | None = None,
         date_to: date | None = None,
+        include_metadata: bool = True,
     ) -> list[TicketEvent]:
         query = TicketEventService.apply_created_at_date_filter(
             select(TicketEvent),
             date_from,
             date_to,
         )
+        if not include_metadata:
+            query = query.options(defer(TicketEvent.metadata_))
+
         result = await db.execute(query.order_by(TicketEvent.created_at.desc()))
         return list(result.scalars().all())
 
@@ -110,6 +115,19 @@ class TicketEventService:
         operators = list(operator_result.scalars().all())
         operator_ids = [operator.id for operator in operators]
 
+        user_ids = {operator.user_id for operator in operators}
+        window_ids = {operator.window_id for operator in operators if operator.window_id is not None}
+        users_by_id: dict[uuid.UUID, User] = {}
+        windows_by_id: dict[int, Window] = {}
+
+        if user_ids:
+            user_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+            users_by_id = {user.id: user for user in user_result.scalars().all()}
+
+        if window_ids:
+            window_result = await db.execute(select(Window).where(Window.id.in_(window_ids)))
+            windows_by_id = {window.id: window for window in window_result.scalars().all()}
+
         event_query = select(TicketEvent)
         if operator_id is not None:
             event_query = event_query.where(TicketEvent.operator_id == operator_id)
@@ -125,6 +143,7 @@ class TicketEventService:
             events_by_operator.setdefault(event.operator_id, []).append(event)
 
         tickets_by_operator: dict[uuid.UUID, list[Ticket]] = {}
+        services_by_id: dict[int, Service] = {}
         if operator_ids:
             ticket_query = select(Ticket).where(Ticket.operator_id.in_(operator_ids))
             ticket_query = TicketEventService.apply_ticket_created_at_date_filter(
@@ -138,6 +157,15 @@ class TicketEventService:
                     continue
 
                 tickets_by_operator.setdefault(ticket.operator_id, []).append(ticket)
+
+            service_ids = {
+                ticket.service_id
+                for operator_tickets in tickets_by_operator.values()
+                for ticket in operator_tickets
+            }
+            if service_ids:
+                service_result = await db.execute(select(Service).where(Service.id.in_(service_ids)))
+                services_by_id = {service.id: service for service in service_result.scalars().all()}
 
         rows = []
         for operator in operators:
@@ -176,15 +204,9 @@ class TicketEventService:
                 operator_events,
             )
             popular_service_id, popular_service_count = TicketEventService.get_popular_service(operator_tickets)
-            service_ids = {ticket.service_id for ticket in operator_tickets}
-            services_by_id: dict[int, Service] = {}
-            if service_ids:
-                service_result = await db.execute(select(Service).where(Service.id.in_(service_ids)))
-                services_by_id = {service.id: service for service in service_result.scalars().all()}
-
-            user = await db.get(User, operator.user_id)
-            window = await db.get(Window, operator.window_id) if operator.window_id is not None else None
-            popular_service = await db.get(Service, popular_service_id) if popular_service_id is not None else None
+            user = users_by_id.get(operator.user_id)
+            window = windows_by_id.get(operator.window_id) if operator.window_id is not None else None
+            popular_service = services_by_id.get(popular_service_id) if popular_service_id is not None else None
 
             rows.append(
                 {
@@ -222,22 +244,38 @@ class TicketEventService:
     @staticmethod
     def apply_created_at_date_filter(query, date_from: date | None, date_to: date | None):
         if date_from is not None:
-            query = query.where(func.date(TicketEvent.created_at) >= date_from)
+            query = query.where(TicketEvent.created_at >= TicketEventService.get_aware_day_start(date_from))
 
         if date_to is not None:
-            query = query.where(func.date(TicketEvent.created_at) <= date_to)
+            query = query.where(TicketEvent.created_at < TicketEventService.get_aware_next_day_start(date_to))
 
         return query
 
     @staticmethod
     def apply_ticket_created_at_date_filter(query, date_from: date | None, date_to: date | None):
         if date_from is not None:
-            query = query.where(func.date(Ticket.created_at) >= date_from)
+            query = query.where(Ticket.created_at >= TicketEventService.get_naive_day_start(date_from))
 
         if date_to is not None:
-            query = query.where(func.date(Ticket.created_at) <= date_to)
+            query = query.where(Ticket.created_at < TicketEventService.get_naive_next_day_start(date_to))
 
         return query
+
+    @staticmethod
+    def get_naive_day_start(value: date) -> datetime:
+        return datetime.combine(value, time.min)
+
+    @staticmethod
+    def get_naive_next_day_start(value: date) -> datetime:
+        return TicketEventService.get_naive_day_start(value) + timedelta(days=1)
+
+    @staticmethod
+    def get_aware_day_start(value: date) -> datetime:
+        return datetime.combine(value, time.min, tzinfo=timezone.utc)
+
+    @staticmethod
+    def get_aware_next_day_start(value: date) -> datetime:
+        return TicketEventService.get_aware_day_start(value) + timedelta(days=1)
 
     @staticmethod
     def event_matches(ticket_event: TicketEvent, event_type: str, new_status: str) -> bool:

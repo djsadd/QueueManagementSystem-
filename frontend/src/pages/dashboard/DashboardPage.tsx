@@ -2539,7 +2539,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         const [analyticsRows, ticketRows, ticketEventRows] = await Promise.all([
           adminApi.ticketEvents.analytics(analyticsDateParams),
           adminApi.tickets.export(analyticsDateParams),
-          adminApi.ticketEvents.list(analyticsDateParams),
+          adminApi.ticketEvents.list({ ...analyticsDateParams, include_metadata: false }),
         ])
 
         if (analyticsRequestIdRef.current !== requestId) {

@@ -28,3 +28,22 @@ def test_admin_can_filter_ticket_event_analytics_by_operator(client, monkeypatch
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_admin_can_load_ticket_events_without_metadata(client, monkeypatch, admin_user):
+    app.dependency_overrides[require_admin] = lambda: admin_user
+
+    async def get_all(db, date_from=None, date_to=None, include_metadata=True):
+        assert date_from == date(2026, 6, 1)
+        assert date_to == date(2026, 6, 30)
+        assert include_metadata is False
+        return []
+
+    monkeypatch.setattr(ticket_event_routes.TicketEventService, "get_all", get_all)
+
+    response = client.get(
+        "/ticket-events/?date_from=2026-06-01&date_to=2026-06-30&include_metadata=false",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []

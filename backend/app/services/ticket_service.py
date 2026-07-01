@@ -1,6 +1,6 @@
 import uuid
 import enum
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -347,10 +347,10 @@ class TicketService:
             conditions.append(Ticket.operator_id == operator_id)
 
         if date_from is not None:
-            conditions.append(func.date(Ticket.created_at) >= date_from)
+            conditions.append(Ticket.created_at >= TicketService.get_day_start(date_from))
 
         if date_to is not None:
-            conditions.append(func.date(Ticket.created_at) <= date_to)
+            conditions.append(Ticket.created_at < TicketService.get_next_day_start(date_to))
 
         result = await db.execute(
             select(Ticket)
@@ -359,10 +359,15 @@ class TicketService:
         )
         tickets = list(result.scalars().all())
 
-        return [
-            await TicketService.build_ticket_response(db, ticket)
-            for ticket in tickets
-        ]
+        return await TicketService.build_ticket_responses(db, tickets)
+
+    @staticmethod
+    def get_day_start(value: date) -> datetime:
+        return datetime.combine(value, time.min)
+
+    @staticmethod
+    def get_next_day_start(value: date) -> datetime:
+        return TicketService.get_day_start(value) + timedelta(days=1)
 
     @staticmethod
     async def get_my_window_tickets(
@@ -1901,48 +1906,100 @@ class TicketService:
 
     @staticmethod
     async def build_ticket_response(db, ticket: Ticket) -> dict:
-        applicant = None
-        if ticket.applicant_id is not None:
-            result = await db.execute(
-                select(Applicant).where(Applicant.id == ticket.applicant_id)
-            )
-            applicant = result.scalar_one_or_none()
+        return (await TicketService.build_ticket_responses(db, [ticket]))[0]
 
-        result = await db.execute(
-            select(Service).where(Service.id == ticket.service_id)
+    @staticmethod
+    async def build_ticket_responses(db, tickets: list[Ticket]) -> list[dict]:
+        if not tickets:
+            return []
+
+        applicant_ids = {ticket.applicant_id for ticket in tickets if ticket.applicant_id is not None}
+        service_ids = {ticket.service_id for ticket in tickets}
+        educational_program_ids = {
+            ticket.educational_program_id
+            for ticket in tickets
+            if ticket.educational_program_id is not None
+        }
+        academic_degree_ids = {
+            ticket.academic_degree_id
+            for ticket in tickets
+            if ticket.academic_degree_id is not None
+        }
+        operator_ids = {ticket.operator_id for ticket in tickets if ticket.operator_id is not None}
+        window_ids = {ticket.window_id for ticket in tickets if ticket.window_id is not None}
+
+        applicants_by_id: dict[uuid.UUID, Applicant] = {}
+        services_by_id: dict[int, Service] = {}
+        programs_by_id: dict[int, EducationalProgram] = {}
+        degrees_by_id: dict[int, AcademicDegree] = {}
+        operators_by_id: dict[uuid.UUID, Operator] = {}
+        users_by_id: dict[uuid.UUID, User] = {}
+        windows_by_id: dict[int, Window] = {}
+
+        if applicant_ids:
+            result = await db.execute(select(Applicant).where(Applicant.id.in_(applicant_ids)))
+            applicants_by_id = {applicant.id: applicant for applicant in result.scalars().all()}
+
+        if service_ids:
+            result = await db.execute(select(Service).where(Service.id.in_(service_ids)))
+            services_by_id = {service.id: service for service in result.scalars().all()}
+
+        if educational_program_ids:
+            result = await db.execute(select(EducationalProgram).where(EducationalProgram.id.in_(educational_program_ids)))
+            programs_by_id = {program.id: program for program in result.scalars().all()}
+
+        if academic_degree_ids:
+            result = await db.execute(select(AcademicDegree).where(AcademicDegree.id.in_(academic_degree_ids)))
+            degrees_by_id = {degree.id: degree for degree in result.scalars().all()}
+
+        if operator_ids:
+            result = await db.execute(select(Operator).where(Operator.id.in_(operator_ids)))
+            operators_by_id = {operator.id: operator for operator in result.scalars().all()}
+            user_ids = {operator.user_id for operator in operators_by_id.values()}
+            if user_ids:
+                user_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+                users_by_id = {user.id: user for user in user_result.scalars().all()}
+
+        if window_ids:
+            result = await db.execute(select(Window).where(Window.id.in_(window_ids)))
+            windows_by_id = {window.id: window for window in result.scalars().all()}
+
+        return [
+            TicketService.build_ticket_response_from_maps(
+                ticket,
+                applicants_by_id,
+                services_by_id,
+                programs_by_id,
+                degrees_by_id,
+                operators_by_id,
+                users_by_id,
+                windows_by_id,
+            )
+            for ticket in tickets
+        ]
+
+    @staticmethod
+    def build_ticket_response_from_maps(
+        ticket: Ticket,
+        applicants_by_id: dict[uuid.UUID, Applicant],
+        services_by_id: dict[int, Service],
+        programs_by_id: dict[int, EducationalProgram],
+        degrees_by_id: dict[int, AcademicDegree],
+        operators_by_id: dict[uuid.UUID, Operator],
+        users_by_id: dict[uuid.UUID, User],
+        windows_by_id: dict[int, Window],
+    ) -> dict:
+        applicant = applicants_by_id.get(ticket.applicant_id) if ticket.applicant_id is not None else None
+        service = services_by_id.get(ticket.service_id)
+        educational_program = (
+            programs_by_id.get(ticket.educational_program_id)
+            if ticket.educational_program_id is not None
+            else None
         )
-        service = result.scalar_one_or_none()
-
-        educational_program = None
-        academic_degree = None
-        if ticket.educational_program_id is not None:
-            result = await db.execute(
-                select(EducationalProgram).where(
-                    EducationalProgram.id == ticket.educational_program_id
-                )
-            )
-            educational_program = result.scalar_one_or_none()
-
-        if ticket.academic_degree_id is not None:
-            result = await db.execute(
-                select(AcademicDegree).where(AcademicDegree.id == ticket.academic_degree_id)
-            )
-            academic_degree = result.scalar_one_or_none()
-
-        assigned_operator = None
-        assigned_operator_user = None
-        if ticket.operator_id is not None:
-            result = await db.execute(select(Operator).where(Operator.id == ticket.operator_id))
-            assigned_operator = result.scalar_one_or_none()
-
-        if assigned_operator is not None:
-            result = await db.execute(select(User).where(User.id == assigned_operator.user_id))
-            assigned_operator_user = result.scalar_one_or_none()
-
-        window = None
-        if ticket.window_id is not None:
-            result = await db.execute(select(Window).where(Window.id == ticket.window_id))
-            window = result.scalar_one_or_none()
+        academic_degree = degrees_by_id.get(ticket.academic_degree_id) if ticket.academic_degree_id is not None else None
+        assigned_operator = operators_by_id.get(ticket.operator_id) if ticket.operator_id is not None else None
+        assigned_operator_user = users_by_id.get(assigned_operator.user_id) if assigned_operator is not None else None
+        window = windows_by_id.get(ticket.window_id) if ticket.window_id is not None else None
 
         return {
             "id": ticket.id,

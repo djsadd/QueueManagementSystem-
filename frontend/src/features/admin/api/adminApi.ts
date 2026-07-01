@@ -317,6 +317,7 @@ export type TicketExportParams = {
 export type TicketEventListParams = {
   date_from?: string
   date_to?: string
+  include_metadata?: boolean
 }
 
 export type TicketEventAnalyticsParams = {
