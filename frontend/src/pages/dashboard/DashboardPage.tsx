@@ -218,12 +218,25 @@ const APPLICANT_REPORT_STAGE_DEFINITIONS: Array<{
     label: 'Принято и подтверждено оригиналами документов',
   },
 ]
+const APPLICANT_REPORT_STATUS_ALIASES: Record<Exclude<ApplicantReportStageId, 'unknown'>, string[]> = {
+  accepted_confirmed: [
+    'Принято и подтверждено оригиналами документов',
+    'Принято, подтверждено оригиналами документов',
+    'Принято подтверждено оригиналами документов',
+  ],
+  accepted_unconfirmed: [
+    'Принято, не подтверждено оригиналами документов',
+    'Принято не подтверждено оригиналами документов',
+    'Принято, не подтверждено оригиналами',
+  ],
+  saved_not_submitted: ['Сохранено, не подано', 'Сохранено не подано', 'Не подано'],
+}
 const APPLICANT_REPORT_HEADER_ALIASES = {
   documentsAccepted: ['документы приняты', 'документы принятые', 'оригиналы документов приняты'],
   documentsReturned: ['документы возвращены', 'документы возвращенные', 'оригиналы документов возвращены'],
   fullName: ['полное имя', 'фио', 'ф.и.о.', 'фамилия имя отчество'],
   iin: ['иин', 'жсн', 'iin', 'иин абитуриента', 'жсн абитуриента'],
-  status: ['статус', 'статус заявления'],
+  status: ['статус', 'статус заявления', 'status', 'application status'],
 }
 const ANALYTICS_QUICK_MONTHS = [
   { label: 'Июнь', month: 6 },
@@ -948,8 +961,14 @@ function normalizeReportValue(value: string) {
     .replace(/\uFEFF/g, '')
     .replace(/\u00a0/g, ' ')
     .trim()
-    .toLowerCase()
+    .toLocaleLowerCase('ru-RU')
     .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ')
+}
+
+function normalizeReportStatus(value: string) {
+  return normalizeReportValue(value)
+    .replace(/[.,:;()[\]{}"']/g, '')
     .replace(/\s+/g, ' ')
 }
 
@@ -1123,12 +1142,32 @@ function hasPositiveApplicantReportValue(value: string) {
   ].includes(normalizedValue)
 }
 
+function getApplicantReportStageByStatus(status: string): ApplicantReportStageId | null {
+  const normalizedStatus = normalizeReportStatus(status)
+
+  for (const [stage, aliases] of Object.entries(APPLICANT_REPORT_STATUS_ALIASES) as Array<
+    [Exclude<ApplicantReportStageId, 'unknown'>, string[]]
+  >) {
+    const hasMatchingAlias = aliases.some((alias) => {
+      const normalizedAlias = normalizeReportStatus(alias)
+      return normalizedStatus === normalizedAlias || normalizedStatus.includes(normalizedAlias)
+    })
+
+    if (hasMatchingAlias) {
+      return stage
+    }
+  }
+
+  return null
+}
+
 function classifyApplicantReportStage(
   status: string,
   documentsAccepted: string,
   documentsReturned: string,
 ): ApplicantReportStageId {
   const normalizedStatus = normalizeReportValue(status)
+  const exactStatusStage = getApplicantReportStageByStatus(status)
   const documentsAreAccepted = hasPositiveApplicantReportValue(documentsAccepted)
   const documentsAreReturned = hasPositiveApplicantReportValue(documentsReturned)
   const isSaved = normalizedStatus.includes('сохран') || normalizedStatus.includes('saved')
@@ -1145,6 +1184,10 @@ function classifyApplicantReportStage(
     (normalizedStatus.includes('подтвержден') && !isNotConfirmed) ||
     normalizedStatus.includes('confirmed') ||
     documentsAreAccepted
+
+  if (exactStatusStage) {
+    return exactStatusStage
+  }
 
   if (isSaved && (isNotSubmitted || !isAccepted)) {
     return 'saved_not_submitted'
