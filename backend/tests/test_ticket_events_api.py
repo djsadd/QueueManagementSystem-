@@ -51,6 +51,59 @@ def test_admin_can_load_ticket_events_without_metadata(client, monkeypatch, admi
     assert response.json() == []
 
 
+def test_admin_can_load_paginated_ticket_events_with_filters(client, monkeypatch, admin_user):
+    app.dependency_overrides[require_admin] = lambda: admin_user
+    operator_id = uuid.uuid4()
+
+    async def get_page(
+        db,
+        page=1,
+        page_size=20,
+        search=None,
+        event_type=None,
+        operator_id=None,
+        status=None,
+        date_from=None,
+        date_to=None,
+        include_metadata=True,
+    ):
+        assert page == 2
+        assert page_size == 25
+        assert search == "A-15"
+        assert event_type == "TICKET_COMPLETED"
+        assert operator_id == expected_operator_id
+        assert status == "COMPLETED"
+        assert date_from == date(2026, 6, 1)
+        assert date_to == date(2026, 6, 30)
+        assert include_metadata is True
+        return {
+            "items": [],
+            "page": page,
+            "page_size": page_size,
+            "total": 0,
+            "total_pages": 1,
+        }
+
+    expected_operator_id = operator_id
+    monkeypatch.setattr(ticket_event_routes.TicketEventService, "get_page", get_page)
+
+    response = client.get(
+        "/ticket-events/page?"
+        f"operator_id={operator_id}&"
+        "page=2&page_size=25&search=A-15&event_type=TICKET_COMPLETED&"
+        "status=COMPLETED&date_from=2026-06-01&date_to=2026-06-30",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [],
+        "page": 2,
+        "page_size": 25,
+        "total": 0,
+        "total_pages": 1,
+    }
+
+
 def test_operator_service_analytics_uses_ticket_event_snapshots():
     ticket_id = uuid.uuid4()
     service_id = 10

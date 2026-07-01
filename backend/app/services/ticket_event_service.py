@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -75,6 +75,94 @@ class TicketEventService:
 
         result = await db.execute(query.order_by(TicketEvent.created_at.desc()))
         return list(result.scalars().all())
+
+    @staticmethod
+    async def get_page(
+        db: AsyncSession,
+        page: int = 1,
+        page_size: int = 20,
+        search: str | None = None,
+        event_type: str | None = None,
+        operator_id: uuid.UUID | None = None,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        include_metadata: bool = True,
+    ) -> dict:
+        conditions = TicketEventService.build_filter_conditions(
+            search=search,
+            event_type=event_type,
+            operator_id=operator_id,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        total_result = await db.execute(select(func.count()).select_from(TicketEvent).where(*conditions))
+        total = total_result.scalar_one()
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(page, total_pages)
+        offset = (current_page - 1) * page_size
+        query = (
+            select(TicketEvent)
+            .where(*conditions)
+            .order_by(TicketEvent.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+
+        if not include_metadata:
+            query = query.options(defer(TicketEvent.metadata_))
+
+        result = await db.execute(query)
+        return {
+            "items": list(result.scalars().all()),
+            "page": current_page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+        }
+
+    @staticmethod
+    def build_filter_conditions(
+        search: str | None = None,
+        event_type: str | None = None,
+        operator_id: uuid.UUID | None = None,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list:
+        conditions = []
+
+        if date_from is not None:
+            conditions.append(TicketEvent.created_at >= TicketEventService.get_aware_day_start(date_from))
+
+        if date_to is not None:
+            conditions.append(TicketEvent.created_at < TicketEventService.get_aware_next_day_start(date_to))
+
+        if event_type:
+            conditions.append(TicketEvent.event_type == event_type)
+
+        if operator_id is not None:
+            conditions.append(TicketEvent.operator_id == operator_id)
+
+        if status:
+            conditions.append(or_(TicketEvent.old_status == status, TicketEvent.new_status == status))
+
+        normalized_search = (search or "").strip()
+        if normalized_search:
+            search_pattern = f"%{normalized_search}%"
+            conditions.append(
+                or_(
+                    cast(TicketEvent.id, String).ilike(search_pattern),
+                    cast(TicketEvent.ticket_id, String).ilike(search_pattern),
+                    TicketEvent.event_type.ilike(search_pattern),
+                    TicketEvent.old_status.ilike(search_pattern),
+                    TicketEvent.new_status.ilike(search_pattern),
+                    cast(TicketEvent.metadata_, String).ilike(search_pattern),
+                )
+            )
+
+        return conditions
 
     @staticmethod
     async def get_by_operator_id(db: AsyncSession, operator_id: uuid.UUID) -> list[TicketEvent]:

@@ -186,6 +186,7 @@ type TicketCreateFormState = {
 
 const ANALYTICS_OPERATORS_SELECTION = 'operators'
 const MY_WINDOW_PAGE_SIZE = 10
+const TICKET_EVENTS_PAGE_SIZE = 20
 const ACTIVE_MY_WINDOW_TICKET_STATUSES = new Set(['WAITING', 'CALLED'])
 const ANALYTICS_SERVICE_COLORS = [
   '#9a002d',
@@ -2002,6 +2003,15 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [educationalPrograms, setEducationalPrograms] = useState<EducationalProgramItem[]>([])
   const [applicants, setApplicants] = useState<ApplicantItem[]>([])
   const [ticketEvents, setTicketEvents] = useState<TicketEventItem[]>([])
+  const [ticketEventSearch, setTicketEventSearch] = useState('')
+  const [ticketEventTypeFilter, setTicketEventTypeFilter] = useState('')
+  const [ticketEventOperatorFilter, setTicketEventOperatorFilter] = useState('')
+  const [ticketEventStatusFilter, setTicketEventStatusFilter] = useState('')
+  const [ticketEventDateFrom, setTicketEventDateFrom] = useState('')
+  const [ticketEventDateTo, setTicketEventDateTo] = useState('')
+  const [ticketEventPage, setTicketEventPage] = useState(1)
+  const [ticketEventTotal, setTicketEventTotal] = useState(0)
+  const [ticketEventTotalPages, setTicketEventTotalPages] = useState(1)
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
   const [analyticsTickets, setAnalyticsTickets] = useState<TicketItem[]>([])
   const [operatorAnalyticsTickets, setOperatorAnalyticsTickets] = useState<TicketItem[]>([])
@@ -2518,6 +2528,40 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
+  async function loadAdminTicketEventsData() {
+    setLoading(true)
+    setError('')
+
+    try {
+      const [ticketEventRows, operatorRows, userRows] = await Promise.all([
+        adminApi.ticketEvents.page({
+          date_from: ticketEventDateFrom || undefined,
+          date_to: ticketEventDateTo || undefined,
+          event_type: ticketEventTypeFilter || undefined,
+          include_metadata: true,
+          operator_id: ticketEventOperatorFilter || undefined,
+          page: ticketEventPage,
+          page_size: TICKET_EVENTS_PAGE_SIZE,
+          search: ticketEventSearch || undefined,
+          status: ticketEventStatusFilter || undefined,
+        }),
+        adminApi.operators.list(),
+        adminApi.users.list(),
+      ])
+
+      setTicketEvents(ticketEventRows.items)
+      setTicketEventPage(ticketEventRows.page)
+      setTicketEventTotal(ticketEventRows.total)
+      setTicketEventTotalPages(ticketEventRows.total_pages)
+      setOperators(operatorRows)
+      setUsers(userRows)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить историю талонов')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function loadAdminAnalyticsBaseData() {
     if (analyticsBaseLoaded || analyticsBaseLoading) {
       return
@@ -2786,7 +2830,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       !isAdminUser ||
       activeSection === 'analytics' ||
       activeSection === 'myWindow' ||
-      activeSection === 'reception'
+      activeSection === 'reception' ||
+      activeSection === 'ticketEvents'
     ) {
       return
     }
@@ -2797,6 +2842,28 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
     return () => window.clearTimeout(timerId)
   }, [activeSection, isAdminUser])
+
+  useEffect(() => {
+    if (!isAdminUser || activeSection !== 'ticketEvents') {
+      return
+    }
+
+    const timerId = window.setTimeout(() => {
+      void loadAdminTicketEventsData()
+    }, 0)
+
+    return () => window.clearTimeout(timerId)
+  }, [
+    activeSection,
+    isAdminUser,
+    ticketEventDateFrom,
+    ticketEventDateTo,
+    ticketEventOperatorFilter,
+    ticketEventPage,
+    ticketEventSearch,
+    ticketEventStatusFilter,
+    ticketEventTypeFilter,
+  ])
 
   useEffect(() => {
     if (isAdminUser && activeSection === 'analytics') {
@@ -3345,7 +3412,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       }
 
       closeFormModal()
-      await loadAdminSectionData('ticketEvents')
+      await loadAdminTicketEventsData()
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить событие талона')
     }
@@ -3917,7 +3984,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
       const deletedSection = deleteTarget.section
       setDeleteTarget(null)
-      await loadAdminSectionData(deletedSection)
+      if (deletedSection === 'ticketEvents') {
+        await loadAdminTicketEventsData()
+      } else {
+        await loadAdminSectionData(deletedSection)
+      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось удалить запись')
     }
@@ -4017,6 +4088,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const selectedTicketEventMetadataText = selectedTicketEvent
     ? getTicketEventMetadataText(selectedTicketEvent)
     : ''
+  const ticketEventOperatorOptions = operators
+    .map((operator) => ({
+      id: operator.id,
+      label: getUserLabel(users, operator.user_id),
+    }))
+    .sort((firstOperator, secondOperator) => firstOperator.label.localeCompare(secondOperator.label))
   const isEditing =
     (formModal === 'services' && editingServiceId !== null) ||
     (formModal === 'windows' && editingWindowId !== null) ||
@@ -5859,8 +5936,52 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
         {activeSection === 'ticketEvents' && (
           <TicketEventsRoute
+            dateFrom={ticketEventDateFrom}
+            dateTo={ticketEventDateTo}
+            eventType={ticketEventTypeFilter}
             loading={loading}
+            operatorId={ticketEventOperatorFilter}
+            operatorOptions={ticketEventOperatorOptions}
+            page={ticketEventPage}
+            search={ticketEventSearch}
+            status={ticketEventStatusFilter}
             ticketEvents={ticketEvents}
+            total={ticketEventTotal}
+            totalPages={ticketEventTotalPages}
+            onDateFromChange={(value) => {
+              setTicketEventDateFrom(value)
+              setTicketEventPage(1)
+            }}
+            onDateToChange={(value) => {
+              setTicketEventDateTo(value)
+              setTicketEventPage(1)
+            }}
+            onEventTypeChange={(value) => {
+              setTicketEventTypeFilter(value)
+              setTicketEventPage(1)
+            }}
+            onFilterReset={() => {
+              setTicketEventSearch('')
+              setTicketEventTypeFilter('')
+              setTicketEventOperatorFilter('')
+              setTicketEventStatusFilter('')
+              setTicketEventDateFrom('')
+              setTicketEventDateTo('')
+              setTicketEventPage(1)
+            }}
+            onOperatorChange={(value) => {
+              setTicketEventOperatorFilter(value)
+              setTicketEventPage(1)
+            }}
+            onPageChange={setTicketEventPage}
+            onSearchChange={(value) => {
+              setTicketEventSearch(value)
+              setTicketEventPage(1)
+            }}
+            onStatusChange={(value) => {
+              setTicketEventStatusFilter(value)
+              setTicketEventPage(1)
+            }}
             onEdit={(ticketEvent) => {
               setEditingTicketEventId(ticketEvent.id)
               setTicketEventForm({

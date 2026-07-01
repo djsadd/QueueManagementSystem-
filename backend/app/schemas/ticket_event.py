@@ -39,6 +39,14 @@ class TicketEventResponse(TicketEventBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TicketEventPageResponse(BaseModel):
+    items: list[TicketEventResponse]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
 class OperatorServiceAnalyticsResponse(BaseModel):
     service_id: int
     service_name: str | None = None

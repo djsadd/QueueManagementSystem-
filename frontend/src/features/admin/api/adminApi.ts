@@ -320,6 +320,23 @@ export type TicketEventListParams = {
   include_metadata?: boolean
 }
 
+export type TicketEventPageParams = TicketEventListParams & {
+  event_type?: string
+  operator_id?: string
+  page?: number
+  page_size?: number
+  search?: string
+  status?: string
+}
+
+export type TicketEventPage = {
+  items: TicketEventItem[]
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+}
+
 export type TicketEventAnalyticsParams = {
   date_from?: string
   date_to?: string
@@ -520,6 +537,18 @@ export const adminApi = {
 
       const queryString = searchParams.toString()
       return request<TicketEventItem[]>(`/ticket-events/${queryString ? `?${queryString}` : ''}`)
+    },
+    page: (params: TicketEventPageParams = {}) => {
+      const searchParams = new URLSearchParams()
+
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          searchParams.set(key, String(value))
+        }
+      })
+
+      const queryString = searchParams.toString()
+      return request<TicketEventPage>(`/ticket-events/page${queryString ? `?${queryString}` : ''}`)
     },
     me: () => request<TicketEventItem[]>('/ticket-events/me'),
     analytics: (params: TicketEventAnalyticsParams = {}) => {

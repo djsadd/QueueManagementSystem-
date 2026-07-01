@@ -2205,6 +2205,63 @@
   overflow-wrap: anywhere;
 }
 
+.ticket-events-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(150px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+  border-bottom: 1px solid #e6e9ee;
+  padding: 18px;
+}
+
+.ticket-events-filter-bar label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ticket-events-filter-bar span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ticket-events-filter-bar input,
+.ticket-events-filter-bar select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #101b33;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 12px;
+}
+
+.ticket-events-filter-bar input:focus,
+.ticket-events-filter-bar select:focus {
+  border-color: #9a002d;
+  outline: 3px solid #f5e6eb;
+}
+
+.ticket-events-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e6e9ee;
+  padding: 14px 18px;
+}
+
+.ticket-events-pagination > span,
+.ticket-events-pagination strong {
+  color: #344054;
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .ticket-event-details {
   display: grid;
   gap: 16px;
@@ -3250,6 +3307,15 @@
 
   .ticket-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ticket-events-filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .ticket-events-pagination {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .ticket-event-detail-grid,
