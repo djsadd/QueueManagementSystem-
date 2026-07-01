@@ -73,6 +73,12 @@ import {
   type Lang,
 } from './dashboard-routing'
 import {
+  getTicketEventChangeRows,
+  getTicketEventDetailRows,
+  getTicketEventMetadataText,
+  getTicketEventTicketLabel,
+} from './dashboard-ticket-events'
+import {
   AcademicDegreesRoute,
   ApplicantsRoute,
   EducationalProgramsRoute,
@@ -3998,6 +4004,19 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
+  const selectedTicketEvent =
+    editingTicketEventId !== null
+      ? ticketEvents.find((ticketEvent) => ticketEvent.id === editingTicketEventId) ?? null
+      : null
+  const selectedTicketEventDetailRows = selectedTicketEvent
+    ? getTicketEventDetailRows(selectedTicketEvent)
+    : []
+  const selectedTicketEventChangeRows = selectedTicketEvent
+    ? getTicketEventChangeRows(selectedTicketEvent)
+    : []
+  const selectedTicketEventMetadataText = selectedTicketEvent
+    ? getTicketEventMetadataText(selectedTicketEvent)
+    : ''
   const isEditing =
     (formModal === 'services' && editingServiceId !== null) ||
     (formModal === 'windows' && editingWindowId !== null) ||
@@ -4007,7 +4026,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     (formModal === 'educationalPrograms' && editingEducationalProgramId !== null) ||
     (formModal === 'applicants' && editingApplicantId !== null) ||
     (formModal === 'ticketEvents' && editingTicketEventId !== null)
-  const modalTitle = formModal === null ? '' : `${isEditing ? 'Изменить' : 'Создать'}: ${sectionLabels[formModal]}`
+  const modalTitle =
+    formModal === 'ticketEvents' && selectedTicketEvent
+      ? `Детали события: ${getTicketEventTicketLabel(selectedTicketEvent)}`
+      : formModal === null
+        ? ''
+        : `${isEditing ? 'Изменить' : 'Создать'}: ${sectionLabels[formModal]}`
   const myWindowTicketList = myWindowTickets?.tickets ?? []
   const myWindowTotal = myWindowTickets?.total ?? 0
   const myWindowTotalPages = myWindowTickets?.total_pages ?? 1
@@ -5847,9 +5871,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 operator_id: ticketEvent.operator_id,
                 metadata: ticketEvent.metadata,
               })
-              setTicketEventMetadataText(
-                ticketEvent.metadata ? JSON.stringify(ticketEvent.metadata, null, 2) : '',
-              )
+              setTicketEventMetadataText(getTicketEventMetadataText(ticketEvent))
               setFormModal('ticketEvents')
             }}
             onDelete={(ticketEvent) =>
@@ -5864,7 +5886,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       </main>
 
       {formModal !== null && (
-        <AdminModal title={modalTitle} onClose={closeFormModal}>
+        <AdminModal
+          title={modalTitle}
+          onClose={closeFormModal}
+          size={formModal === 'ticketEvents' ? 'wide' : 'default'}
+        >
           {formModal === 'services' && (
             <form className="admin-form modal-form" onSubmit={submitService}>
               <input
@@ -6372,6 +6398,39 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
           {formModal === 'ticketEvents' && (
             <form className="admin-form modal-form" onSubmit={submitTicketEvent}>
+              {selectedTicketEvent && (
+                <div className="ticket-event-details">
+                  <div className="ticket-event-detail-grid">
+                    {selectedTicketEventDetailRows.map((row) => (
+                      <div key={row.label}>
+                        <span className="profile-label">{row.label}</span>
+                        <strong>{row.value}</strong>
+                      </div>
+                    ))}
+                  </div>
+
+                  {selectedTicketEventChangeRows.length > 0 && (
+                    <div className="ticket-event-change-panel">
+                      <h3>Изменения</h3>
+                      {selectedTicketEventChangeRows.map((row) => (
+                        <div className="ticket-event-change-row" key={row.field}>
+                          <span>{row.field}</span>
+                          <strong>{row.oldValue}</strong>
+                          <strong>{row.newValue}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedTicketEventMetadataText && (
+                    <details className="ticket-event-metadata">
+                      <summary>Metadata JSON</summary>
+                      <pre>{selectedTicketEventMetadataText}</pre>
+                    </details>
+                  )}
+                </div>
+              )}
+
               <input
                 type="text"
                 placeholder="ID талона"

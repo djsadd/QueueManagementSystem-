@@ -1,4 +1,13 @@
 import type { TicketEventItem } from '../../../features/admin/api/adminApi'
+import {
+  formatTicketEventDate,
+  getTicketEventIinLabel,
+  getTicketEventOperatorLabel,
+  getTicketEventServiceLabel,
+  getTicketEventStatusFlowLabel,
+  getTicketEventTicketLabel,
+  getTicketEventTypeLabel,
+} from '../dashboard-ticket-events'
 import { CrudTable } from '../components/CrudTable'
 import { RowActions } from '../components/RowActions'
 
@@ -17,31 +26,28 @@ export function TicketEventsRoute({
     <section className="admin-panel tab-panel" key="ticketEvents">
       <CrudTable
         columns={[
-          'ID',
           'Талон',
-          'Тип',
-          'Старый статус',
-          'Новый статус',
+          'Дата',
+          'ИИН',
+          'Действие',
           'Оператор',
-          'Metadata',
-          'Время',
+          'Статус',
           'Действия',
         ]}
         loading={loading}
         rows={ticketEvents.map((ticketEvent) => [
-          ticketEvent.id.slice(0, 8),
-          ticketEvent.ticket_id ?? 'Не указано',
-          ticketEvent.event_type ?? 'Не указано',
-          ticketEvent.old_status ?? 'Не указано',
-          ticketEvent.new_status ?? 'Не указано',
-          ticketEvent.operator_name ??
-            ticketEvent.operator_email ??
-            ticketEvent.operator_id?.slice(0, 8) ??
-            'Не указано',
-          ticketEvent.metadata ? JSON.stringify(ticketEvent.metadata) : 'Не указано',
-          new Date(ticketEvent.created_at).toLocaleString(),
+          <div className="ticket-event-ticket-cell" key={`${ticketEvent.id}-ticket`}>
+            <strong>{getTicketEventTicketLabel(ticketEvent)}</strong>
+            <span>{getTicketEventServiceLabel(ticketEvent)}</span>
+          </div>,
+          formatTicketEventDate(ticketEvent.created_at),
+          getTicketEventIinLabel(ticketEvent),
+          getTicketEventTypeLabel(ticketEvent.event_type),
+          getTicketEventOperatorLabel(ticketEvent),
+          getTicketEventStatusFlowLabel(ticketEvent),
           <RowActions
             key={ticketEvent.id}
+            editLabel="Детали"
             onEdit={() => onEdit(ticketEvent)}
             onDelete={() => onDelete(ticketEvent)}
           />,
