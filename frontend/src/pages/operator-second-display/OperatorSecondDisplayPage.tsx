@@ -372,8 +372,7 @@ export function OperatorSecondDisplayPage({ authUser }: { authUser: AuthUser }) 
           </div>
         ) : (
           <div className="operator-display-placeholder">
-            <strong>{copy.noTicket}</strong>
-            <span>{copy.noTicketDescription}</span>
+            <strong>-</strong>
           </div>
         )}
       </section>
