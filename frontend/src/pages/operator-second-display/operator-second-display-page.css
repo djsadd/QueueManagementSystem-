@@ -87,11 +87,12 @@
 }
 
 .operator-display-stage h1 {
-  max-width: min(1480px, 96vw);
+  max-width: min(1680px, 98vw);
   margin: clamp(4px, 0.7vh, 10px) 0 clamp(8px, 1vh, 14px);
   color: #9a002d;
-  font-size: clamp(86px, 14vw, 240px);
-  line-height: 0.84;
+  font-size: clamp(116px, 17vw, 320px);
+  font-weight: 950;
+  line-height: 0.78;
   overflow-wrap: anywhere;
 }
 
@@ -257,7 +258,7 @@
   }
 
   .operator-display-stage h1 {
-    font-size: clamp(72px, 11vw, 160px);
+    font-size: clamp(94px, 14vw, 210px);
     margin: 4px 0 8px;
   }
 
@@ -303,7 +304,7 @@
   }
 
   .operator-display-stage h1 {
-    font-size: clamp(60px, 9vw, 118px);
+    font-size: clamp(78px, 11vw, 148px);
   }
 
   .operator-ticket-call strong {
@@ -356,7 +357,7 @@
   }
 
   .operator-display-stage h1 {
-    font-size: 96px;
+    font-size: 118px;
   }
 
   .operator-ticket-call strong {

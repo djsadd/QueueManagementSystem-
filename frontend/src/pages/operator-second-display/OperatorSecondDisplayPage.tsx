@@ -372,7 +372,7 @@ export function OperatorSecondDisplayPage({ authUser }: { authUser: AuthUser }) 
           </div>
         ) : (
           <div className="operator-display-placeholder">
-            <strong>-</strong>
+            <strong>В ожидании следующего</strong>
           </div>
         )}
       </section>
