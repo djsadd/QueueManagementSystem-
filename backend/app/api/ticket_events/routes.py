@@ -11,6 +11,8 @@ from app.models.operator import Operator
 from app.models.user import User
 from app.schemas.ticket_event import (
     OperatorTicketAnalyticsResponse,
+    TicketEventPageResponse,
+    TicketEventTicketPageResponse,
     TicketEventCreate,
     TicketEventResponse,
     TicketEventUpdate,
@@ -92,6 +94,95 @@ async def get_ticket_events(
         include_metadata=include_metadata,
     )
     return await serialize_ticket_events(db, ticket_events, include_metadata=include_metadata)
+
+
+@ticket_events_router.get(
+    "/page",
+    response_model=TicketEventPageResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def get_ticket_events_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    search: str | None = Query(default=None),
+    event_type: str | None = Query(default=None),
+    operator_id: uuid.UUID | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    include_metadata: bool = Query(default=True),
+    db: AsyncSession = Depends(get_db),
+):
+    page_result = await TicketEventService.get_page(
+        db,
+        page=page,
+        page_size=page_size,
+        search=search,
+        event_type=event_type,
+        operator_id=operator_id,
+        status=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+        include_metadata=include_metadata,
+    )
+
+    return {
+        **page_result,
+        "items": await serialize_ticket_events(
+            db,
+            page_result["items"],
+            include_metadata=include_metadata,
+        ),
+    }
+
+
+@ticket_events_router.get(
+    "/tickets/page",
+    response_model=TicketEventTicketPageResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def get_ticket_event_tickets_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    search: str | None = Query(default=None),
+    event_type: str | None = Query(default=None),
+    operator_id: uuid.UUID | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    page_result = await TicketEventService.get_ticket_page(
+        db,
+        page=page,
+        page_size=page_size,
+        search=search,
+        event_type=event_type,
+        operator_id=operator_id,
+        status=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    latest_events = [
+        item["latest_event"]
+        for item in page_result["items"]
+    ]
+    serialized_latest_events = await serialize_ticket_events(db, latest_events)
+    serialized_by_id = {
+        event["id"]: event
+        for event in serialized_latest_events
+    }
+
+    return {
+        **page_result,
+        "items": [
+            {
+                **item,
+                "latest_event": serialized_by_id[item["latest_event"].id],
+            }
+            for item in page_result["items"]
+        ],
+    }
 
 
 @ticket_events_router.get("/me", response_model=list[TicketEventResponse])

@@ -1,9 +1,10 @@
 import uuid
 from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -76,6 +77,263 @@ class TicketEventService:
         return list(result.scalars().all())
 
     @staticmethod
+    async def get_page(
+        db: AsyncSession,
+        page: int = 1,
+        page_size: int = 20,
+        search: str | None = None,
+        event_type: str | None = None,
+        operator_id: uuid.UUID | None = None,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        include_metadata: bool = True,
+    ) -> dict:
+        conditions = TicketEventService.build_filter_conditions(
+            search=search,
+            event_type=event_type,
+            operator_id=operator_id,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        total_result = await db.execute(select(func.count()).select_from(TicketEvent).where(*conditions))
+        total = total_result.scalar_one()
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(page, total_pages)
+        offset = (current_page - 1) * page_size
+        query = (
+            select(TicketEvent)
+            .where(*conditions)
+            .order_by(TicketEvent.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+
+        if not include_metadata:
+            query = query.options(defer(TicketEvent.metadata_))
+
+        result = await db.execute(query)
+        return {
+            "items": list(result.scalars().all()),
+            "page": current_page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+        }
+
+    @staticmethod
+    async def get_ticket_page(
+        db: AsyncSession,
+        page: int = 1,
+        page_size: int = 20,
+        search: str | None = None,
+        event_type: str | None = None,
+        operator_id: uuid.UUID | None = None,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> dict:
+        conditions = TicketEventService.build_filter_conditions(
+            search=search,
+            event_type=event_type,
+            operator_id=operator_id,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        conditions.append(TicketEvent.ticket_id.is_not(None))
+
+        ticket_groups = (
+            select(
+                TicketEvent.ticket_id.label("ticket_id"),
+                func.max(TicketEvent.created_at).label("last_matching_event_at"),
+            )
+            .where(*conditions)
+            .group_by(TicketEvent.ticket_id)
+            .subquery()
+        )
+        total_result = await db.execute(select(func.count()).select_from(ticket_groups))
+        total = total_result.scalar_one()
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        current_page = min(page, total_pages)
+        offset = (current_page - 1) * page_size
+
+        page_result = await db.execute(
+            select(ticket_groups)
+            .order_by(ticket_groups.c.last_matching_event_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        group_rows = list(page_result.mappings().all())
+        ticket_ids = [row["ticket_id"] for row in group_rows if row["ticket_id"] is not None]
+
+        if not ticket_ids:
+            return {
+                "items": [],
+                "page": current_page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+            }
+
+        matching_events_result = await db.execute(
+            select(TicketEvent)
+            .where(TicketEvent.ticket_id.in_(ticket_ids), *conditions)
+            .order_by(TicketEvent.created_at.desc())
+        )
+        all_events_result = await db.execute(
+            select(TicketEvent)
+            .where(TicketEvent.ticket_id.in_(ticket_ids))
+            .order_by(TicketEvent.created_at.desc())
+        )
+
+        matching_events_by_ticket = TicketEventService.group_events_by_ticket(
+            list(matching_events_result.scalars().all())
+        )
+        all_events_by_ticket = TicketEventService.group_events_by_ticket(
+            list(all_events_result.scalars().all())
+        )
+
+        summaries = []
+        for row in group_rows:
+            ticket_id = row["ticket_id"]
+            if ticket_id is None:
+                continue
+
+            all_ticket_events = all_events_by_ticket.get(ticket_id, [])
+            matching_ticket_events = matching_events_by_ticket.get(ticket_id, [])
+            latest_event = matching_ticket_events[0] if matching_ticket_events else (
+                all_ticket_events[0] if all_ticket_events else None
+            )
+
+            if latest_event is None or not all_ticket_events:
+                continue
+
+            latest_snapshot = (
+                TicketEventService.get_event_ticket_snapshot(all_ticket_events[0])
+                or TicketEventService.get_event_ticket_snapshot(latest_event)
+                or {}
+            )
+
+            summaries.append(
+                {
+                    "ticket_id": ticket_id,
+                    "ticket_number": TicketEventService.get_snapshot_string(latest_snapshot, "ticket_number"),
+                    "iin": TicketEventService.get_snapshot_string(latest_snapshot, "iin"),
+                    "full_name": TicketEventService.get_snapshot_string(latest_snapshot, "full_name"),
+                    "service_label": TicketEventService.get_snapshot_service_label(latest_snapshot),
+                    "status": (
+                        TicketEventService.get_snapshot_string(latest_snapshot, "status")
+                        or latest_event.new_status
+                        or latest_event.old_status
+                    ),
+                    "latest_event": latest_event,
+                    "first_event_at": min(event.created_at for event in all_ticket_events),
+                    "last_event_at": max(event.created_at for event in all_ticket_events),
+                    "events_count": len(all_ticket_events),
+                    "change_events_count": sum(
+                        1 for event in all_ticket_events if TicketEventService.is_ticket_change_event(event)
+                    ),
+                }
+            )
+
+        return {
+            "items": summaries,
+            "page": current_page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+        }
+
+    @staticmethod
+    def group_events_by_ticket(events: list[TicketEvent]) -> dict[uuid.UUID, list[TicketEvent]]:
+        events_by_ticket: dict[uuid.UUID, list[TicketEvent]] = {}
+
+        for event in events:
+            if event.ticket_id is None:
+                continue
+
+            events_by_ticket.setdefault(event.ticket_id, []).append(event)
+
+        return events_by_ticket
+
+    @staticmethod
+    def get_snapshot_string(snapshot: dict[str, Any], field: str) -> str | None:
+        value = snapshot.get(field)
+
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+
+        return None
+
+    @staticmethod
+    def get_snapshot_service_label(snapshot: dict[str, Any]) -> str | None:
+        return (
+            TicketEventService.get_snapshot_string(snapshot, "service_name")
+            or TicketEventService.get_snapshot_string(snapshot, "service_code")
+            or TicketEventService.get_snapshot_string(snapshot, "service_id")
+        )
+
+    @staticmethod
+    def is_ticket_change_event(ticket_event: TicketEvent) -> bool:
+        metadata = ticket_event.metadata_
+        has_changes = isinstance(metadata, dict) and isinstance(metadata.get("changes"), dict)
+
+        return has_changes or ticket_event.event_type in {
+            "SERVICE_CHANGED",
+            "STATUS_CHANGED",
+            "TICKET_ASSIGNED",
+            "TICKET_STUDY_LANGUAGE_UPDATED",
+            "TICKET_UPDATED",
+        }
+
+    @staticmethod
+    def build_filter_conditions(
+        search: str | None = None,
+        event_type: str | None = None,
+        operator_id: uuid.UUID | None = None,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list:
+        conditions = []
+
+        if date_from is not None:
+            conditions.append(TicketEvent.created_at >= TicketEventService.get_aware_day_start(date_from))
+
+        if date_to is not None:
+            conditions.append(TicketEvent.created_at < TicketEventService.get_aware_next_day_start(date_to))
+
+        if event_type:
+            conditions.append(TicketEvent.event_type == event_type)
+
+        if operator_id is not None:
+            conditions.append(TicketEvent.operator_id == operator_id)
+
+        if status:
+            conditions.append(or_(TicketEvent.old_status == status, TicketEvent.new_status == status))
+
+        normalized_search = (search or "").strip()
+        if normalized_search:
+            search_pattern = f"%{normalized_search}%"
+            conditions.append(
+                or_(
+                    cast(TicketEvent.id, String).ilike(search_pattern),
+                    cast(TicketEvent.ticket_id, String).ilike(search_pattern),
+                    TicketEvent.event_type.ilike(search_pattern),
+                    TicketEvent.old_status.ilike(search_pattern),
+                    TicketEvent.new_status.ilike(search_pattern),
+                    cast(TicketEvent.metadata_, String).ilike(search_pattern),
+                )
+            )
+
+        return conditions
+
+    @staticmethod
     async def get_by_operator_id(db: AsyncSession, operator_id: uuid.UUID) -> list[TicketEvent]:
         result = await db.execute(
             select(TicketEvent)
@@ -142,58 +400,51 @@ class TicketEventService:
 
             events_by_operator.setdefault(event.operator_id, []).append(event)
 
-        tickets_by_operator: dict[uuid.UUID, list[Ticket]] = {}
+        tickets_by_id: dict[uuid.UUID, Ticket] = {}
         services_by_id: dict[int, Service] = {}
-        if operator_ids:
-            ticket_query = select(Ticket).where(Ticket.operator_id.in_(operator_ids))
-            ticket_query = TicketEventService.apply_ticket_created_at_date_filter(
-                ticket_query,
-                date_from,
-                date_to,
-            )
-            ticket_result = await db.execute(ticket_query)
-            for ticket in ticket_result.scalars().all():
-                if ticket.operator_id is None:
-                    continue
+        ticket_ids = {event.ticket_id for event in events if event.ticket_id is not None}
+        if ticket_ids:
+            ticket_result = await db.execute(select(Ticket).where(Ticket.id.in_(ticket_ids)))
+            tickets_by_id = {ticket.id: ticket for ticket in ticket_result.scalars().all()}
 
-                tickets_by_operator.setdefault(ticket.operator_id, []).append(ticket)
-
-            service_ids = {
-                ticket.service_id
-                for operator_tickets in tickets_by_operator.values()
-                for ticket in operator_tickets
-            }
-            if service_ids:
-                service_result = await db.execute(select(Service).where(Service.id.in_(service_ids)))
-                services_by_id = {service.id: service for service in service_result.scalars().all()}
+        service_ids = {
+            service_id
+            for event in events
+            if (service_id := TicketEventService.get_event_service_id(event, tickets_by_id)) is not None
+        }
+        if service_ids:
+            service_result = await db.execute(select(Service).where(Service.id.in_(service_ids)))
+            services_by_id = {service.id: service for service in service_result.scalars().all()}
 
         rows = []
         for operator in operators:
             operator_events = events_by_operator.get(operator.id, [])
-            operator_tickets = tickets_by_operator.get(operator.id, [])
             accepted = sum(
                 1
                 for event in operator_events
-                if TicketEventService.event_matches(event, "TICKET_CALLED", "CALLED")
+                if TicketEventService.is_accepted_event(event)
             )
             completed = sum(
                 1
                 for event in operator_events
-                if TicketEventService.event_matches(event, "TICKET_COMPLETED", "COMPLETED")
+                if TicketEventService.is_completed_event(event)
             )
             skipped = sum(
                 1
                 for event in operator_events
-                if TicketEventService.event_matches(event, "TICKET_SKIPPED", "SKIPPED")
+                if TicketEventService.is_skipped_event(event)
             )
             declined = sum(
                 1
                 for event in operator_events
-                if event.event_type == "TICKET_DECLINED"
+                if TicketEventService.is_declined_event(event)
             )
             total_actions = accepted + completed + skipped + declined
             last_activity = operator_events[0].created_at if operator_events else None
-            processing_seconds = TicketEventService.get_processing_seconds(operator_tickets)
+            processing_seconds = TicketEventService.get_event_processing_seconds(
+                operator_events,
+                tickets_by_id,
+            )
             total_processing_seconds = sum(processing_seconds)
             average_processing_seconds = (
                 round(total_processing_seconds / len(processing_seconds))
@@ -203,7 +454,10 @@ class TicketEventService:
             status_work_seconds, break_seconds = TicketEventService.get_status_seconds(
                 operator_events,
             )
-            popular_service_id, popular_service_count = TicketEventService.get_popular_service(operator_tickets)
+            popular_service_id, popular_service_count = TicketEventService.get_popular_service_from_events(
+                operator_events,
+                tickets_by_id,
+            )
             user = users_by_id.get(operator.user_id)
             window = windows_by_id.get(operator.window_id) if operator.window_id is not None else None
             popular_service = services_by_id.get(popular_service_id) if popular_service_id is not None else None
@@ -231,11 +485,12 @@ class TicketEventService:
                     "popular_service_name": popular_service.name if popular_service else None,
                     "popular_service_count": popular_service_count,
                     "last_activity": last_activity,
-                    "service_analytics": TicketEventService.get_service_analytics(
-                        operator_tickets,
+                    "service_analytics": TicketEventService.get_service_analytics_from_events(
+                        operator_events,
+                        tickets_by_id,
                         services_by_id,
                     ),
-                    "daily_analytics": TicketEventService.get_daily_analytics(operator_tickets),
+                    "daily_analytics": TicketEventService.get_daily_analytics_from_events(operator_events),
                 }
             )
 
@@ -280,6 +535,416 @@ class TicketEventService:
     @staticmethod
     def event_matches(ticket_event: TicketEvent, event_type: str, new_status: str) -> bool:
         return ticket_event.event_type == event_type or ticket_event.new_status == new_status
+
+    @staticmethod
+    def is_accepted_event(ticket_event: TicketEvent) -> bool:
+        return TicketEventService.event_matches(ticket_event, "TICKET_CALLED", "CALLED")
+
+    @staticmethod
+    def is_completed_event(ticket_event: TicketEvent) -> bool:
+        return TicketEventService.event_matches(ticket_event, "TICKET_COMPLETED", "COMPLETED")
+
+    @staticmethod
+    def is_skipped_event(ticket_event: TicketEvent) -> bool:
+        return TicketEventService.event_matches(ticket_event, "TICKET_SKIPPED", "SKIPPED")
+
+    @staticmethod
+    def is_declined_event(ticket_event: TicketEvent) -> bool:
+        return ticket_event.event_type == "TICKET_DECLINED"
+
+    @staticmethod
+    def is_handling_event(ticket_event: TicketEvent) -> bool:
+        return (
+            TicketEventService.is_accepted_event(ticket_event)
+            or TicketEventService.is_completed_event(ticket_event)
+            or TicketEventService.is_skipped_event(ticket_event)
+        )
+
+    @staticmethod
+    def get_event_ticket_key(ticket_event: TicketEvent) -> str:
+        return str(ticket_event.ticket_id or ticket_event.id)
+
+    @staticmethod
+    def get_event_ticket_snapshot(ticket_event: TicketEvent) -> dict[str, Any] | None:
+        metadata = ticket_event.metadata_
+        if not isinstance(metadata, dict):
+            return None
+
+        snapshot = metadata.get("ticket_snapshot")
+        return snapshot if isinstance(snapshot, dict) else None
+
+    @staticmethod
+    def get_event_service_id(
+        ticket_event: TicketEvent,
+        tickets_by_id: dict[uuid.UUID, Ticket],
+    ) -> int | None:
+        snapshot = TicketEventService.get_event_ticket_snapshot(ticket_event)
+        service_id = snapshot.get("service_id") if snapshot else None
+
+        if service_id is not None:
+            try:
+                return int(service_id)
+            except (TypeError, ValueError):
+                return None
+
+        if ticket_event.ticket_id is None:
+            return None
+
+        ticket = tickets_by_id.get(ticket_event.ticket_id)
+        return ticket.service_id if ticket is not None else None
+
+    @staticmethod
+    def parse_metadata_datetime(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value
+
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+
+        return None
+
+    @staticmethod
+    def get_event_snapshot_datetime(ticket_event: TicketEvent, *fields: str) -> datetime | None:
+        snapshot = TicketEventService.get_event_ticket_snapshot(ticket_event)
+        if not snapshot:
+            return None
+
+        for field in fields:
+            parsed_datetime = TicketEventService.parse_metadata_datetime(snapshot.get(field))
+            if parsed_datetime is not None:
+                return parsed_datetime
+
+        return None
+
+    @staticmethod
+    def get_event_ticket_datetime(
+        ticket_event: TicketEvent,
+        tickets_by_id: dict[uuid.UUID, Ticket],
+        *fields: str,
+    ) -> datetime | None:
+        snapshot_datetime = TicketEventService.get_event_snapshot_datetime(ticket_event, *fields)
+        if snapshot_datetime is not None:
+            return snapshot_datetime
+
+        if ticket_event.ticket_id is None:
+            return None
+
+        ticket = tickets_by_id.get(ticket_event.ticket_id)
+        if ticket is None:
+            return None
+
+        for field in fields:
+            value = getattr(ticket, field, None)
+            if isinstance(value, datetime):
+                return value
+
+        return None
+
+    @staticmethod
+    def get_event_processing_seconds(
+        events: list[TicketEvent],
+        tickets_by_id: dict[uuid.UUID, Ticket],
+    ) -> list[int]:
+        durations: list[int] = []
+        start_times_by_ticket_key: dict[str, datetime] = {}
+
+        for event in sorted(events, key=lambda event_item: event_item.created_at):
+            if not TicketEventService.is_handling_event(event):
+                continue
+
+            ticket_key = TicketEventService.get_event_ticket_key(event)
+
+            if TicketEventService.is_accepted_event(event):
+                start_at = (
+                    TicketEventService.get_event_ticket_datetime(
+                        event,
+                        tickets_by_id,
+                        "started_at",
+                        "called_at",
+                    )
+                    or event.created_at
+                )
+                start_times_by_ticket_key[ticket_key] = start_at
+
+            if not (
+                TicketEventService.is_completed_event(event)
+                or TicketEventService.is_skipped_event(event)
+            ):
+                continue
+
+            start_at = (
+                TicketEventService.get_event_ticket_datetime(
+                    event,
+                    tickets_by_id,
+                    "started_at",
+                    "called_at",
+                )
+                or start_times_by_ticket_key.get(ticket_key)
+            )
+            end_at = (
+                TicketEventService.get_event_ticket_datetime(
+                    event,
+                    tickets_by_id,
+                    "completed_at",
+                )
+                or event.created_at
+            )
+
+            if start_at is not None:
+                durations.append(TicketEventService.get_seconds_between(start_at, end_at))
+
+        return durations
+
+    @staticmethod
+    def get_event_wait_seconds(
+        ticket_event: TicketEvent,
+        tickets_by_id: dict[uuid.UUID, Ticket],
+    ) -> int | None:
+        created_at = TicketEventService.get_event_ticket_datetime(
+            ticket_event,
+            tickets_by_id,
+            "created_at",
+        )
+        queue_end_at = (
+            TicketEventService.get_event_ticket_datetime(
+                ticket_event,
+                tickets_by_id,
+                "started_at",
+                "called_at",
+                "completed_at",
+            )
+            or ticket_event.created_at
+        )
+
+        if created_at is None:
+            return None
+
+        return TicketEventService.get_seconds_between(created_at, queue_end_at)
+
+    @staticmethod
+    def get_service_analytics_from_events(
+        events: list[TicketEvent],
+        tickets_by_id: dict[uuid.UUID, Ticket],
+        services_by_id: dict[int, Service],
+    ) -> list[dict]:
+        service_stats: dict[int, dict[str, Any]] = {}
+        processing_seconds_by_ticket_key = TicketEventService.get_event_processing_seconds_by_ticket_key(
+            events,
+            tickets_by_id,
+        )
+
+        for event in events:
+            if not TicketEventService.is_handling_event(event):
+                continue
+
+            service_id = TicketEventService.get_event_service_id(event, tickets_by_id)
+            if service_id is None:
+                continue
+
+            ticket_key = TicketEventService.get_event_ticket_key(event)
+            stats = service_stats.setdefault(
+                service_id,
+                {
+                    "ticket_keys": set(),
+                    "completed_keys": set(),
+                    "skipped_keys": set(),
+                    "processing_seconds": [],
+                    "wait_seconds": [],
+                    "wait_keys": set(),
+                    "last_ticket_at": None,
+                },
+            )
+            stats["ticket_keys"].add(ticket_key)
+
+            last_ticket_at = stats["last_ticket_at"]
+            if last_ticket_at is None or event.created_at > last_ticket_at:
+                stats["last_ticket_at"] = event.created_at
+
+            if ticket_key not in stats["wait_keys"]:
+                wait_seconds = TicketEventService.get_event_wait_seconds(event, tickets_by_id)
+                if wait_seconds is not None:
+                    stats["wait_seconds"].append(wait_seconds)
+                    stats["wait_keys"].add(ticket_key)
+
+            if TicketEventService.is_completed_event(event):
+                stats["completed_keys"].add(ticket_key)
+                if ticket_key in processing_seconds_by_ticket_key:
+                    stats["processing_seconds"].append(processing_seconds_by_ticket_key[ticket_key])
+            elif TicketEventService.is_skipped_event(event):
+                stats["skipped_keys"].add(ticket_key)
+                if ticket_key in processing_seconds_by_ticket_key:
+                    stats["processing_seconds"].append(processing_seconds_by_ticket_key[ticket_key])
+
+        total_ticket_count = sum(len(stats["ticket_keys"]) for stats in service_stats.values())
+        rows: list[dict] = []
+        for service_id, stats in service_stats.items():
+            service = services_by_id.get(service_id)
+            ticket_count = len(stats["ticket_keys"])
+            completed = len(stats["completed_keys"])
+            skipped = len(stats["skipped_keys"])
+            processed = completed + skipped
+            active = max(0, ticket_count - processed)
+            processing_seconds = stats["processing_seconds"]
+            wait_seconds = stats["wait_seconds"]
+            total_processing_seconds = sum(processing_seconds)
+
+            rows.append(
+                {
+                    "service_id": service_id,
+                    "service_name": service.name if service else None,
+                    "service_code": service.code if service else None,
+                    "tickets_count": ticket_count,
+                    "completed": completed,
+                    "skipped": skipped,
+                    "active": active,
+                    "processed": processed,
+                    "completion_rate": round((completed / processed) * 100) if processed else 0,
+                    "share_percent": round((ticket_count / total_ticket_count) * 100) if total_ticket_count else 0,
+                    "average_processing_seconds": round(total_processing_seconds / len(processing_seconds))
+                    if processing_seconds
+                    else 0,
+                    "total_processing_seconds": total_processing_seconds,
+                    "fastest_processing_seconds": min(processing_seconds) if processing_seconds else 0,
+                    "slowest_processing_seconds": max(processing_seconds) if processing_seconds else 0,
+                    "average_wait_seconds": round(sum(wait_seconds) / len(wait_seconds)) if wait_seconds else 0,
+                    "last_ticket_at": stats["last_ticket_at"],
+                }
+            )
+
+        return sorted(
+            rows,
+            key=lambda row: (row["processed"], row["tickets_count"], row["total_processing_seconds"]),
+            reverse=True,
+        )
+
+    @staticmethod
+    def get_event_processing_seconds_by_ticket_key(
+        events: list[TicketEvent],
+        tickets_by_id: dict[uuid.UUID, Ticket],
+    ) -> dict[str, int]:
+        durations_by_ticket_key: dict[str, int] = {}
+        start_times_by_ticket_key: dict[str, datetime] = {}
+
+        for event in sorted(events, key=lambda event_item: event_item.created_at):
+            if not TicketEventService.is_handling_event(event):
+                continue
+
+            ticket_key = TicketEventService.get_event_ticket_key(event)
+
+            if TicketEventService.is_accepted_event(event):
+                start_times_by_ticket_key[ticket_key] = (
+                    TicketEventService.get_event_ticket_datetime(
+                        event,
+                        tickets_by_id,
+                        "started_at",
+                        "called_at",
+                    )
+                    or event.created_at
+                )
+
+            if not (
+                TicketEventService.is_completed_event(event)
+                or TicketEventService.is_skipped_event(event)
+            ):
+                continue
+
+            start_at = (
+                TicketEventService.get_event_ticket_datetime(
+                    event,
+                    tickets_by_id,
+                    "started_at",
+                    "called_at",
+                )
+                or start_times_by_ticket_key.get(ticket_key)
+            )
+            end_at = (
+                TicketEventService.get_event_ticket_datetime(
+                    event,
+                    tickets_by_id,
+                    "completed_at",
+                )
+                or event.created_at
+            )
+
+            if start_at is not None:
+                durations_by_ticket_key[ticket_key] = TicketEventService.get_seconds_between(start_at, end_at)
+
+        return durations_by_ticket_key
+
+    @staticmethod
+    def get_daily_analytics_from_events(events: list[TicketEvent]) -> list[dict]:
+        stats_by_date: dict[str, dict[str, set[str]]] = {}
+
+        for event in events:
+            if not TicketEventService.is_handling_event(event):
+                continue
+
+            event_date = TicketEventService.normalize_datetime(event.created_at).date().isoformat()
+            ticket_key = TicketEventService.get_event_ticket_key(event)
+            stats = stats_by_date.setdefault(
+                event_date,
+                {
+                    "ticket_keys": set(),
+                    "completed_keys": set(),
+                    "skipped_keys": set(),
+                },
+            )
+            stats["ticket_keys"].add(ticket_key)
+
+            if TicketEventService.is_completed_event(event):
+                stats["completed_keys"].add(ticket_key)
+            elif TicketEventService.is_skipped_event(event):
+                stats["skipped_keys"].add(ticket_key)
+
+        rows: list[dict] = []
+        for event_date, stats in stats_by_date.items():
+            tickets_count = len(stats["ticket_keys"])
+            completed = len(stats["completed_keys"])
+            skipped = len(stats["skipped_keys"])
+            active = max(0, tickets_count - completed - skipped)
+
+            rows.append(
+                {
+                    "date": event_date,
+                    "tickets_count": tickets_count,
+                    "completed": completed,
+                    "skipped": skipped,
+                    "active": active,
+                }
+            )
+
+        return sorted(rows, key=lambda row: row["date"])
+
+    @staticmethod
+    def get_popular_service_from_events(
+        events: list[TicketEvent],
+        tickets_by_id: dict[uuid.UUID, Ticket],
+    ) -> tuple[int | None, int]:
+        processed_service_ids = [
+            service_id
+            for event in events
+            if (
+                TicketEventService.is_completed_event(event)
+                or TicketEventService.is_skipped_event(event)
+            )
+            and (service_id := TicketEventService.get_event_service_id(event, tickets_by_id)) is not None
+        ]
+        handled_service_ids = [
+            service_id
+            for event in events
+            if TicketEventService.is_handling_event(event)
+            and (service_id := TicketEventService.get_event_service_id(event, tickets_by_id)) is not None
+        ]
+        counter = Counter(processed_service_ids or handled_service_ids)
+
+        if not counter:
+            return None, 0
+
+        service_id, count = counter.most_common(1)[0]
+        return service_id, count
 
     @staticmethod
     def get_processing_seconds(tickets: list[Ticket]) -> list[int]:

@@ -7,7 +7,7 @@ import {
   type OperatorItem,
   type OperatorServiceItem,
   type ServiceItem,
-  type TicketEventItem,
+  type TicketEventTicketSummaryItem,
   type UserItem,
   type WindowItem,
 } from '../../features/admin/api/adminApi'
@@ -40,7 +40,7 @@ export type AdminDashboardPageData = {
   operatorServicesRows?: OperatorServicesRow[]
   operators?: OperatorItem[]
   services?: ServiceItem[]
-  ticketEvents?: TicketEventItem[]
+  ticketEventTickets?: TicketEventTicketSummaryItem[]
   users?: UserItem[]
   windows?: WindowItem[]
 }
@@ -122,13 +122,13 @@ export async function loadAdminCrudPageData(section: DashboardCrudDataSection): 
     return { applicants: await adminApi.applicants.list() }
   }
 
-  const [ticketEvents, operators, users] = await Promise.all([
-    adminApi.ticketEvents.list(),
+  const [ticketEventTickets, operators, users] = await Promise.all([
+    adminApi.ticketEvents.ticketPage(),
     adminApi.operators.list(),
     adminApi.users.list(),
   ])
 
-  return { operators, ticketEvents, users }
+  return { operators, ticketEventTickets: ticketEventTickets.items, users }
 }
 
 export async function loadAdminProfilePageData(currentUserId: string | null): Promise<AdminDashboardPageData> {

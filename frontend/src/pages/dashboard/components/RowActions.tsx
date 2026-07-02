@@ -1,8 +1,16 @@
-export function RowActions({ onDelete, onEdit }: { onDelete: () => void; onEdit: () => void }) {
+export function RowActions({
+  editLabel = 'Изменить',
+  onDelete,
+  onEdit,
+}: {
+  editLabel?: string
+  onDelete: () => void
+  onEdit: () => void
+}) {
   return (
     <div className="row-actions">
       <button className="secondary-action compact" type="button" onClick={onEdit}>
-        Изменить
+        {editLabel}
       </button>
       <button className="danger-action" type="button" onClick={onDelete}>
         Удалить
