@@ -699,30 +699,61 @@ class TicketEventService:
         return durations
 
     @staticmethod
-    def get_event_wait_seconds(
+    def get_event_status(ticket_event: TicketEvent, field: str) -> str | None:
+        value = getattr(ticket_event, field, None)
+        return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def is_waiting_status(value: str | None) -> bool:
+        return value == "WAITING"
+
+    @staticmethod
+    def get_initial_waiting_start_at(
         ticket_event: TicketEvent,
         tickets_by_id: dict[uuid.UUID, Ticket],
-    ) -> int | None:
-        created_at = TicketEventService.get_event_ticket_datetime(
-            ticket_event,
-            tickets_by_id,
-            "created_at",
-        )
-        queue_end_at = (
+    ) -> datetime | None:
+        return (
             TicketEventService.get_event_ticket_datetime(
                 ticket_event,
                 tickets_by_id,
-                "started_at",
-                "called_at",
-                "completed_at",
+                "created_at",
             )
             or ticket_event.created_at
         )
 
-        if created_at is None:
-            return None
+    @staticmethod
+    def get_event_wait_seconds_by_ticket_key(
+        events: list[TicketEvent],
+        tickets_by_id: dict[uuid.UUID, Ticket],
+    ) -> dict[str, int]:
+        wait_seconds_by_ticket_key: dict[str, int] = {}
+        waiting_starts_by_ticket_key: dict[str, datetime] = {}
 
-        return TicketEventService.get_seconds_between(created_at, queue_end_at)
+        for event in sorted(events, key=lambda event_item: event_item.created_at):
+            ticket_key = TicketEventService.get_event_ticket_key(event)
+            old_status = TicketEventService.get_event_status(event, "old_status")
+            new_status = TicketEventService.get_event_status(event, "new_status")
+            was_waiting = TicketEventService.is_waiting_status(old_status)
+            is_waiting = TicketEventService.is_waiting_status(new_status)
+
+            if was_waiting and not is_waiting:
+                waiting_started_at = waiting_starts_by_ticket_key.pop(ticket_key, None)
+                if waiting_started_at is None:
+                    waiting_started_at = TicketEventService.get_initial_waiting_start_at(event, tickets_by_id)
+
+                wait_seconds_by_ticket_key[ticket_key] = wait_seconds_by_ticket_key.get(
+                    ticket_key,
+                    0,
+                ) + TicketEventService.get_seconds_between(waiting_started_at, event.created_at)
+
+            if is_waiting and not was_waiting:
+                waiting_starts_by_ticket_key[ticket_key] = event.created_at
+            elif is_waiting and ticket_key not in waiting_starts_by_ticket_key:
+                waiting_starts_by_ticket_key[ticket_key] = (
+                    TicketEventService.get_initial_waiting_start_at(event, tickets_by_id)
+                )
+
+        return wait_seconds_by_ticket_key
 
     @staticmethod
     def get_service_analytics_from_events(
@@ -732,6 +763,10 @@ class TicketEventService:
     ) -> list[dict]:
         service_stats: dict[int, dict[str, Any]] = {}
         processing_seconds_by_ticket_key = TicketEventService.get_event_processing_seconds_by_ticket_key(
+            events,
+            tickets_by_id,
+        )
+        wait_seconds_by_ticket_key = TicketEventService.get_event_wait_seconds_by_ticket_key(
             events,
             tickets_by_id,
         )
@@ -764,7 +799,7 @@ class TicketEventService:
                 stats["last_ticket_at"] = event.created_at
 
             if ticket_key not in stats["wait_keys"]:
-                wait_seconds = TicketEventService.get_event_wait_seconds(event, tickets_by_id)
+                wait_seconds = wait_seconds_by_ticket_key.get(ticket_key)
                 if wait_seconds is not None:
                     stats["wait_seconds"].append(wait_seconds)
                     stats["wait_keys"].add(ticket_key)
