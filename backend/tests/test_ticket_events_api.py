@@ -210,6 +210,7 @@ def test_operator_service_analytics_uses_ticket_event_snapshots():
             id=uuid.uuid4(),
             ticket_id=ticket_id,
             event_type="TICKET_CALLED",
+            old_status="WAITING",
             new_status="CALLED",
             metadata_={"ticket_snapshot": base_snapshot},
             created_at=called_at,
@@ -218,6 +219,7 @@ def test_operator_service_analytics_uses_ticket_event_snapshots():
             id=uuid.uuid4(),
             ticket_id=ticket_id,
             event_type="TICKET_COMPLETED",
+            old_status="CALLED",
             new_status="COMPLETED",
             metadata_={
                 "ticket_snapshot": {
@@ -271,3 +273,90 @@ def test_operator_service_analytics_uses_ticket_event_snapshots():
         }
     ]
     assert processing_seconds == [900]
+
+
+def test_operator_service_analytics_sums_only_waiting_status_intervals():
+    ticket_id = uuid.uuid4()
+    service_id = 10
+    current_ticket = SimpleNamespace(
+        id=ticket_id,
+        service_id=service_id,
+        status="COMPLETED",
+        created_at=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
+        called_at=None,
+        started_at=None,
+        completed_at=None,
+    )
+    service = SimpleNamespace(name="Admissions", code="ADM")
+    events = [
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            ticket_id=ticket_id,
+            event_type="TICKET_CALLED",
+            old_status="WAITING",
+            new_status="CALLED",
+            metadata_={
+                "ticket_snapshot": {
+                    "service_id": service_id,
+                    "created_at": "2026-06-01T09:00:00+00:00",
+                }
+            },
+            created_at=datetime(2026, 6, 1, 9, 5, tzinfo=timezone.utc),
+        ),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            ticket_id=ticket_id,
+            event_type="SERVICE_CHANGED",
+            old_status="CALLED",
+            new_status="WAITING",
+            metadata_={
+                "ticket_snapshot": {
+                    "service_id": service_id,
+                    "created_at": "2026-06-01T09:00:00+00:00",
+                }
+            },
+            created_at=datetime(2026, 6, 1, 9, 7, tzinfo=timezone.utc),
+        ),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            ticket_id=ticket_id,
+            event_type="TICKET_CALLED",
+            old_status="WAITING",
+            new_status="CALLED",
+            metadata_={
+                "ticket_snapshot": {
+                    "service_id": service_id,
+                    "created_at": "2026-06-01T09:00:00+00:00",
+                    "called_at": "2026-06-01T09:10:00+00:00",
+                    "started_at": "2026-06-01T09:10:00+00:00",
+                }
+            },
+            created_at=datetime(2026, 6, 1, 9, 10, tzinfo=timezone.utc),
+        ),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            ticket_id=ticket_id,
+            event_type="TICKET_COMPLETED",
+            old_status="CALLED",
+            new_status="COMPLETED",
+            metadata_={
+                "ticket_snapshot": {
+                    "service_id": service_id,
+                    "created_at": "2026-06-01T09:00:00+00:00",
+                    "called_at": "2026-06-01T09:10:00+00:00",
+                    "started_at": "2026-06-01T09:10:00+00:00",
+                    "completed_at": "2026-06-01T09:20:00+00:00",
+                    "status": "COMPLETED",
+                }
+            },
+            created_at=datetime(2026, 6, 1, 9, 20, tzinfo=timezone.utc),
+        ),
+    ]
+
+    rows = TicketEventService.get_service_analytics_from_events(
+        events,
+        {ticket_id: current_ticket},
+        {service_id: service},
+    )
+
+    assert rows[0]["average_wait_seconds"] == 480
