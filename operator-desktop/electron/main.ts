@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, screen, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, session, shell, type DownloadItem, type Session } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
+import { execFile } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
 type OperatorConfig = {
@@ -61,6 +62,8 @@ const DEFAULT_SERVER_URL = 'http://192.168.115.12'
 const ADMIN_SETTINGS_PASSWORD = 'TuranTAU1998!@#$%'
 const isDev = !app.isPackaged && process.env.npm_lifecycle_event === 'dev'
 const devServerUrl = process.env.OPERATOR_DEV_URL ?? 'http://192.168.115.12'
+const singleInstanceLock = app.requestSingleInstanceLock()
+const OFFICE_DOCUMENT_PRINT_EXTENSIONS = new Set(['.doc', '.docx'])
 
 let mainWindow: BrowserWindow | null = null
 let displayWindow: BrowserWindow | null = null
@@ -70,6 +73,7 @@ let lastPlatonusStreamFrame: string | null = null
 let config: OperatorConfig = readConfig()
 let adminSettingsTokens = new Set<string>()
 let platonusDownloadPrintHandlerInstalled = false
+const downloadPrintHandlerSessions = new Set<Session>()
 
 function parseBool(value: string | undefined, fallback: boolean) {
   if (!value) return fallback
@@ -383,11 +387,58 @@ function createMainWindow() {
     if (config.fullScreen) mainWindow?.setFullScreen(true)
   })
 
+  const createdMainWindow = mainWindow
+  createdMainWindow.on('closed', () => {
+    if (mainWindow === createdMainWindow) {
+      mainWindow = null
+    }
+  })
+
   if (isDev) {
     mainWindow.loadURL(devServerUrl)
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (app.isReady()) createMainWindow()
+    return
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+
+  mainWindow.show()
+  mainWindow.focus()
+  mainWindow.webContents.focus()
+}
+
+function refocusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+
+  showMainWindow()
+  setTimeout(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+
+    mainWindow.focus()
+    mainWindow.webContents.focus()
+  }, 120)
+}
+
+function registerDisplayWindowClosedHandler(createdDisplayWindow: BrowserWindow) {
+  createdDisplayWindow.on('closed', () => {
+    if (displayWindow === createdDisplayWindow) {
+      displayWindow = null
+      displayWindowMode = null
+      platonusStreamReady = false
+      lastPlatonusStreamFrame = null
+    }
+
+    refocusMainWindow()
+  })
 }
 
 function openDisplayWindow(options?: DisplayOpenOptions) {
@@ -427,13 +478,7 @@ function openDisplayWindow(options?: DisplayOpenOptions) {
   })
 
   displayWindowMode = 'queue'
-  const createdDisplayWindow = displayWindow
-  createdDisplayWindow.on('closed', () => {
-    if (displayWindow === createdDisplayWindow) {
-      displayWindow = null
-      displayWindowMode = null
-    }
-  })
+  registerDisplayWindowClosedHandler(displayWindow)
   displayWindow.webContents.setZoomFactor(displayZoom)
   displayWindow.loadURL(displayUrl)
 
@@ -475,13 +520,7 @@ async function openPlatonusDisplayWindow(options?: PlatonusDisplayOptions) {
   })
 
   displayWindowMode = 'platonus'
-  const createdDisplayWindow = displayWindow
-  createdDisplayWindow.on('closed', () => {
-    if (displayWindow === createdDisplayWindow) {
-      displayWindow = null
-      displayWindowMode = null
-    }
-  })
+  registerDisplayWindowClosedHandler(displayWindow)
   displayWindow.webContents.setZoomFactor(1)
   await displayWindow.loadURL(platonusUrl)
 
@@ -521,13 +560,7 @@ async function openPlatonusStreamDisplayWindow() {
   })
 
   displayWindowMode = 'platonus-stream'
-  const createdDisplayWindow = displayWindow
-  createdDisplayWindow.on('closed', () => {
-    if (displayWindow === createdDisplayWindow) {
-      displayWindow = null
-      displayWindowMode = null
-    }
-  })
+  registerDisplayWindowClosedHandler(displayWindow)
 
   await displayWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(getPlatonusStreamHtml())}`)
   return { ok: true, reused: false }
@@ -707,6 +740,32 @@ function getPlatonusPrintTempPath(filename: string) {
   return path.join(tempDir, `${Date.now()}-${sanitizeDownloadFilename(filename)}`)
 }
 
+function ensureUniqueFilePath(filePath: string) {
+  if (!fs.existsSync(filePath)) return filePath
+
+  const extension = path.extname(filePath)
+  const basePath = path.join(path.dirname(filePath), path.basename(filePath, extension))
+
+  for (let index = 1; index < 1000; index += 1) {
+    const candidate = `${basePath} (${index})${extension}`
+    if (!fs.existsSync(candidate)) return candidate
+  }
+
+  return `${basePath}-${Date.now()}${extension}`
+}
+
+function getPlatonusDownloadPath(filename: string) {
+  const sanitizedFilename = sanitizeDownloadFilename(filename)
+
+  if (isOfficeDocument(sanitizedFilename)) {
+    const downloadsDir = app.getPath('downloads')
+    fs.mkdirSync(downloadsDir, { recursive: true })
+    return ensureUniqueFilePath(path.join(downloadsDir, sanitizedFilename))
+  }
+
+  return getPlatonusPrintTempPath(sanitizedFilename)
+}
+
 function printDownloadedFileDirectly(filePath: string) {
   return new Promise<void>((resolve, reject) => {
     const printWindow = new BrowserWindow({
@@ -720,6 +779,10 @@ function printDownloadedFileDirectly(filePath: string) {
         nodeIntegration: false,
         contextIsolation: true,
       },
+    })
+
+    printWindow.on('closed', () => {
+      refocusMainWindow()
     })
 
     printWindow.webContents.once('did-finish-load', () => {
@@ -753,11 +816,148 @@ function printDownloadedFileDirectly(filePath: string) {
   })
 }
 
+function isOfficeDocument(filePath: string) {
+  return OFFICE_DOCUMENT_PRINT_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+}
+
+function isOfficeDocumentMimeType(mimeType: string) {
+  return [
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ].includes(mimeType.toLowerCase())
+}
+
+function isPlatonusReferencesUrl(value: string) {
+  try {
+    const url = new URL(value, PLATONUS_URL)
+    return url.origin === PLATONUS_URL && url.pathname === '/references'
+  } catch {
+    return false
+  }
+}
+
+function getDownloadFilename(item: DownloadItem) {
+  const filename = sanitizeDownloadFilename(item.getFilename())
+  if (path.extname(filename) || !isOfficeDocumentMimeType(item.getMimeType())) return filename
+
+  return `${filename}.docx`
+}
+
+function getFilenameFromContentDisposition(value: string | null) {
+  if (!value) return ''
+
+  const utfMatch = /filename\*=UTF-8''([^;]+)/i.exec(value)
+  if (utfMatch?.[1]) {
+    try {
+      return decodeURIComponent(utfMatch[1].trim().replace(/^"|"$/g, ''))
+    } catch {
+      return utfMatch[1].trim().replace(/^"|"$/g, '')
+    }
+  }
+
+  const match = /filename="?([^";]+)"?/i.exec(value)
+  return match?.[1]?.trim() ?? ''
+}
+
+function getManualDownloadFilename(url: string, response: Response) {
+  const dispositionFilename = getFilenameFromContentDisposition(response.headers.get('content-disposition'))
+  if (dispositionFilename) return sanitizeDownloadFilename(dispositionFilename)
+
+  const urlPathname = new URL(url).pathname
+  const pathFilename = sanitizeDownloadFilename(path.basename(urlPathname))
+  if (pathFilename && pathFilename !== 'references') return pathFilename
+
+  const contentType = response.headers.get('content-type') ?? ''
+  if (isOfficeDocumentMimeType(contentType.split(';')[0])) return `platonus-${Date.now()}.docx`
+  if (contentType.includes('pdf')) return `platonus-${Date.now()}.pdf`
+
+  return `platonus-${Date.now()}`
+}
+
+function printOfficeDocument(filePath: string, refocusAfterPrint = true) {
+  if (process.platform !== 'win32') {
+    return Promise.reject(new Error('Office document auto-printing is only supported on Windows'))
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    execFile(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        '$ErrorActionPreference = "Stop"; Start-Process -FilePath $args[0] -Verb Print -WindowStyle Hidden',
+        filePath,
+      ],
+      { windowsHide: true, timeout: 15000 },
+      (error) => {
+        if (refocusAfterPrint) refocusMainWindow()
+        if (error) {
+          reject(error)
+          return
+        }
+
+        resolve()
+      },
+    )
+  })
+}
+
+async function openDownloadedFile(filePath: string, refocusAfterOpen = true) {
+  try {
+    const result = await shell.openPath(filePath)
+    if (result) {
+      console.error('Failed to open downloaded Platonus file', result)
+    }
+  } catch (err) {
+    console.error('Failed to open downloaded Platonus file', err)
+  } finally {
+    if (refocusAfterOpen) refocusMainWindow()
+  }
+}
+
+async function downloadPlatonusReference(referenceUrl: string) {
+  const normalizedUrl = new URL(referenceUrl, PLATONUS_URL).toString()
+  const cookies = await session.fromPartition(PLATONUS_PARTITION).cookies.get({ url: PLATONUS_URL })
+  const cookieHeader = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
+
+  const response = await fetch(normalizedUrl, {
+    headers: {
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      Referer: PLATONUS_URL,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Platonus reference download failed: HTTP ${response.status}`)
+  }
+
+  const filename = getManualDownloadFilename(normalizedUrl, response)
+  const filePath = getPlatonusDownloadPath(filename)
+  const payload = Buffer.from(await response.arrayBuffer())
+
+  fs.writeFileSync(filePath, payload)
+  await printDownloadedFile(filePath)
+}
+
 async function printDownloadedFile(filePath: string) {
   const fileReady = await waitForDownloadedFile(filePath)
   if (!fileReady) {
     console.error('Downloaded Platonus file is not ready for printing', filePath)
     return
+  }
+
+  if (isOfficeDocument(filePath)) {
+    try {
+      await openDownloadedFile(filePath, false)
+      await printOfficeDocument(filePath, false)
+      return
+    } catch (err) {
+      console.error('Windows Office document print failed for downloaded Platonus file', err)
+      await openDownloadedFile(filePath, false)
+      return
+    }
   }
 
   try {
@@ -767,17 +967,15 @@ async function printDownloadedFile(filePath: string) {
     console.error('Electron direct file print failed for downloaded Platonus file', err)
   }
 
-  shell.openPath(filePath).catch((err) => {
-    console.error('Failed to open downloaded Platonus file', err)
-  })
+  await openDownloadedFile(filePath)
 }
 
-function installPlatonusDownloadPrintHandler() {
-  if (platonusDownloadPrintHandlerInstalled) return
-  platonusDownloadPrintHandlerInstalled = true
+function installDownloadPrintHandlerForSession(downloadSession: Session) {
+  if (downloadPrintHandlerSessions.has(downloadSession)) return
+  downloadPrintHandlerSessions.add(downloadSession)
 
-  session.fromPartition(PLATONUS_PARTITION).on('will-download', (_event, item) => {
-    const tempFilePath = getPlatonusPrintTempPath(item.getFilename())
+  downloadSession.on('will-download', (_event, item) => {
+    const tempFilePath = getPlatonusDownloadPath(getDownloadFilename(item))
     item.setSavePath(tempFilePath)
 
     item.once('done', (_doneEvent, state) => {
@@ -791,46 +989,101 @@ function installPlatonusDownloadPrintHandler() {
   })
 }
 
-app.whenReady().then(() => {
-  config = readConfig()
-  installPlatonusDownloadPrintHandler()
+function installPlatonusDownloadPrintHandler() {
+  if (platonusDownloadPrintHandlerInstalled) return
+  platonusDownloadPrintHandlerInstalled = true
 
-  ipcMain.handle('operator:get-config', () => config)
-  ipcMain.handle('operator:reload-config', () => {
+  installDownloadPrintHandlerForSession(session.defaultSession)
+  installDownloadPrintHandlerForSession(session.fromPartition(PLATONUS_PARTITION))
+
+  app.on('web-contents-created', (_event, contents) => {
+    installDownloadPrintHandlerForSession(contents.session)
+    contents.setWindowOpenHandler((details) => {
+      if (isPlatonusReferencesUrl(details.url)) {
+        downloadPlatonusReference(details.url).catch((err) => {
+          console.error('Manual Platonus reference download failed', err)
+          shell.openExternal(details.url).catch((openErr) => {
+            console.error('Failed to open Platonus reference URL externally', openErr)
+          })
+        })
+
+        return { action: 'deny' }
+      }
+
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            partition: PLATONUS_PARTITION,
+          },
+        },
+      }
+    })
+    contents.on('will-navigate', (event, url) => {
+      if (!isPlatonusReferencesUrl(url)) return
+
+      event.preventDefault()
+      downloadPlatonusReference(url).catch((err) => {
+        console.error('Manual Platonus reference navigation download failed', err)
+      })
+    })
+    contents.on('did-create-window', (createdWindow) => {
+      installDownloadPrintHandlerForSession(createdWindow.webContents.session)
+    })
+  })
+}
+
+if (!singleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    showMainWindow()
+  })
+
+  app.whenReady().then(() => {
     config = readConfig()
-    return config
-  })
-  ipcMain.handle('operator:verify-admin-password', (_event, value: unknown) => verifyAdminPassword(value))
-  ipcMain.handle('operator:save-server-url', (_event, value: string, adminToken: unknown) => saveServerUrl(value, adminToken))
-  ipcMain.handle('operator:api-request', (_event, request: ApiRequest) => apiRequest(request))
-  ipcMain.handle('operator:open-display', (_event, options?: DisplayOpenOptions) => openDisplayWindow(options))
-  ipcMain.handle('operator:open-platonus-display', (_event, options?: PlatonusDisplayOptions) => openPlatonusDisplayWindow(options))
-  ipcMain.handle('operator:open-platonus-stream-display', () => openPlatonusStreamDisplayWindow())
-  ipcMain.handle('operator:update-platonus-stream-frame', (_event, frame: unknown) => updatePlatonusStreamFrame(frame))
-  ipcMain.on('operator:update-platonus-stream-frame', (_event, frame: unknown) => updatePlatonusStreamFrame(frame))
-  ipcMain.handle('operator:stream-main-window-area', (_event, options: CaptureAreaOptions) => streamMainWindowArea(options))
-  ipcMain.on('operator:platonus-stream-ready', () => {
-    platonusStreamReady = true
-    if (
-      lastPlatonusStreamFrame &&
-      displayWindow &&
-      !displayWindow.isDestroyed() &&
-      displayWindowMode === 'platonus-stream'
-    ) {
-      displayWindow.webContents.send('operator:platonus-stream-frame', lastPlatonusStreamFrame)
-    }
-  })
-  ipcMain.handle('operator:close-platonus-stream-display', () => closePlatonusStreamDisplayWindow())
-  ipcMain.handle('operator:capture-platonus-display', () => capturePlatonusDisplayFrame())
-  ipcMain.handle('operator:send-platonus-input', (_event, event: PlatonusInputEvent) => sendPlatonusInput(event))
+    installPlatonusDownloadPrintHandler()
 
-  createMainWindow()
+    ipcMain.handle('operator:get-config', () => config)
+    ipcMain.handle('operator:reload-config', () => {
+      config = readConfig()
+      return config
+    })
+    ipcMain.handle('operator:verify-admin-password', (_event, value: unknown) => verifyAdminPassword(value))
+    ipcMain.handle('operator:save-server-url', (_event, value: string, adminToken: unknown) => saveServerUrl(value, adminToken))
+    ipcMain.handle('operator:api-request', (_event, request: ApiRequest) => apiRequest(request))
+    ipcMain.handle('operator:open-display', (_event, options?: DisplayOpenOptions) => openDisplayWindow(options))
+    ipcMain.handle('operator:open-platonus-display', (_event, options?: PlatonusDisplayOptions) => openPlatonusDisplayWindow(options))
+    ipcMain.handle('operator:open-platonus-stream-display', () => openPlatonusStreamDisplayWindow())
+    ipcMain.handle('operator:update-platonus-stream-frame', (_event, frame: unknown) => updatePlatonusStreamFrame(frame))
+    ipcMain.on('operator:update-platonus-stream-frame', (_event, frame: unknown) => updatePlatonusStreamFrame(frame))
+    ipcMain.handle('operator:stream-main-window-area', (_event, options: CaptureAreaOptions) => streamMainWindowArea(options))
+    ipcMain.on('operator:platonus-stream-ready', () => {
+      platonusStreamReady = true
+      if (
+        lastPlatonusStreamFrame &&
+        displayWindow &&
+        !displayWindow.isDestroyed() &&
+        displayWindowMode === 'platonus-stream'
+      ) {
+        displayWindow.webContents.send('operator:platonus-stream-frame', lastPlatonusStreamFrame)
+      }
+    })
+    ipcMain.handle('operator:close-platonus-stream-display', () => closePlatonusStreamDisplayWindow())
+    ipcMain.handle('operator:capture-platonus-display', () => capturePlatonusDisplayFrame())
+    ipcMain.handle('operator:send-platonus-input', (_event, event: PlatonusInputEvent) => sendPlatonusInput(event))
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+    createMainWindow()
+
+    app.on('activate', () => {
+      showMainWindow()
+    })
   })
-})
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+}

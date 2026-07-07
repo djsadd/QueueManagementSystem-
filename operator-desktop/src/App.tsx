@@ -4,6 +4,7 @@ import {
   BellRing,
   CalendarClock,
   Check,
+  ClipboardList,
   Clock3,
   DoorOpen,
   ExternalLink,
@@ -11,11 +12,13 @@ import {
   LogOut,
   MonitorUp,
   Play,
+  Plus,
   RefreshCw,
   Search,
   Settings2,
   SkipForward,
   Timer,
+  Trash2,
   X,
 } from 'lucide-react'
 import { api, ApiError } from './api/client'
@@ -28,6 +31,7 @@ import type {
   EducationalProgramItem,
   MyWindowTickets,
   OperatorConfig,
+  ReceptionTickets,
   ServiceLanguage,
   ServiceItem,
   StudyLanguage,
@@ -35,8 +39,19 @@ import type {
   WindowStatus,
 } from './types/domain'
 
-type View = 'window' | 'profile' | 'platonus'
+type View = 'window' | 'reception' | 'profile' | 'platonus'
+type TicketSource = 'window' | 'reception'
 type RealtimeState = 'connecting' | 'connected' | 'disconnected'
+type QuickAction = {
+  id: string
+  label: string
+  serviceId: string
+}
+type TicketConfirmation = {
+  action: 'complete' | 'skip'
+  source: TicketSource
+  ticket: TicketItem
+}
 type PlatonusWebviewElement = HTMLElement & {
   getURL?: () => string
   reload?: () => void
@@ -66,6 +81,8 @@ const PLATONUS_REMOTE_PREVIEW_MS = 90
 const PLATONUS_STREAM_FRAME_MS = 33
 const PLATONUS_STREAM_MAX_WIDTH = 1920
 const PLATONUS_STREAM_JPEG_QUALITY = 92
+const QUICK_ACTIONS_STORAGE_KEY = 'operatorDesktop.quickActions'
+const MAX_QUICK_ACTIONS = 6
 
 const realtimeStatusLabels: Record<RealtimeState, string> = {
   connected: 'Realtime WebSocket',
@@ -148,6 +165,50 @@ function parseStudyLanguage(value: string): StudyLanguage | '' {
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
+}
+
+function createQuickAction(): QuickAction {
+  const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  return {
+    id,
+    label: '',
+    serviceId: '',
+  }
+}
+
+function normalizeQuickAction(value: unknown): QuickAction | null {
+  if (!value || typeof value !== 'object') return null
+
+  const item = value as Partial<QuickAction>
+  if (typeof item.id !== 'string') return null
+
+  return {
+    id: item.id,
+    label: typeof item.label === 'string' ? item.label : '',
+    serviceId: typeof item.serviceId === 'string' ? item.serviceId : '',
+  }
+}
+
+function readQuickActions(): QuickAction[] {
+  try {
+    const raw = localStorage.getItem(QUICK_ACTIONS_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(parsed)) return []
+
+    return parsed
+      .map(normalizeQuickAction)
+      .filter((item): item is QuickAction => Boolean(item))
+      .slice(0, MAX_QUICK_ACTIONS)
+  } catch {
+    return []
+  }
+}
+
+function saveQuickActions(actions: QuickAction[]) {
+  localStorage.setItem(QUICK_ACTIONS_STORAGE_KEY, JSON.stringify(actions.slice(0, MAX_QUICK_ACTIONS)))
 }
 
 function normalizeServiceLanguages(languages: ServiceLanguage[] | undefined) {
@@ -653,6 +714,7 @@ function App() {
   const [config, setConfig] = useState<OperatorConfig | null>(null)
   const [user, setUser] = useState<AuthUser | null>(null)
   const [myWindow, setMyWindow] = useState<MyWindowTickets | null>(null)
+  const [reception, setReception] = useState<ReceptionTickets | null>(null)
   const [services, setServices] = useState<ServiceItem[]>([])
   const [selectedServices, setSelectedServices] = useState<number[]>([])
   const [selectedServiceLanguages, setSelectedServiceLanguages] = useState<Record<number, ServiceLanguage[]>>({})
@@ -664,10 +726,14 @@ function App() {
   const [password, setPassword] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [receptionSearch, setReceptionSearch] = useState('')
+  const [receptionServiceId, setReceptionServiceId] = useState('')
+  const [receptionStatusFilter, setReceptionStatusFilter] = useState('')
   const [serverUrlInput, setServerUrlInput] = useState('')
   const [platonusDisplayUrl, setPlatonusDisplayUrl] = useState(PLATONUS_URL)
   const [platonusRemoteActive, setPlatonusRemoteActive] = useState(false)
   const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null)
+  const [selectedTicketSource, setSelectedTicketSource] = useState<TicketSource>('window')
   const [acceptIin, setAcceptIin] = useState('')
   const [acceptStudyLanguage, setAcceptStudyLanguage] = useState<StudyLanguage | ''>('')
   const [reassignServiceId, setReassignServiceId] = useState('')
@@ -675,6 +741,8 @@ function App() {
   const [reassignServiceLanguage, setReassignServiceLanguage] = useState<ServiceLanguage | ''>('')
   const [reassignServiceQuery, setReassignServiceQuery] = useState('')
   const [reassignProgramQuery, setReassignProgramQuery] = useState('')
+  const [quickActions, setQuickActions] = useState<QuickAction[]>(readQuickActions)
+  const [ticketConfirmation, setTicketConfirmation] = useState<TicketConfirmation | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [configSaving, setConfigSaving] = useState(false)
@@ -696,6 +764,10 @@ function App() {
     [myWindow],
   )
   const activeServices = useMemo(() => services.filter((service) => service.is_active), [services])
+  const receptionServices = useMemo(
+    () => activeServices.filter((service) => service.requires_reception_desk),
+    [activeServices],
+  )
   const activePrograms = useMemo(() => programs.filter((program) => program.is_active), [programs])
   const selectedReassignService = useMemo(
     () => activeServices.find((service) => String(service.id) === reassignServiceId) ?? null,
@@ -723,8 +795,25 @@ function App() {
       `${program.name} ${program.code}`.toLowerCase().includes(query),
     )
   }, [activePrograms, reassignProgramQuery])
+  const configuredQuickActions = useMemo(
+    () => quickActions.filter((action) => action.label.trim() && action.serviceId),
+    [quickActions],
+  )
+  const receptionTickets = useMemo(
+    () => reception?.tickets.filter((ticket) => !receptionStatusFilter || ticket.status === receptionStatusFilter) ?? [],
+    [reception, receptionStatusFilter],
+  )
   const canCallNext = Boolean(myWindow && myWindow.window_status === 'OPEN')
-  const activeViewTitle = view === 'window' ? 'Мое окно' : view === 'profile' ? 'Профиль оператора' : 'Platonus'
+  const activeViewTitle = view === 'window'
+    ? 'Мое окно'
+    : view === 'reception'
+      ? 'Регистратура'
+      : view === 'profile'
+        ? 'Профиль оператора'
+        : 'Platonus'
+  const canModifySelectedTicket = Boolean(
+    selectedTicket && (selectedTicketSource === 'reception' || selectedTicket.status === 'CALLED'),
+  )
 
   const refreshWorkspace = useCallback(
     async (silent = false) => {
@@ -768,11 +857,41 @@ function App() {
     },
     [playSound, search, statusFilter],
   )
+  const refreshReception = useCallback(
+    async (silent = false) => {
+      if (!tokenStorage.getAccessToken()) {
+        setLoading(false)
+        return
+      }
+
+      if (!silent) setLoading(true)
+      try {
+        const data = await api.tickets.reception({
+          search: receptionSearch,
+          service_id: receptionServiceId ? Number(receptionServiceId) : undefined,
+          page: 1,
+          page_size: 50,
+        })
+        setReception(data)
+        setLastRefresh(new Date())
+        setError('')
+      } catch (err) {
+        setError(getErrorMessage(err))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [receptionSearch, receptionServiceId],
+  )
   const refreshWorkspaceRef = useRef(refreshWorkspace)
 
   useEffect(() => {
     refreshWorkspaceRef.current = refreshWorkspace
   }, [refreshWorkspace])
+
+  useEffect(() => {
+    saveQuickActions(quickActions)
+  }, [quickActions])
 
   const loadProfile = useCallback(async () => {
     const [availableServices, myServices, availablePrograms, myPrograms] = await Promise.all([
@@ -847,6 +966,11 @@ function App() {
     const interval = window.setInterval(() => refreshWorkspace(true), Math.max(2, config.refreshSeconds) * 1000)
     return () => window.clearInterval(interval)
   }, [config, refreshWorkspace, user])
+
+  useEffect(() => {
+    if (!user || view !== 'reception') return
+    void refreshReception(true)
+  }, [refreshReception, user, view])
 
   useEffect(() => {
     if (!user || !config) {
@@ -964,6 +1088,7 @@ function App() {
     setRealtimeState('disconnected')
     setUser(null)
     setMyWindow(null)
+    setReception(null)
     observedTicketIdsRef.current = null
     setPassword('')
     setView('window')
@@ -1033,24 +1158,76 @@ function App() {
     setSelectedTicket((current) => (current?.id === updatedTicket.id ? updatedTicket : current))
   }
 
-  function openTicketDetails(ticket: TicketItem) {
+  function updateReceptionTicketInState(updatedTicket: TicketItem) {
+    setReception((current) => {
+      if (!current) return current
+
+      const active = updatedTicket.status === 'WAITING' || updatedTicket.status === 'CALLED'
+      const exists = current.tickets.some((ticket) => ticket.id === updatedTicket.id)
+      const tickets = active
+        ? exists
+          ? current.tickets.map((ticket) => (ticket.id === updatedTicket.id ? updatedTicket : ticket))
+          : [updatedTicket, ...current.tickets]
+        : current.tickets.filter((ticket) => ticket.id !== updatedTicket.id)
+
+      return {
+        ...current,
+        tickets,
+      }
+    })
+
+    setSelectedTicket((current) => {
+      if (current?.id !== updatedTicket.id) return current
+      return updatedTicket.status === 'WAITING' || updatedTicket.status === 'CALLED' ? updatedTicket : null
+    })
+  }
+
+  function updateSelectedTicketInState(updatedTicket: TicketItem) {
+    if (selectedTicketSource === 'reception') {
+      updateReceptionTicketInState(updatedTicket)
+      return
+    }
+
+    updateTicketInState(updatedTicket)
+  }
+
+  function openTicketDetails(ticket: TicketItem, source: TicketSource = 'window') {
+    setSelectedTicketSource(source)
     setSelectedTicket(ticket)
     setAcceptIin(ticket.iin ?? '')
     setAcceptStudyLanguage(ticket.study_language ?? '')
     setReassignServiceId(String(ticket.service_id))
     setReassignProgramId(ticket.educational_program_id === null ? '' : String(ticket.educational_program_id))
+    setReassignServiceLanguage(ticket.service_language ?? '')
     setReassignServiceQuery('')
     setReassignProgramQuery('')
   }
 
   function closeTicketDetails() {
     setSelectedTicket(null)
+    setSelectedTicketSource('window')
+    setTicketConfirmation(null)
     setAcceptIin('')
     setAcceptStudyLanguage('')
     setReassignServiceId('')
     setReassignProgramId('')
+    setReassignServiceLanguage('')
     setReassignServiceQuery('')
     setReassignProgramQuery('')
+  }
+
+  function addQuickAction() {
+    setQuickActions((current) => [...current, createQuickAction()].slice(0, MAX_QUICK_ACTIONS))
+  }
+
+  function updateQuickAction(id: string, updates: Partial<Omit<QuickAction, 'id'>>) {
+    setQuickActions((current) =>
+      current.map((action) => (action.id === id ? { ...action, ...updates } : action)),
+    )
+  }
+
+  function removeQuickAction(id: string) {
+    setQuickActions((current) => current.filter((action) => action.id !== id))
   }
 
   async function persistTicketApplicantData(ticket: TicketItem, requireStudyLanguage = true) {
@@ -1064,11 +1241,15 @@ function App() {
       throw new Error('Выберите язык обучения')
     }
 
-    let updatedTicket = await api.tickets.accept(ticket.id, normalizedIin)
+    let updatedTicket = selectedTicketSource === 'reception'
+      ? await api.tickets.acceptReception(ticket.id, normalizedIin)
+      : await api.tickets.accept(ticket.id, normalizedIin)
     if (acceptStudyLanguage) {
-      updatedTicket = await api.tickets.updateStudyLanguage(updatedTicket.id, acceptStudyLanguage)
+      updatedTicket = selectedTicketSource === 'reception'
+        ? await api.tickets.updateReceptionStudyLanguage(updatedTicket.id, acceptStudyLanguage)
+        : await api.tickets.updateStudyLanguage(updatedTicket.id, acceptStudyLanguage)
     }
-    updateTicketInState(updatedTicket)
+    updateSelectedTicketInState(updatedTicket)
     return updatedTicket
   }
 
@@ -1107,17 +1288,26 @@ function App() {
     }
   }
 
-  async function completeTicket(ticket: TicketItem) {
+  function completeTicket(ticket: TicketItem) {
+    setTicketConfirmation({ action: 'complete', source: selectedTicketSource, ticket })
+  }
+
+  async function confirmCompleteTicket(ticket: TicketItem) {
     setSaving(true)
     setMessage('')
     setActionError('')
 
     try {
       const ticketToComplete = selectedTicket?.id === ticket.id ? await persistTicketApplicantData(ticket) : ticket
-      await api.tickets.complete(ticketToComplete.id)
+      if (ticketConfirmation?.source === 'reception') {
+        await api.tickets.completeReception(ticketToComplete.id)
+      } else {
+        await api.tickets.complete(ticketToComplete.id)
+      }
       closeTicketDetails()
+      setTicketConfirmation(null)
       setMessage('Талон завершен')
-      await refreshWorkspace(true)
+      await (ticketConfirmation?.source === 'reception' ? refreshReception(true) : refreshWorkspace(true))
     } catch (err) {
       setActionError(getErrorMessage(err))
     } finally {
@@ -1125,19 +1315,25 @@ function App() {
     }
   }
 
-  async function skipTicket(ticket: TicketItem) {
-    const confirmed = window.confirm(`Отметить талон ${ticket.ticket_number} как "Не явился"?`)
-    if (!confirmed) return
+  function skipTicket(ticket: TicketItem) {
+    setTicketConfirmation({ action: 'skip', source: selectedTicketSource, ticket })
+  }
 
+  async function confirmSkipTicket(ticket: TicketItem) {
     setSaving(true)
     setMessage('')
     setActionError('')
 
     try {
-      await api.tickets.skip(ticket.id)
+      if (ticketConfirmation?.source === 'reception') {
+        await api.tickets.skipReception(ticket.id)
+      } else {
+        await api.tickets.skip(ticket.id)
+      }
       closeTicketDetails()
+      setTicketConfirmation(null)
       setMessage('Талон отмечен как не явившийся')
-      await refreshWorkspace(true)
+      await (ticketConfirmation?.source === 'reception' ? refreshReception(true) : refreshWorkspace(true))
     } catch (err) {
       setActionError(getErrorMessage(err))
     } finally {
@@ -1175,7 +1371,7 @@ function App() {
 
     try {
       const ticketToReassign = await persistTicketApplicantData(selectedTicket, mustChooseReassignStudyLanguage)
-      await api.tickets.reassignService(ticketToReassign.id, {
+      await (selectedTicketSource === 'reception' ? api.tickets.reassignReceptionService : api.tickets.reassignService)(ticketToReassign.id, {
         service_id: Number(reassignServiceId),
         educational_program_id: reassignProgramId ? Number(reassignProgramId) : null,
         study_language: mustChooseReassignStudyLanguage
@@ -1187,6 +1383,72 @@ function App() {
       })
       closeTicketDetails()
       setMessage('Услуга талона переназначена')
+      await (selectedTicketSource === 'reception' ? refreshReception(true) : refreshWorkspace(true))
+    } catch (err) {
+      setActionError(getErrorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function runQuickAction(action: QuickAction) {
+    if (!selectedTicket) return
+
+    const targetService = activeServices.find((service) => String(service.id) === action.serviceId)
+    if (!targetService) {
+      setActionError('Услуга быстрого действия не найдена или отключена')
+      return
+    }
+
+    const needsModalOptions = targetService.requires_educational_program || targetService.requires_service_language
+    const serviceSelectedInModal = reassignServiceId === action.serviceId
+
+    if (needsModalOptions && !serviceSelectedInModal) {
+      setReassignServiceId(action.serviceId)
+      setReassignProgramId('')
+      setReassignServiceLanguage('')
+      setReassignProgramQuery('')
+      setActionError('Выберите нужные параметры в модальном окне и нажмите быструю кнопку еще раз')
+      return
+    }
+
+    const targetProgram = reassignProgramId
+      ? activePrograms.find((program) => String(program.id) === reassignProgramId)
+      : null
+
+    if (targetService.requires_educational_program && !targetProgram) {
+      setActionError('Выберите образовательную программу в модальном окне')
+      return
+    }
+
+    const mustChooseStudyLanguage = Boolean(
+      targetService.requires_educational_program && targetProgram?.requires_service_language,
+    )
+
+    if (mustChooseStudyLanguage && !acceptStudyLanguage) {
+      setActionError('Выберите язык обучения перед быстрым действием')
+      return
+    }
+
+    if (targetService.requires_service_language && !reassignServiceLanguage) {
+      setActionError('Выберите язык обслуживания в модальном окне')
+      return
+    }
+
+    setSaving(true)
+    setMessage('')
+    setActionError('')
+
+    try {
+      const ticketToReassign = await persistTicketApplicantData(selectedTicket, mustChooseStudyLanguage)
+      await api.tickets.reassignService(ticketToReassign.id, {
+        service_id: targetService.id,
+        educational_program_id: targetService.requires_educational_program && targetProgram ? targetProgram.id : null,
+        study_language: mustChooseStudyLanguage ? acceptStudyLanguage || null : null,
+        service_language: targetService.requires_service_language ? reassignServiceLanguage || null : null,
+      })
+      closeTicketDetails()
+      setMessage(`Быстрое действие "${action.label.trim()}" выполнено`)
       await refreshWorkspace(true)
     } catch (err) {
       setActionError(getErrorMessage(err))
@@ -1317,6 +1579,13 @@ function App() {
             <BellRing className="h-6 w-6" />
           </button>
           <button
+            className={classNames('rail-button', view === 'reception' && 'rail-button-active')}
+            title="Регистратура"
+            onClick={() => setView('reception')}
+          >
+            <ClipboardList className="h-6 w-6" />
+          </button>
+          <button
             className={classNames('rail-button', view === 'profile' && 'rail-button-active')}
             title="Профиль"
             onClick={() => setView('profile')}
@@ -1363,7 +1632,11 @@ function App() {
                 {isSoundBlocked ? 'Включить звук' : 'Звук'}
               </button>
             )}
-            <button className="ghost-button" onClick={() => refreshWorkspace()} disabled={saving}>
+            <button
+              className="ghost-button"
+              onClick={() => (view === 'reception' ? refreshReception() : refreshWorkspace())}
+              disabled={saving}
+            >
               <RefreshCw className="h-5 w-5" />
               Обновить
             </button>
@@ -1545,6 +1818,114 @@ function App() {
                 )}
               </section>
             </div>
+          ) : view === 'reception' ? (
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+              <section className="space-y-6">
+                <div className="panel p-6">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <span className="section-label">Регистратура</span>
+                      <h2 className="mt-2 text-4xl font-semibold tracking-normal">Талоны</h2>
+                    </div>
+                    <ClipboardList className="h-9 w-9 text-brand" />
+                  </div>
+
+                  <div className="mt-6 grid grid-cols-2 gap-3">
+                    <div className="metric-tile">
+                      <span>Ожидают</span>
+                      <strong>{reception?.waiting_count ?? 0}</strong>
+                    </div>
+                    <div className="metric-tile">
+                      <span>Приняты</span>
+                      <strong>{reception?.called_count ?? 0}</strong>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 grid gap-3">
+                    <button className="primary-button h-12 w-full" disabled={saving} onClick={() => refreshReception()}>
+                      <RefreshCw className="h-5 w-5" />
+                      Обновить регистратуру
+                    </button>
+                    <div className="info-line">
+                      <span>В списке</span>
+                      <strong>{reception?.total ?? 0}</strong>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="panel overflow-hidden">
+                <div className="grid gap-3 border-b border-line p-5 xl:grid-cols-[minmax(260px,1fr)_220px_220px]">
+                  <div className="relative min-w-[260px]">
+                    <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted" />
+                    <input
+                      className="search-input"
+                      value={receptionSearch}
+                      onChange={(event) => setReceptionSearch(event.target.value)}
+                      placeholder="Поиск по талону, ИИН, услуге или ОП"
+                    />
+                  </div>
+                  <select
+                    className="text-input"
+                    value={receptionServiceId}
+                    onChange={(event) => setReceptionServiceId(event.target.value)}
+                  >
+                    <option value="">Все услуги регистратуры</option>
+                    {receptionServices.map((service) => (
+                      <option value={service.id} key={service.id}>
+                        {service.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select className="text-input" value={receptionStatusFilter} onChange={(event) => setReceptionStatusFilter(event.target.value)}>
+                    <option value="">Все статусы</option>
+                    <option value="WAITING">Ожидает</option>
+                    <option value="CALLED">Принят</option>
+                  </select>
+                </div>
+
+                {receptionTickets.length > 0 ? (
+                  <div className="divide-y divide-line">
+                    {[...receptionTickets]
+                      .sort((a, b) => (a.status === 'CALLED' ? -1 : b.status === 'CALLED' ? 1 : parseApiDate(a.created_at).getTime() - parseApiDate(b.created_at).getTime()))
+                      .map((ticket) => (
+                        <article key={ticket.id} className="ticket-row">
+                          <div className="ticket-number">{ticket.ticket_number}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="truncate text-base font-semibold">{ticket.service_name ?? 'Услуга'}</h3>
+                              <span className={classNames('status-pill', ticket.status === 'WAITING' ? 'status-pill-warn' : ticket.status === 'CALLED' ? 'status-pill-live' : 'status-pill-neutral')}>
+                                {ticketStatusLabels[ticket.status] ?? ticket.status}
+                              </span>
+                            </div>
+                            <p className="mt-1 truncate text-sm text-muted">
+                              {ticket.educational_program_name ?? ticket.full_name ?? 'Без дополнительной информации'}
+                            </p>
+                          </div>
+                          <div className="ticket-time">
+                            <div className="ticket-time-main">
+                              <Timer className="h-4 w-4" />
+                              <strong>{formatWaitMinutes(ticket)}</strong>
+                            </div>
+                            <div className="ticket-time-sub">
+                              <CalendarClock className="h-4 w-4" />
+                              <span>{formatDateTime(ticket.created_at)}</span>
+                            </div>
+                          </div>
+                          <button className="ghost-button shrink-0" disabled={saving} onClick={() => openTicketDetails(ticket, 'reception')}>
+                            <ExternalLink className="h-5 w-5" />
+                            Открыть
+                          </button>
+                        </article>
+                      ))}
+                  </div>
+                ) : (
+                  <div className="p-5">
+                    <EmptyState title="Талонов регистратуры нет" />
+                  </div>
+                )}
+              </section>
+            </div>
           ) : view === 'profile' ? (
             <div className="grid gap-6 xl:grid-cols-2">
               <ProfileList
@@ -1616,6 +1997,70 @@ function App() {
               <section className="panel p-6 xl:col-span-2">
                 <div className="mb-5 flex items-start justify-between gap-4">
                   <div>
+                    <span className="section-label">Быстрые функции</span>
+                    <h2 className="mt-1 text-xl font-semibold tracking-normal">Кнопки в карточке талона</h2>
+                  </div>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={quickActions.length >= MAX_QUICK_ACTIONS}
+                    onClick={addQuickAction}
+                  >
+                    <Plus className="h-5 w-5" />
+                    Добавить
+                  </button>
+                </div>
+
+                <div className="quick-action-settings">
+                  {quickActions.map((action) => (
+                    <div className="quick-action-row" key={action.id}>
+                      <div className="touch-choice-field">
+                        <span className="profile-label">Название кнопки</span>
+                        <input
+                          className="touch-choice-search"
+                          placeholder="Например: Отправить на сканирование"
+                          value={action.label}
+                          onChange={(event) => updateQuickAction(action.id, { label: event.target.value })}
+                        />
+                      </div>
+
+                      <div className="touch-choice-field">
+                        <span className="profile-label">Услуга</span>
+                        <select
+                          className="reassign-select"
+                          value={action.serviceId}
+                          onChange={(event) => updateQuickAction(action.id, { serviceId: event.target.value })}
+                        >
+                          <option value="">Выберите услугу</option>
+                          {activeServices.map((service) => (
+                            <option value={service.id} key={service.id}>
+                              {service.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <button
+                        className="ghost-button quick-action-remove"
+                        type="button"
+                        aria-label="Удалить быстрое действие"
+                        onClick={() => removeQuickAction(action.id)}
+                      >
+                        <Trash2 className="h-5 w-5" />
+                      </button>
+                    </div>
+                  ))}
+
+                  {quickActions.length === 0 ? (
+                    <div className="touch-choice-empty">
+                      Добавьте кнопку, выберите целевую услугу, и она появится справа от модального окна талона.
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+              <section className="panel p-6 xl:col-span-2">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div>
                     <span className="section-label">Настройки</span>
                     <h2 className="mt-1 text-xl font-semibold tracking-normal">Сервер оператора</h2>
                   </div>
@@ -1662,7 +2107,35 @@ function App() {
       </section>
 
       {selectedTicket && (
-        <AdminModal title={`Талон ${selectedTicket.ticket_number}`} onClose={closeTicketDetails} size="wide">
+        <AdminModal
+          title={`Талон ${selectedTicket.ticket_number}`}
+          onClose={closeTicketDetails}
+          size="wide"
+          aside={
+            selectedTicketSource === 'window' && configuredQuickActions.length > 0 ? (
+              <div className="quick-action-panel">
+                <span className="profile-label">Быстро</span>
+                {configuredQuickActions.map((action) => {
+                  const actionService = activeServices.find((service) => String(service.id) === action.serviceId)
+
+                  return (
+                    <button
+                      className="quick-action-button"
+                      type="button"
+                      disabled={saving || selectedTicket.status !== 'CALLED'}
+                      onClick={() => runQuickAction(action)}
+                      key={action.id}
+                    >
+                      <RefreshCw className="h-5 w-5" />
+                      <span>{action.label.trim()}</span>
+                      <small>{actionService?.name ?? 'Услуга недоступна'}</small>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null
+          }
+        >
           <div className="ticket-detail-grid">
             <div>
               <span className="profile-label">Абитуриент</span>
@@ -1690,7 +2163,7 @@ function App() {
             </div>
           </div>
 
-          {selectedTicket.status === 'CALLED' && (
+          {canModifySelectedTicket && (
             <form className="modal-form ticket-admission-form" onSubmit={saveTicketApplicantData}>
               <div className="ticket-form-grid">
                 <input
@@ -1826,7 +2299,7 @@ function App() {
               <button
                 className="success-button"
                 type="button"
-                disabled={saving || selectedTicket.status !== 'CALLED'}
+                disabled={saving || !canModifySelectedTicket}
                 onClick={() => completeTicket(selectedTicket)}
               >
                 <Check className="h-5 w-5" />
@@ -1835,18 +2308,62 @@ function App() {
               <button
                 className="danger-button"
                 type="button"
-                disabled={saving || selectedTicket.status !== 'CALLED'}
+                disabled={saving || !canModifySelectedTicket}
                 onClick={() => skipTicket(selectedTicket)}
               >
                 <SkipForward className="h-5 w-5" />
                 Талон не явился
               </button>
-              <button className="primary-button" type="submit" disabled={saving || selectedTicket.status !== 'CALLED'}>
+              <button className="primary-button" type="submit" disabled={saving || !canModifySelectedTicket}>
                 <RefreshCw className="h-5 w-5" />
                 Переназначить услугу
               </button>
             </div>
           </form>
+        </AdminModal>
+      )}
+
+      {ticketConfirmation && (
+        <AdminModal
+          title={ticketConfirmation.action === 'complete' ? 'Завершить талон' : 'Талон не явился'}
+          onClose={() => setTicketConfirmation(null)}
+          size="small"
+        >
+          <div className="error-dialog">
+            <div className="error-dialog-icon" aria-hidden="true">
+              ?
+            </div>
+            <div>
+              <strong>
+                {ticketConfirmation.action === 'complete'
+                  ? `Вы действительно хотите завершить талон ${ticketConfirmation.ticket.ticket_number}?`
+                  : `Отметить талон ${ticketConfirmation.ticket.ticket_number} как "Не явился"?`}
+              </strong>
+              <p>
+                {ticketConfirmation.action === 'complete'
+                  ? 'Талон будет завершен и отозван из очереди.'
+                  : 'Талон будет снят с текущего обслуживания.'}
+              </p>
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button className="ghost-button" type="button" disabled={saving} onClick={() => setTicketConfirmation(null)}>
+              Отмена
+            </button>
+            <button
+              className={ticketConfirmation.action === 'complete' ? 'success-button' : 'danger-button'}
+              type="button"
+              disabled={saving}
+              onClick={() =>
+                ticketConfirmation.action === 'complete'
+                  ? confirmCompleteTicket(ticketConfirmation.ticket)
+                  : confirmSkipTicket(ticketConfirmation.ticket)
+              }
+            >
+              {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
+              Подтвердить
+            </button>
+          </div>
         </AdminModal>
       )}
 
@@ -2076,11 +2593,13 @@ function ProfileList<T extends { id: number; name: string; code: string; is_acti
 }
 
 function AdminModal({
+  aside,
   children,
   onClose,
   size = 'default',
   title,
 }: {
+  aside?: React.ReactNode
   children: React.ReactNode
   onClose: () => void
   size?: 'default' | 'small' | 'wide'
@@ -2088,12 +2607,12 @@ function AdminModal({
 }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div className="admin-modal-layout" onMouseDown={(event) => event.stopPropagation()}>
       <section
         className={classNames('admin-modal', size === 'small' && 'admin-modal-small', size === 'wide' && 'admin-modal-wide')}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="modal-header">
           <h2>{title}</h2>
@@ -2103,6 +2622,8 @@ function AdminModal({
         </header>
         <div className="modal-body">{children}</div>
       </section>
+        {aside ? <aside className="admin-modal-aside">{aside}</aside> : null}
+      </div>
     </div>
   )
 }

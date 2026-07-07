@@ -34,6 +34,7 @@ const floorLabels: Record<Lang, string> = {
 
 const displayLangOrder: Lang[] = ['ru', 'kk', 'en']
 const languageRotationMs = 3000
+const maxVisibleNextTickets = 18
 
 const translations = {
   kk: {
@@ -290,6 +291,8 @@ export function QueueDisplayPage() {
 
   const animatedServing = useAnimatedTickets(data.serving)
   const animatedNext = useAnimatedTickets(data.next)
+  const visibleAnimatedNext = animatedNext.slice(0, maxVisibleNextTickets)
+  const hiddenNextCount = Math.max(animatedNext.length - visibleAnimatedNext.length, 0)
 
   return (
     <main className="queue-display-shell">
@@ -352,11 +355,16 @@ export function QueueDisplayPage() {
           <div className="display-next-wrap">
             <div className="display-next-heading">{ticketLabels[lang]}</div>
             <div className="display-next-list" role="list">
-              {animatedNext.map((ticket) => (
+              {visibleAnimatedNext.map((ticket) => (
                 <div className={`display-next-item ${getAnimationClass(ticket.animationState)}`} key={ticket.id} role="listitem">
                   <strong>{ticket.ticket_number}</strong>
                 </div>
               ))}
+              {hiddenNextCount > 0 && (
+                <div className="display-next-item display-next-more" role="listitem">
+                  <strong>+{hiddenNextCount}</strong>
+                </div>
+              )}
             </div>
           </div>
         )}

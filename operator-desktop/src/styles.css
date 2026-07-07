@@ -342,6 +342,10 @@ button:disabled {
     animation: modal-backdrop-in 180ms ease both;
   }
 
+  .admin-modal-layout {
+    @apply flex max-h-[calc(100vh-40px)] w-full max-w-[1260px] flex-col items-stretch gap-4 lg:flex-row lg:items-start lg:justify-center;
+  }
+
   .admin-modal {
     @apply max-h-[calc(100vh-40px)] w-full max-w-[620px] overflow-auto rounded-lg border border-line bg-white shadow-[0_24px_70px_rgba(16,24,40,0.28)];
     animation: modal-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -353,6 +357,11 @@ button:disabled {
 
   .admin-modal-wide {
     @apply max-w-[980px];
+  }
+
+  .admin-modal-aside {
+    @apply max-h-[calc(100vh-40px)] w-full overflow-auto rounded-lg border border-line bg-white p-4 shadow-[0_24px_70px_rgba(16,24,40,0.22)] lg:w-[300px] lg:shrink-0;
+    animation: modal-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
 
   .modal-header {
@@ -429,6 +438,38 @@ button:disabled {
 
   .modal-actions {
     @apply mt-2 flex flex-wrap justify-end gap-3;
+  }
+
+  .quick-action-settings {
+    @apply grid gap-3;
+  }
+
+  .quick-action-row {
+    @apply grid items-end gap-3 rounded-lg border border-line bg-slate-50 p-4 lg:grid-cols-[minmax(180px,1fr)_minmax(220px,1fr)_auto];
+  }
+
+  .quick-action-remove {
+    @apply h-12 w-12 px-0;
+  }
+
+  .quick-action-panel {
+    @apply grid gap-3;
+  }
+
+  .quick-action-button {
+    @apply grid min-h-[76px] w-full grid-cols-[20px_1fr] items-start gap-x-3 gap-y-1 rounded-lg border border-line bg-slate-50 px-4 py-3 text-left text-sm font-semibold text-ink transition hover:border-brand hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-55;
+  }
+
+  .quick-action-button svg {
+    @apply row-span-2 mt-0.5 text-brand;
+  }
+
+  .quick-action-button span {
+    @apply min-w-0 whitespace-normal break-words leading-snug;
+  }
+
+  .quick-action-button small {
+    @apply min-w-0 truncate text-xs font-semibold text-muted;
   }
 
   .error-dialog {

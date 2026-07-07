@@ -6,6 +6,7 @@ import type {
   MyWindowTickets,
   OperatorItem,
   OperatorStatus,
+  ReceptionTickets,
   ServiceLanguage,
   ServiceItem,
   StudyLanguage,
@@ -153,6 +154,12 @@ export const api = {
       page?: number
       page_size?: number
     }) => request<MyWindowTickets>(`/tickets/my-window${buildQuery(params)}`),
+    reception: (params: {
+      search?: string
+      service_id?: number
+      page?: number
+      page_size?: number
+    }) => request<ReceptionTickets>(`/tickets/reception${buildQuery(params)}`),
     setOperatorStatus: (status: OperatorStatus) =>
       request<MyWindowTickets>('/tickets/my-window/status', { method: 'PATCH', body: { status } }),
     setWindowStatus: (status: WindowStatus) =>
@@ -168,6 +175,25 @@ export const api = {
         method: 'PATCH',
         body: { study_language },
       }),
+    acceptReception: (id: string, iin?: string) =>
+      request<TicketItem>(`/tickets/reception/${id}/accept`, { method: 'PATCH', body: { iin: iin || undefined } }),
+    completeReception: (id: string) => request<TicketItem>(`/tickets/reception/${id}/complete`, { method: 'PATCH' }),
+    skipReception: (id: string) => request<TicketItem>(`/tickets/reception/${id}/skip`, { method: 'PATCH' }),
+    updateReceptionStudyLanguage: (id: string, study_language: TicketItem['study_language']) =>
+      request<TicketItem>(`/tickets/reception/${id}/study-language`, {
+        method: 'PATCH',
+        body: { study_language },
+      }),
+    reassignReceptionService: (
+      id: string,
+      payload: {
+        service_id: number
+        educational_program_id: number | null
+        study_language?: StudyLanguage | null
+        service_language?: ServiceLanguage | null
+      },
+    ) =>
+      request<TicketItem>(`/tickets/reception/${id}/service`, { method: 'PATCH', body: payload }),
     reassignService: (
       id: string,
       payload: {

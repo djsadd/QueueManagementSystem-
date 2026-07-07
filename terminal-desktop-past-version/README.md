@@ -53,7 +53,7 @@ start.cmd
 The application loads active services, registers a ticket through
 `POST /public/tickets` with the desktop terminal header, and immediately
 submits an 80 mm receipt to the printer. After registration it opens a separate
-ticket screen for 15 seconds with a shrinking progress line and a prompt to
+ticket screen for 40 seconds with a shrinking progress line and a prompt to
 photograph the ticket. The user can return to service selection early with the
 back button.
 

@@ -118,3 +118,13 @@ export type MyWindowTickets = {
   total_pages: number
   tickets: TicketItem[]
 }
+
+export type ReceptionTickets = {
+  waiting_count: number
+  called_count: number
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+  tickets: TicketItem[]
+}

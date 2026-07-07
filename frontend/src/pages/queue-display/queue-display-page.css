@@ -1,12 +1,17 @@
 .queue-display-shell {
   position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1.58fr) minmax(0, 1fr);
+  gap: clamp(10px, 1.7vh, 22px);
   width: 100vw;
   max-width: 100vw;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   background: #fbfafb;
   color: #061226;
-  padding: 18px 28px 48px;
-  overflow-x: hidden;
+  padding: clamp(10px, 1.8vh, 18px) clamp(14px, 2vw, 28px);
+  overflow: hidden;
 }
 
 .queue-display-sound-control {
@@ -44,14 +49,14 @@
   background: #ffffff;
   box-shadow: 0 2px 8px rgba(16, 24, 40, 0.08);
   color: #061226;
-  gap: 4px;
-  padding: 10px 14px;
+  gap: 3px;
+  padding: clamp(7px, 1vh, 10px) clamp(10px, 1.3vw, 14px);
   text-align: right;
 }
 
 .queue-display-time span {
   color: #667085;
-  font-size: 12px;
+  font-size: clamp(10px, min(1.35vh, 1vw), 12px);
   font-weight: 800;
   line-height: 1.2;
   text-transform: uppercase;
@@ -59,15 +64,17 @@
 
 .queue-display-time strong {
   color: #9a002d;
-  font-size: 24px;
+  font-size: clamp(18px, min(3vh, 2.4vw), 24px);
   font-weight: 950;
   line-height: 1;
 }
 
 .display-card {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   width: 100%;
   overflow: hidden;
-  margin-top: 30px;
   border: 1px solid #e1e5ea;
   border-radius: 8px;
   background: #ffffff;
@@ -75,11 +82,13 @@
 }
 
 .display-card header {
+  flex: 0 0 auto;
   border-bottom: 1px solid #e1e5ea;
   background: #f8fafc;
-  font-size: 26px;
+  font-size: clamp(14px, min(2.2vh, 1.65vw), 21px);
   font-weight: 900;
-  padding: 24px 40px;
+  line-height: 1.12;
+  padding: clamp(8px, 1.25vh, 16px) clamp(16px, 2.2vw, 32px);
 }
 
 .display-serving-card {
@@ -91,7 +100,9 @@
 }
 
 .display-table-wrap {
-  overflow-x: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .display-ticket-table {
@@ -103,10 +114,10 @@
 .display-ticket-table th {
   background: #9a002d;
   color: #ffffff;
-  font-size: clamp(22px, 2.2vw, 34px);
+  font-size: clamp(13px, min(2.1vh, 1.6vw), 24px);
   font-weight: 950;
   letter-spacing: 0;
-  padding: 18px 32px;
+  padding: clamp(6px, 1vh, 12px) clamp(10px, 1.5vw, 24px);
   text-align: center;
   text-transform: uppercase;
 }
@@ -120,7 +131,7 @@
   border-top: 1px solid #e1e5ea;
   background: #ffffff;
   color: #061226;
-  padding: 26px 32px;
+  padding: clamp(6px, 1.05vh, 14px) clamp(10px, 1.5vw, 24px);
   text-align: center;
   transition: opacity 240ms ease, transform 240ms ease, background-color 240ms ease;
 }
@@ -132,9 +143,9 @@
 .display-ticket-table strong {
   display: block;
   color: #9a002d;
-  font-size: clamp(46px, 6.5vw, 96px);
+  font-size: clamp(22px, min(5.2vh, 4.6vw), 62px);
   font-weight: 950;
-  line-height: 0.98;
+  line-height: 1;
   overflow-wrap: anywhere;
 }
 
@@ -148,38 +159,49 @@
 }
 
 .display-next-wrap {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
   width: 100%;
-  overflow-x: visible;
+  overflow: hidden;
 }
 
 .display-next-heading {
+  flex: 0 0 auto;
   background: #9a002d;
   color: #ffffff;
-  font-size: clamp(20px, 1.8vw, 28px);
+  font-size: clamp(13px, min(2.2vh, 1.7vw), 28px);
   font-weight: 950;
   letter-spacing: 0;
-  padding: 14px 24px;
+  line-height: 1.1;
+  padding: clamp(8px, 1.2vh, 14px) clamp(14px, 1.8vw, 24px);
   text-align: left;
   text-transform: uppercase;
 }
 
 .display-next-list {
   display: grid;
+  flex: 1 1 auto;
   width: 100%;
-  min-height: max(320px, calc(100vh - 560px));
-  grid-auto-columns: minmax(220px, 1fr);
-  grid-auto-flow: column;
-  grid-template-rows: repeat(5, minmax(0, 1fr));
-  overflow: visible;
+  min-height: 0;
+  grid-auto-rows: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(clamp(96px, 12vw, 220px), 1fr));
+  overflow: hidden;
 }
 
 .display-next-item {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
   border-top: 1px solid #e1e5ea;
   border-right: 1px solid #e1e5ea;
   background: #ffffff;
   color: #061226;
-  padding: 12px 24px;
+  padding: clamp(6px, 1.1vh, 12px) clamp(10px, 1.6vw, 24px);
   text-align: left;
+  overflow: hidden;
   transition: opacity 240ms ease, transform 240ms ease, background-color 240ms ease;
 }
 
@@ -189,18 +211,27 @@
 
 .display-next-item strong {
   display: block;
+  width: 100%;
   color: #9a002d;
-  font-size: clamp(30px, 3.4vw, 48px);
+  font-size: clamp(18px, min(4.8vh, 3.4vw), 48px);
   font-weight: 950;
   line-height: 0.98;
   overflow-wrap: anywhere;
 }
 
+.display-next-more strong {
+  color: #061226;
+}
+
 .display-empty {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-items: center;
   margin: 0;
   color: #667085;
-  font-size: 24px;
-  padding: 48px 40px;
+  font-size: clamp(16px, min(3vh, 2vw), 24px);
+  padding: clamp(18px, 4vh, 48px) clamp(18px, 2.8vw, 40px);
 }
 
 .display-ticket-entering {
@@ -251,7 +282,7 @@
   .queue-display-shell {
     width: 100%;
     max-width: 100%;
-    padding: 14px;
+    padding: 10px;
   }
 
   .queue-display-sound-control {
@@ -266,18 +297,33 @@
 
   .display-ticket-table th,
   .display-ticket-table td {
-    padding: 18px 20px;
+    padding: 6px 8px;
   }
 
   .display-next-heading,
   .display-next-item {
-    padding: 18px 20px;
+    padding: 8px 10px;
   }
 
   .display-next-list {
     min-height: 0;
-    grid-auto-flow: row;
-    grid-template-rows: none;
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+  }
+}
+
+@media (max-height: 700px) {
+  .queue-display-shell {
+    grid-template-rows: auto minmax(0, 1.45fr) minmax(0, 0.9fr);
+    gap: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .display-ticket-table strong {
+    font-size: clamp(18px, min(4.5vh, 4.4vw), 48px);
+  }
+
+  .display-next-item strong {
+    font-size: clamp(16px, min(4vh, 3vw), 38px);
   }
 }

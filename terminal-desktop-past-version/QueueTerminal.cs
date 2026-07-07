@@ -222,7 +222,7 @@ namespace QueueTerminal
     {
         private const int ChoiceCardWidth = 250;
         private const int ChoiceCardHeight = 112;
-        private const int TicketDisplayDurationMs = 15000;
+        private const int TicketDisplayDurationMs = 40000;
 
         private enum UiLanguage
         {
