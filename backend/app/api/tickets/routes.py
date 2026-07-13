@@ -39,7 +39,7 @@ async def get_my_window_tickets(
     service_id: int | None = Query(default=None, gt=0),
     educational_program_id: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=10, ge=1, le=100),
+    page_size: int = Query(default=10, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

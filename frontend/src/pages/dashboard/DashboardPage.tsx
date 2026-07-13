@@ -24,6 +24,7 @@ import {
   type TicketItem,
   type TicketEventItem,
   type TicketEventTicketSummaryItem,
+  type TicketUpdatePayload,
   type UserItem,
   type UserPayload,
   type UserRole,
@@ -185,9 +186,17 @@ type TicketCreateFormState = {
   study_language: StudyLanguage | ''
   service_language: ServiceLanguage | ''
 }
+type TicketAdminEditFormState = {
+  status: string
+  priority: string
+  estimated_wait: string
+  window_id: string
+  operator_id: string
+}
 
 const ANALYTICS_OPERATORS_SELECTION = 'operators'
 const MY_WINDOW_PAGE_SIZE = 10
+const MY_WINDOW_FETCH_LIMIT = 1000
 const TICKET_EVENTS_PAGE_SIZE = 20
 const ACTIVE_MY_WINDOW_TICKET_STATUSES = new Set(['WAITING', 'CALLED'])
 const ANALYTICS_SERVICE_COLORS = [
@@ -276,6 +285,13 @@ const emptyTicketCreateForm: TicketCreateFormState = {
   study_language: '',
   service_language: '',
 }
+const emptyTicketAdminEditForm: TicketAdminEditFormState = {
+  status: '',
+  priority: '',
+  estimated_wait: '',
+  window_id: '',
+  operator_id: '',
+}
 const emptyWindow: WindowPayload = { name: '', floor: '', status: 'OPEN', current_operator_id: null }
 const emptyUser: UserPayload = {
   email: '',
@@ -335,6 +351,8 @@ const studyLanguageLabels: Record<StudyLanguage, string> = {
   RUSSIAN: 'Русский',
   ENGLISH: 'Английский',
 }
+
+const ticketStatusOptions = ['WAITING', 'CALLED', 'COMPLETED', 'SKIPPED', 'CANCELLED', 'DECLINED']
 
 const studyLanguageOptions: Array<{ value: StudyLanguage; label: string }> = [
   { value: 'KAZAKH', label: studyLanguageLabels.KAZAKH },
@@ -749,7 +767,7 @@ function getTicketQueueWaitLabel(
 }
 
 function getTicketStatusLabel(status: string) {
-  return ticketStatusLabels[status] ?? status
+  return ticketStatusLabels[status] ?? ticketEventStatusLabels[status] ?? status
 }
 
 function formatTicketExportDate(value: string | null) {
@@ -1477,6 +1495,16 @@ function parseStudyLanguage(value: string): StudyLanguage | null {
   return studyLanguageOptions.some((option) => option.value === value) ? (value as StudyLanguage) : null
 }
 
+function buildTicketAdminEditForm(ticket: TicketItem): TicketAdminEditFormState {
+  return {
+    status: ticket.status,
+    priority: String(ticket.priority),
+    estimated_wait: ticket.estimated_wait === null ? '' : String(ticket.estimated_wait),
+    window_id: ticket.window_id === null ? '' : String(ticket.window_id),
+    operator_id: ticket.operator_id ?? '',
+  }
+}
+
 function getAnalyticsOperatorLabel(
   stats: OperatorTicketAnalyticsItem,
   operator: OperatorItem | undefined,
@@ -2056,7 +2084,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   >({})
   const myWindowTicketsRef = useRef<MyWindowTickets | null>(null)
   const [myWindowError, setMyWindowError] = useState('')
-  const [myWindowPage, setMyWindowPage] = useState(1)
+  const [myWindowSearch, setMyWindowSearch] = useState('')
   const [selectedMyWindowTicket, setSelectedMyWindowTicket] = useState<TicketItem | null>(null)
   const [receptionTickets, setReceptionTickets] = useState<ReceptionTickets | null>(null)
   const [receptionPage, setReceptionPage] = useState(1)
@@ -2067,6 +2095,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [selectedReceptionTicket, setSelectedReceptionTicket] = useState<TicketItem | null>(null)
   const [ticketCreateModalOpen, setTicketCreateModalOpen] = useState(false)
   const [ticketCreateForm, setTicketCreateForm] = useState<TicketCreateFormState>(emptyTicketCreateForm)
+  const [ticketAdminEditForm, setTicketAdminEditForm] =
+    useState<TicketAdminEditFormState>(emptyTicketAdminEditForm)
   const [acceptIin, setAcceptIin] = useState('')
   const [acceptStudyLanguage, setAcceptStudyLanguage] = useState<StudyLanguage | ''>('')
   const [ticketActionSaving, setTicketActionSaving] = useState(false)
@@ -2380,11 +2410,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
     try {
       const myWindowRows = await adminApi.tickets.myWindow({
-        page: myWindowPage,
-        page_size: MY_WINDOW_PAGE_SIZE,
+        search: myWindowSearch || undefined,
+        page: 1,
+        page_size: MY_WINDOW_FETCH_LIMIT,
       })
       applyMyWindowData(myWindowRows, true)
-      setMyWindowPage(myWindowRows.page)
       setMyWindowError('')
     } catch (requestError) {
       setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось обновить мое окно')
@@ -2721,21 +2751,29 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setMyWindowError('')
 
     try {
-      const [myWindowRows, serviceRows, programRows, degreeRows] = await Promise.all([
+      const [myWindowRows, serviceRows, programRows, degreeRows, windowRows, operatorRows, userRows] = await Promise.all([
         adminApi.tickets.myWindow({
-          page: myWindowPage,
-          page_size: MY_WINDOW_PAGE_SIZE,
+          search: myWindowSearch || undefined,
+          page: 1,
+          page_size: MY_WINDOW_FETCH_LIMIT,
         }),
         adminApi.operators.availableServices(),
         adminApi.operators.availablePrograms(),
         adminApi.operators.availableDegrees(),
+        isAdminUser ? adminApi.windows.list() : Promise.resolve(windows),
+        isAdminUser ? adminApi.operators.list() : Promise.resolve(operators),
+        isAdminUser ? adminApi.users.list() : Promise.resolve(users),
       ])
 
       applyMyWindowData(myWindowRows, animate)
-      setMyWindowPage(myWindowRows.page)
       setServices(serviceRows)
       setEducationalPrograms(programRows)
       setAcademicDegrees(degreeRows)
+      if (isAdminUser) {
+        setWindows(windowRows)
+        setOperators(operatorRows)
+        setUsers(userRows)
+      }
     } catch (requestError) {
       if (!silent) {
         myWindowTicketsRef.current = null
@@ -3020,7 +3058,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }, 0)
 
     return () => window.clearTimeout(timerId)
-  }, [activeSection, myWindowPage])
+  }, [activeSection, myWindowSearch])
 
   useEffect(() => {
     if (!isAdminUser || activeSection !== 'reception') {
@@ -3527,7 +3565,8 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   function updateMyWindowTicketInState(updatedTicket: TicketItem) {
     const currentRows = myWindowTicketsRef.current
     if (currentRows) {
-      const nextTickets = isActiveMyWindowTicket(updatedTicket)
+      const shouldKeepTicket = isActiveMyWindowTicket(updatedTicket) || Boolean(myWindowSearch.trim())
+      const nextTickets = shouldKeepTicket
         ? currentRows.tickets.map((item) => (item.id === updatedTicket.id ? updatedTicket : item))
         : currentRows.tickets.filter((item) => item.id !== updatedTicket.id)
 
@@ -3541,12 +3580,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         return current
       }
 
-      return isActiveMyWindowTicket(updatedTicket) ? updatedTicket : null
+      return isActiveMyWindowTicket(updatedTicket) || myWindowSearch.trim() ? updatedTicket : null
     })
   }
 
   function openMyWindowTicketDetails(ticket: TicketItem) {
     setSelectedMyWindowTicket(ticket)
+    setTicketAdminEditForm(buildTicketAdminEditForm(ticket))
     setAcceptIin(ticket.iin ?? '')
     setAcceptStudyLanguage(ticket.study_language ?? '')
     setReassignServiceId(String(ticket.service_id))
@@ -3559,6 +3599,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
 
   function closeMyWindowTicketDetails() {
     setSelectedMyWindowTicket(null)
+    setTicketAdminEditForm(emptyTicketAdminEditForm)
     setAcceptIin('')
     setAcceptStudyLanguage('')
     setReassignServiceId('')
@@ -3634,6 +3675,52 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       await persistMyWindowTicketApplicantData(selectedMyWindowTicket)
     } catch (requestError) {
       setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось принять талон')
+    } finally {
+      setTicketActionSaving(false)
+    }
+  }
+
+  async function saveMyWindowTicketAdminEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (!isAdminUser || selectedMyWindowTicket === null) {
+      return
+    }
+
+    const priority = Number(ticketAdminEditForm.priority)
+    const estimatedWait = ticketAdminEditForm.estimated_wait.trim()
+      ? Number(ticketAdminEditForm.estimated_wait)
+      : null
+
+    if (!Number.isInteger(priority) || priority < 0) {
+      setMyWindowError('Приоритет должен быть целым числом от 0')
+      return
+    }
+
+    if (estimatedWait !== null && (!Number.isInteger(estimatedWait) || estimatedWait < 0)) {
+      setMyWindowError('Ожидание должно быть целым числом от 0')
+      return
+    }
+
+    const payload: TicketUpdatePayload = {
+      status: ticketAdminEditForm.status,
+      priority,
+      estimated_wait: estimatedWait,
+      window_id: ticketAdminEditForm.window_id ? Number(ticketAdminEditForm.window_id) : null,
+      operator_id: ticketAdminEditForm.operator_id || null,
+    }
+
+    setError('')
+    setMyWindowError('')
+    setTicketActionSaving(true)
+
+    try {
+      const updatedTicket = await adminApi.tickets.update(selectedMyWindowTicket.id, payload)
+      updateMyWindowTicketInState(updatedTicket)
+      setTicketAdminEditForm(buildTicketAdminEditForm(updatedTicket))
+      await loadMyWindowData({ animate: true, silent: true })
+    } catch (requestError) {
+      setMyWindowError(requestError instanceof Error ? requestError.message : 'Не удалось изменить талон')
     } finally {
       setTicketActionSaving(false)
     }
@@ -4079,8 +4166,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         : `${isEditing ? 'Изменить' : 'Создать'}: ${sectionLabels[formModal]}`
   const myWindowTicketList = myWindowTickets?.tickets ?? []
   const myWindowTotal = myWindowTickets?.total ?? 0
-  const myWindowTotalPages = myWindowTickets?.total_pages ?? 1
-  const myWindowCurrentPage = myWindowTickets?.page ?? myWindowPage
   const myWindowWaitingCount = myWindowTickets?.global_waiting_count ?? 0
   const receptionTicketList = receptionTickets?.tickets ?? []
   const receptionTotal = receptionTickets?.total ?? 0
@@ -4414,7 +4499,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       normalizedReassignProgramQuery,
     )
   })
-  const filteredMyWindowTickets = sortMyWindowTickets(myWindowTicketList.filter(isActiveMyWindowTicket))
+  const filteredMyWindowTickets = sortMyWindowTickets(
+    myWindowTicketList.filter((ticket) => (myWindowSearch.trim() ? true : isActiveMyWindowTicket(ticket))),
+  )
   const filteredReceptionTickets = sortReceptionTickets(receptionTicketList.filter(isActiveMyWindowTicket))
   const selectedAnalyticsMonth = getSelectedAnalyticsMonth()
   const dashboardClassName = [
@@ -4626,6 +4713,21 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               >
                 Следующий
               </button>
+              <input
+                className="toolbar-input"
+                placeholder="Поиск по талону, ИИН, ФИО, услуге или ОП"
+                value={myWindowSearch}
+                onChange={(event) => setMyWindowSearch(event.target.value)}
+              />
+              <button
+                className="secondary-action compact"
+                type="button"
+                disabled={myWindowRefreshing}
+                onClick={() => void loadMyWindowData({ animate: true, silent: Boolean(myWindowTickets) })}
+              >
+                <Icon name="refresh" />
+                Обновить
+              </button>
               {myWindowTickets && (
                 <span className={`my-window-realtime ${myWindowRealtimeStatus}`}>
                   <span aria-hidden="true" />
@@ -4692,6 +4794,16 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 <div className="row-actions" key={ticket.id}>
                   {(() => {
                     const isCurrentWindowTicket = ticket.window_id === myWindowTickets?.window_id
+                    const adminDetailsButton = isAdminUser ? (
+                      <button
+                        className="secondary-action compact"
+                        type="button"
+                        disabled={ticketActionSaving}
+                        onClick={() => openMyWindowTicketDetails(ticket)}
+                      >
+                        Управление
+                      </button>
+                    ) : null
 
                     if (ticket.status === 'WAITING' && isCurrentWindowTicket) {
                       return (
@@ -4712,6 +4824,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                           >
                             Отказать
                           </button>
+                          {adminDetailsButton}
                         </>
                       )
                     }
@@ -4728,30 +4841,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                       )
                     }
 
-                    return <span className="row-actions-empty">—</span>
+                    return adminDetailsButton ?? <span className="row-actions-empty">—</span>
                   })()}
                 </div>,
               ])}
             />
-            <div className="queue-panel my-window-pagination" aria-label="Пагинация талонов">
-              <div className="pagination-pages">
-                {Array.from({ length: myWindowTotalPages }, (_, pageIndex) => pageIndex + 1).map((pageNumber) => (
-                  <button
-                    className={
-                      pageNumber === myWindowCurrentPage
-                        ? 'secondary-action compact pagination-page selected'
-                        : 'secondary-action compact pagination-page'
-                    }
-                    type="button"
-                    disabled={myWindowRefreshing}
-                    key={pageNumber}
-                    aria-current={pageNumber === myWindowCurrentPage ? 'page' : undefined}
-                    onClick={() => setMyWindowPage(pageNumber)}
-                  >
-                    {pageNumber}
-                  </button>
-                ))}
-              </div>
+            <div className="my-window-result-count">
+              Показано {filteredMyWindowTickets.length} из {myWindowTotal}
             </div>
           </section>
         )}
@@ -6734,6 +6830,86 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               <p>Окно: {selectedMyWindowTicket.window_id ?? 'Не указано'}</p>
             </div>
           </div>
+
+          {isAdminUser && (
+            <form className="admin-form modal-form ticket-admin-edit-form" onSubmit={saveMyWindowTicketAdminEdit}>
+              <label>
+                <span className="profile-label">Статус</span>
+                <select
+                  required
+                  value={ticketAdminEditForm.status}
+                  onChange={(event) =>
+                    setTicketAdminEditForm({ ...ticketAdminEditForm, status: event.target.value })
+                  }
+                >
+                  {ticketStatusOptions.map((status) => (
+                    <option value={status} key={status}>
+                      {getTicketStatusLabel(status)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="profile-label">Приоритет</span>
+                <input
+                  min={0}
+                  step={1}
+                  type="number"
+                  value={ticketAdminEditForm.priority}
+                  onChange={(event) =>
+                    setTicketAdminEditForm({ ...ticketAdminEditForm, priority: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                <span className="profile-label">Ожидание, мин</span>
+                <input
+                  min={0}
+                  step={1}
+                  type="number"
+                  value={ticketAdminEditForm.estimated_wait}
+                  onChange={(event) =>
+                    setTicketAdminEditForm({ ...ticketAdminEditForm, estimated_wait: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                <span className="profile-label">Окно</span>
+                <select
+                  value={ticketAdminEditForm.window_id}
+                  onChange={(event) =>
+                    setTicketAdminEditForm({ ...ticketAdminEditForm, window_id: event.target.value })
+                  }
+                >
+                  <option value="">Не назначено</option>
+                  {windows.map((windowItem) => (
+                    <option value={windowItem.id} key={windowItem.id}>
+                      {getWindowLabel(windows, windowItem.id)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="profile-label">Оператор</span>
+                <select
+                  value={ticketAdminEditForm.operator_id}
+                  onChange={(event) =>
+                    setTicketAdminEditForm({ ...ticketAdminEditForm, operator_id: event.target.value })
+                  }
+                >
+                  <option value="">Не назначен</option>
+                  {operators.map((operator) => (
+                    <option value={operator.id} key={operator.id}>
+                      {getUserLabel(users, operator.user_id)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button className="secondary-action compact" type="submit" disabled={ticketActionSaving}>
+                Сохранить изменения
+              </button>
+            </form>
+          )}
 
           {selectedMyWindowTicket.status === 'CALLED' && (
             <form className="admin-form modal-form ticket-admission-form" onSubmit={saveMyWindowTicketApplicantData}>

@@ -441,7 +441,7 @@ class TicketService:
 
         if status_filter:
             conditions.append(Ticket.status == status_filter)
-        else:
+        elif not normalized_search:
             conditions.append(Ticket.status.in_(TicketService.ACTIVE_MY_WINDOW_TICKET_STATUSES))
 
         if service_id is not None:

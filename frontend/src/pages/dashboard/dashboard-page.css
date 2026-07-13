@@ -582,6 +582,23 @@
   color: #047857;
 }
 
+.toolbar-input {
+  min-width: min(360px, 100%);
+  min-height: 46px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #101b33;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 14px;
+}
+
+.toolbar-input:focus {
+  border-color: #9a002d;
+  outline: 3px solid #f5e6eb;
+}
+
 .admin-panel {
   margin-top: 28px;
 }
@@ -609,6 +626,11 @@
   font: inherit;
   font-weight: 700;
   padding: 0 14px;
+}
+
+.admin-form label {
+  display: grid;
+  gap: 7px;
 }
 
 .admin-form select.multi-select {
@@ -1125,6 +1147,14 @@
   gap: 14px;
   margin-top: 14px;
   padding: 14px 18px;
+}
+
+.my-window-result-count {
+  margin-top: 14px;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
 }
 
 .pagination-pages {
@@ -2534,6 +2564,15 @@
 
 .ticket-admission-form {
   margin-bottom: 20px;
+}
+
+.ticket-admin-edit-form {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  align-items: end;
+  border: 1px solid #e6e9ee;
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 16px;
 }
 
 .ticket-form-grid {

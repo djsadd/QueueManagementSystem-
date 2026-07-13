@@ -383,6 +383,14 @@ export type TicketStudyLanguagePayload = {
   study_language: StudyLanguage | null
 }
 
+export type TicketUpdatePayload = {
+  status?: string | null
+  priority?: number | null
+  estimated_wait?: number | null
+  window_id?: number | null
+  operator_id?: string | null
+}
+
 export type TicketAcceptPayload = {
   iin?: string
 }
@@ -409,6 +417,8 @@ export const adminApi = {
       request<TicketItem>('/tickets/my-window/next', { method: 'PATCH' }),
     create: (payload: TicketCreatePayload) =>
       request<TicketItem>('/tickets/', { method: 'POST', body: payload }),
+    update: (id: string, payload: TicketUpdatePayload) =>
+      request<TicketItem>(`/tickets/${id}`, { method: 'PATCH', body: payload }),
     acceptMyTicket: (id: string, payload: TicketAcceptPayload) =>
       request<TicketItem>(`/tickets/my-window/${id}/accept`, { method: 'PATCH', body: payload }),
     completeMyTicket: (id: string) =>
