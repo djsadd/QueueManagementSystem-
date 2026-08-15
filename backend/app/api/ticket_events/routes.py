@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,9 +13,7 @@ from app.schemas.ticket_event import (
     OperatorTicketAnalyticsResponse,
     TicketEventPageResponse,
     TicketEventTicketPageResponse,
-    TicketEventCreate,
     TicketEventResponse,
-    TicketEventUpdate,
 )
 from app.services.operator_service import OperatorService
 from app.services.ticket_event_service import TicketEventService
@@ -69,15 +67,6 @@ async def serialize_ticket_events(db: AsyncSession, ticket_events, include_metad
         }
         for ticket_event in ticket_events
     ]
-
-
-@ticket_events_router.post("/", response_model=TicketEventResponse, dependencies=[Depends(require_admin)])
-async def create_ticket_event(
-    data: TicketEventCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    ticket_event = await TicketEventService.create(db, data)
-    return await serialize_ticket_event(db, ticket_event)
 
 
 @ticket_events_router.get("/", response_model=list[TicketEventResponse], dependencies=[Depends(require_admin)])
@@ -268,35 +257,3 @@ async def get_ticket_event(
 
     return await serialize_ticket_event(db, ticket_event)
 
-
-@ticket_events_router.patch("/{event_id}", response_model=TicketEventResponse, dependencies=[Depends(require_admin)])
-async def update_ticket_event(
-    event_id: uuid.UUID,
-    data: TicketEventUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    ticket_event = await TicketEventService.get_by_id(db, event_id)
-
-    if ticket_event is None:
-        raise HTTPException(status_code=404, detail="Ticket event not found")
-
-    updated_ticket_event = await TicketEventService.update(db, ticket_event, data)
-    return await serialize_ticket_event(db, updated_ticket_event)
-
-
-@ticket_events_router.delete(
-    "/{event_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_admin)],
-)
-async def delete_ticket_event(
-    event_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-):
-    ticket_event = await TicketEventService.get_by_id(db, event_id)
-
-    if ticket_event is None:
-        raise HTTPException(status_code=404, detail="Ticket event not found")
-
-    await TicketEventService.delete(db, ticket_event)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

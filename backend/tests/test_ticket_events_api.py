@@ -6,6 +6,7 @@ from app.api.ticket_events import routes as ticket_event_routes
 from app.dependencies.auth import require_admin
 from app.main import app
 from app.services.ticket_event_service import TicketEventService
+from app.services.ticket_service import TicketService
 
 
 def test_admin_can_filter_ticket_event_analytics_by_operator(client, monkeypatch, admin_user):
@@ -182,6 +183,57 @@ def test_admin_can_load_paginated_ticket_event_tickets(client, monkeypatch, admi
     assert response_json["items"][0]["events_count"] == 4
     assert response_json["items"][0]["change_events_count"] == 2
     assert response_json["items"][0]["latest_event"]["id"] == str(event_id)
+
+
+def test_ticket_event_history_is_read_only(client, admin_user):
+    app.dependency_overrides[require_admin] = lambda: admin_user
+    event_id = uuid.uuid4()
+
+    create_response = client.post(
+        "/ticket-events/",
+        json={"ticket_id": None, "event_type": "TICKET_CREATED"},
+    )
+    update_response = client.patch(
+        f"/ticket-events/{event_id}",
+        json={"event_type": "TICKET_COMPLETED"},
+    )
+    delete_response = client.delete(f"/ticket-events/{event_id}")
+
+    assert create_response.status_code == 405
+    assert update_response.status_code == 405
+    assert delete_response.status_code == 405
+
+
+def test_ticket_kafka_payload_omits_full_ticket_snapshot_and_sensitive_fields():
+    ticket = SimpleNamespace(
+        id=uuid.uuid4(),
+        ticket_number="A-15",
+        queue_number=15,
+        service_id=10,
+        operator_id=uuid.uuid4(),
+        window_id=3,
+        status="COMPLETED",
+        full_name="Test Applicant",
+        iin="010101010101",
+        phone="+77010000000",
+        completed_at=datetime(2026, 6, 1, 9, 20, tzinfo=timezone.utc),
+    )
+
+    payload = TicketService.build_ticket_kafka_event_payload(
+        ticket,
+        event_type="TICKET_COMPLETED",
+        old_status="CALLED",
+        new_status="COMPLETED",
+    )
+
+    assert payload["ticket_id"] == ticket.id
+    assert payload["ticket_number"] == "A-15"
+    assert payload["event_type"] == "TICKET_COMPLETED"
+    assert "ticket_snapshot" not in payload
+    assert "completed_at" not in payload
+    assert "full_name" not in payload
+    assert "iin" not in payload
+    assert "phone" not in payload
 
 
 def test_operator_service_analytics_uses_ticket_event_snapshots():

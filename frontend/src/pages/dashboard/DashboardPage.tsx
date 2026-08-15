@@ -4039,17 +4039,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
         await adminApi.applicants.delete(String(deleteTarget.id))
       }
 
-      if (deleteTarget.section === 'ticketEvents') {
-        await adminApi.ticketEvents.delete(String(deleteTarget.id))
-      }
-
       const deletedSection = deleteTarget.section
       setDeleteTarget(null)
-      if (deletedSection === 'ticketEvents') {
-        await loadAdminTicketEventsData()
-      } else {
-        await loadAdminSectionData(deletedSection)
-      }
+      await loadAdminSectionData(deletedSection)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Не удалось удалить запись')
     }

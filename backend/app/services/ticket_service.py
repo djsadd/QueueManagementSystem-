@@ -181,9 +181,12 @@ class TicketService:
             operator_id=ticket.operator_id,
         )
 
-        await KafkaEventService.publish(
+        await TicketService.publish_ticket_kafka_event(
             "tickets.created",
-            await TicketService.build_ticket_response(db, ticket),
+            ticket,
+            "TICKET_CREATED",
+            old_status=None,
+            new_status=ticket.status,
         )
         await realtime_manager.broadcast_all_my_windows_update(
             "global_waiting_count_changed",
@@ -903,9 +906,12 @@ class TicketService:
             new_status=ticket.status,
             operator_id=operator.id,
         )
-        await KafkaEventService.publish(
+        await TicketService.publish_ticket_kafka_event(
             "tickets.called",
-            await TicketService.build_ticket_response(db, ticket),
+            ticket,
+            "TICKET_CALLED",
+            old_status=old_status,
+            new_status=ticket.status,
         )
         await realtime_manager.broadcast_my_window_update(
             operator.window_id,
@@ -1461,9 +1467,12 @@ class TicketService:
             new_status=ticket.status,
             operator_id=operator.id,
         )
-        await KafkaEventService.publish(
+        await TicketService.publish_ticket_kafka_event(
             "tickets.assigned",
-            await TicketService.build_ticket_response(db, ticket),
+            ticket,
+            "TICKET_ASSIGNED",
+            old_status=ticket.status,
+            new_status=ticket.status,
         )
         await realtime_manager.broadcast_my_window_update(
             ticket.window_id,
@@ -1823,6 +1832,46 @@ class TicketService:
             )
         )
         await db.commit()
+
+    @staticmethod
+    async def publish_ticket_kafka_event(
+        topic: str,
+        ticket: Ticket,
+        event_type: str,
+        old_status: str | None,
+        new_status: str | None,
+    ) -> None:
+        await KafkaEventService.publish(
+            topic,
+            TicketService.build_ticket_kafka_event_payload(
+                ticket,
+                event_type=event_type,
+                old_status=old_status,
+                new_status=new_status,
+            ),
+        )
+
+    @staticmethod
+    def build_ticket_kafka_event_payload(
+        ticket: Ticket,
+        event_type: str,
+        old_status: str | None,
+        new_status: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "event_type": event_type,
+            "ticket_id": ticket.id,
+            "ticket_number": ticket.ticket_number,
+            "queue_number": ticket.queue_number,
+            "service_id": ticket.service_id,
+            "operator_id": ticket.operator_id,
+            "window_id": ticket.window_id,
+            "old_status": old_status,
+            "new_status": new_status,
+            "status": ticket.status,
+            "occurred_at": datetime.now(timezone.utc),
+        }
 
     @staticmethod
     def get_event_type_for_status(status: str) -> str:

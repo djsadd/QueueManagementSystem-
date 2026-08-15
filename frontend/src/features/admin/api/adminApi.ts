@@ -179,15 +179,6 @@ export type TicketEventTicketSummaryItem = {
   change_events_count: number
 }
 
-export type TicketEventPayload = {
-  ticket_id: string | null
-  event_type: string | null
-  old_status: string | null
-  new_status: string | null
-  operator_id: string | null
-  metadata: Record<string, unknown> | null
-}
-
 export type OperatorTicketAnalyticsItem = {
   operator_id: string
   operator_name: string | null
@@ -620,10 +611,5 @@ export const adminApi = {
       const queryString = searchParams.toString()
       return request<OperatorTicketAnalyticsItem>(`/ticket-events/me/analytics${queryString ? `?${queryString}` : ''}`)
     },
-    create: (payload: TicketEventPayload) =>
-      request<TicketEventItem>('/ticket-events/', { method: 'POST', body: payload }),
-    update: (id: string, payload: Partial<TicketEventPayload>) =>
-      request<TicketEventItem>(`/ticket-events/${id}`, { method: 'PATCH', body: payload }),
-    delete: (id: string) => request<void>(`/ticket-events/${id}`, { method: 'DELETE' }),
   },
 }
