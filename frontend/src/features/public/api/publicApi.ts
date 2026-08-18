@@ -41,6 +41,7 @@ export type PublicTicketItem = {
   service_language: 'KAZAKH' | 'RUSSIAN' | 'ENGLISH' | null
   full_name: string | null
   iin: string | null
+  born_date: string | null
   phone: string | null
   service_name: string | null
   service_name_kk: string | null

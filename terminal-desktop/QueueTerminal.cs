@@ -882,8 +882,7 @@ namespace QueueTerminal
                         GetReceiptHeight());
                     document.PrintPage += DrawReceipt;
                     document.Print();
-                    statusLabel.Text = T("Талон ", "Талон ", "Ticket ") + lastTicket.ticket_number
-                        + T(" басып шығаруға жіберілді.", " отправлен на печать.", " sent to printer.");
+                    statusLabel.Text = string.Empty;
                 }
             }
             catch (Exception exception)

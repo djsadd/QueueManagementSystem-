@@ -12,6 +12,16 @@ type PlatonusInputEvent =
   | { type: 'mouseWheel'; deltaX?: number; deltaY?: number }
   | { type: 'keyDown' | 'keyUp' | 'char'; keyCode: string }
 
+type BrowserDownloadState = {
+  id: string
+  fileName: string
+  filePath: string
+  receivedBytes: number
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  totalBytes: number
+  url: string
+}
+
 declare global {
   interface Window {
     operatorBridge: {
@@ -45,6 +55,8 @@ declare global {
       closePlatonusStreamDisplay: () => Promise<{ ok: boolean }>
       capturePlatonusDisplay: () => Promise<{ ok: boolean; frame: string | null }>
       sendPlatonusInput: (event: PlatonusInputEvent) => Promise<{ ok: boolean }>
+      onBrowserDownloadUpdated: (callback: (download: BrowserDownloadState) => void) => () => void
+      openBrowserDownload: (downloadId: string) => Promise<{ ok: boolean }>
     }
   }
 
@@ -54,6 +66,8 @@ declare global {
         allowpopups?: boolean | string
         partition?: string
         src?: string
+        useragent?: string
+        webpreferences?: string
       }
     }
   }

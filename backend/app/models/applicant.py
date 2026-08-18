@@ -13,6 +13,7 @@ class Applicant(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     iin: Mapped[str | None] = mapped_column(String(12), unique=True, nullable=True)
+    born_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

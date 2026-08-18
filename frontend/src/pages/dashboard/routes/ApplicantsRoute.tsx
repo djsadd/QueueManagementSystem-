@@ -16,12 +16,13 @@ export function ApplicantsRoute({
   return (
     <section className="admin-panel tab-panel" key="applicants">
       <CrudTable
-        columns={['ID', 'ФИО', 'ИИН', 'Телефон', 'Telegram Chat ID', 'Дата регистрации', 'Действия']}
+        columns={['ID', 'ФИО', 'ИИН', 'Дата рождения', 'Телефон', 'Telegram Chat ID', 'Дата регистрации', 'Действия']}
         loading={loading}
         rows={applicants.map((applicant) => [
           applicant.id.slice(0, 8),
           applicant.full_name ?? 'Не указано',
           applicant.iin ?? 'Не указано',
+          applicant.born_date ?? 'Не указано',
           applicant.phone ?? 'Не указано',
           applicant.telegram_chat_id ?? 'Не указано',
           new Date(applicant.created_at).toLocaleString(),

@@ -110,6 +110,7 @@ export type ApplicantItem = {
   id: string
   full_name: string | null
   iin: string | null
+  born_date: string | null
   phone: string | null
   telegram_chat_id: number | null
   created_at: string
@@ -118,6 +119,7 @@ export type ApplicantItem = {
 export type ApplicantPayload = {
   full_name: string | null
   iin: string | null
+  born_date: string | null
   phone: string | null
   telegram_chat_id: number | null
 }
@@ -242,6 +244,7 @@ export type TicketItem = {
   service_language: ServiceLanguage | null
   full_name: string | null
   iin: string | null
+  born_date: string | null
   phone: string | null
   service_name: string | null
   service_code?: string | null
@@ -382,8 +385,30 @@ export type TicketUpdatePayload = {
   operator_id?: string | null
 }
 
+export type TicketAdminUpdatePayload = TicketUpdatePayload & {
+  applicant_id?: string | null
+  full_name?: string | null
+  iin?: string | null
+  born_date?: string | null
+  phone?: string | null
+  service_id?: number | null
+  educational_program_id?: number | null
+  study_language?: StudyLanguage | null
+  service_language?: ServiceLanguage | null
+  ticket_number?: string | null
+  queue_number?: number | null
+  assignment_score?: number | null
+  routing_key?: string | null
+  created_at?: string | null
+  called_at?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+}
+
 export type TicketAcceptPayload = {
   iin?: string
+  full_name?: string | null
+  born_date?: string | null
 }
 
 export const adminApi = {
@@ -406,10 +431,13 @@ export const adminApi = {
       request<MyWindowTickets>('/tickets/my-window/window-status', { method: 'PATCH', body: { status } }),
     callNextMyTicket: () =>
       request<TicketItem>('/tickets/my-window/next', { method: 'PATCH' }),
+    get: (id: string) => request<TicketItem>(`/tickets/${id}`),
     create: (payload: TicketCreatePayload) =>
       request<TicketItem>('/tickets/', { method: 'POST', body: payload }),
     update: (id: string, payload: TicketUpdatePayload) =>
       request<TicketItem>(`/tickets/${id}`, { method: 'PATCH', body: payload }),
+    updateAsAdmin: (id: string, payload: TicketAdminUpdatePayload) =>
+      request<TicketItem>(`/tickets/admin/${id}`, { method: 'PATCH', body: payload }),
     acceptMyTicket: (id: string, payload: TicketAcceptPayload) =>
       request<TicketItem>(`/tickets/my-window/${id}/accept`, { method: 'PATCH', body: payload }),
     completeMyTicket: (id: string) =>

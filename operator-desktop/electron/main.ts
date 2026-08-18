@@ -38,6 +38,16 @@ type PlatonusDisplayOptions = {
   url?: string
 }
 
+type BrowserDownloadState = {
+  id: string
+  fileName: string
+  filePath: string
+  receivedBytes: number
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  totalBytes: number
+  url: string
+}
+
 type CaptureAreaOptions = {
   x: number
   y: number
@@ -58,6 +68,9 @@ function isKeyboardInputEvent(event: PlatonusInputEvent): event is Extract<Plato
 
 const PLATONUS_URL = 'https://platonus.tau-edu.kz'
 const PLATONUS_PARTITION = 'persist:platonus'
+const BROWSER_PARTITION = 'persist:operator-browser'
+const BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 const DEFAULT_SERVER_URL = 'http://192.168.115.12'
 const ADMIN_SETTINGS_PASSWORD = 'TuranTAU1998!@#$%'
 const isDev = !app.isPackaged && process.env.npm_lifecycle_event === 'dev'
@@ -73,7 +86,9 @@ let lastPlatonusStreamFrame: string | null = null
 let config: OperatorConfig = readConfig()
 let adminSettingsTokens = new Set<string>()
 let platonusDownloadPrintHandlerInstalled = false
+let browserDownloadHandlerInstalled = false
 const downloadPrintHandlerSessions = new Set<Session>()
+const browserDownloads = new Map<string, BrowserDownloadState>()
 
 function parseBool(value: string | undefined, fallback: boolean) {
   if (!value) return fallback
@@ -830,7 +845,7 @@ function isOfficeDocumentMimeType(mimeType: string) {
 function isPlatonusReferencesUrl(value: string) {
   try {
     const url = new URL(value, PLATONUS_URL)
-    return url.origin === PLATONUS_URL && url.pathname === '/references'
+    return url.origin === PLATONUS_URL && (url.pathname === '/references' || url.pathname.startsWith('/references/'))
   } catch {
     return false
   }
@@ -917,28 +932,130 @@ async function openDownloadedFile(filePath: string, refocusAfterOpen = true) {
   }
 }
 
-async function downloadPlatonusReference(referenceUrl: string) {
-  const normalizedUrl = new URL(referenceUrl, PLATONUS_URL).toString()
-  const cookies = await session.fromPartition(PLATONUS_PARTITION).cookies.get({ url: PLATONUS_URL })
-  const cookieHeader = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
+function emitBrowserDownload(download: BrowserDownloadState) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('operator:browser-download-updated', download)
+}
 
-  const response = await fetch(normalizedUrl, {
-    headers: {
-      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-      Referer: PLATONUS_URL,
-    },
+function installBrowserDownloadHandler() {
+  if (browserDownloadHandlerInstalled) return
+  browserDownloadHandlerInstalled = true
+
+  const browserSession = session.fromPartition(BROWSER_PARTITION)
+  browserSession.on('will-download', (_event, item, webContents) => {
+    const fileName = getDownloadFilename(item)
+    const filePath = ensureUniqueFilePath(path.join(app.getPath('downloads'), fileName))
+    const download: BrowserDownloadState = {
+      id: crypto.randomUUID(),
+      fileName,
+      filePath,
+      receivedBytes: 0,
+      state: 'progressing',
+      totalBytes: item.getTotalBytes(),
+      url: item.getURL(),
+    }
+
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    item.setSavePath(filePath)
+    browserDownloads.set(download.id, download)
+    emitBrowserDownload(download)
+
+    item.on('updated', (_updatedEvent, state) => {
+      download.receivedBytes = item.getReceivedBytes()
+      download.totalBytes = item.getTotalBytes()
+      download.state = state === 'interrupted' ? 'interrupted' : 'progressing'
+      browserDownloads.set(download.id, { ...download })
+      emitBrowserDownload({ ...download })
+    })
+
+    item.once('done', (_doneEvent, state) => {
+      download.receivedBytes = item.getReceivedBytes()
+      download.totalBytes = item.getTotalBytes()
+      download.state =
+        state === 'completed'
+          ? 'completed'
+          : state === 'cancelled'
+            ? 'cancelled'
+            : 'interrupted'
+      browserDownloads.set(download.id, { ...download })
+      emitBrowserDownload({ ...download })
+
+      if (!webContents.isDestroyed()) {
+        webContents.focus()
+      }
+    })
   })
+}
 
-  if (!response.ok) {
-    throw new Error(`Platonus reference download failed: HTTP ${response.status}`)
+async function openBrowserDownload(downloadId: unknown) {
+  if (typeof downloadId !== 'string') {
+    return { ok: false }
   }
 
-  const filename = getManualDownloadFilename(normalizedUrl, response)
-  const filePath = getPlatonusDownloadPath(filename)
-  const payload = Buffer.from(await response.arrayBuffer())
+  const download = browserDownloads.get(downloadId)
+  if (!download || download.state !== 'completed') {
+    return { ok: false }
+  }
 
-  fs.writeFileSync(filePath, payload)
-  await printDownloadedFile(filePath)
+  await openDownloadedFile(download.filePath, false)
+  return { ok: true }
+}
+
+async function downloadPlatonusReference(referenceUrl: string) {
+  const normalizedUrl = new URL(referenceUrl, PLATONUS_URL).toString()
+  const cookies = await session.fromPartition(BROWSER_PARTITION).cookies.get({ url: normalizedUrl })
+  const cookieHeader = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
+  let download: BrowserDownloadState | null = null
+
+  try {
+    const response = await fetch(normalizedUrl, {
+      headers: {
+        Accept: '*/*',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        Referer: PLATONUS_URL,
+        'User-Agent': BROWSER_USER_AGENT,
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Platonus reference download failed: HTTP ${response.status}`)
+    }
+
+    const filename = getManualDownloadFilename(normalizedUrl, response)
+    const filePath = ensureUniqueFilePath(path.join(app.getPath('downloads'), filename))
+    const totalBytes = Number(response.headers.get('content-length') ?? '0') || 0
+
+    download = {
+      id: crypto.randomUUID(),
+      fileName: path.basename(filePath),
+      filePath,
+      receivedBytes: 0,
+      state: 'progressing',
+      totalBytes,
+      url: normalizedUrl,
+    }
+
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    browserDownloads.set(download.id, download)
+    emitBrowserDownload({ ...download })
+
+    const payload = Buffer.from(await response.arrayBuffer())
+    fs.writeFileSync(filePath, payload)
+
+    download.receivedBytes = payload.length
+    download.totalBytes = totalBytes || payload.length
+    download.state = 'completed'
+    browserDownloads.set(download.id, { ...download })
+    emitBrowserDownload({ ...download })
+  } catch (err) {
+    if (download) {
+      download.state = 'interrupted'
+      browserDownloads.set(download.id, { ...download })
+      emitBrowserDownload({ ...download })
+    }
+
+    throw err
+  }
 }
 
 async function printDownloadedFile(filePath: string) {
@@ -993,21 +1110,32 @@ function installPlatonusDownloadPrintHandler() {
   if (platonusDownloadPrintHandlerInstalled) return
   platonusDownloadPrintHandlerInstalled = true
 
-  installDownloadPrintHandlerForSession(session.defaultSession)
-  installDownloadPrintHandlerForSession(session.fromPartition(PLATONUS_PARTITION))
-
   app.on('web-contents-created', (_event, contents) => {
-    installDownloadPrintHandlerForSession(contents.session)
-    contents.setWindowOpenHandler((details) => {
-      if (isPlatonusReferencesUrl(details.url)) {
-        downloadPlatonusReference(details.url).catch((err) => {
-          console.error('Manual Platonus reference download failed', err)
-          shell.openExternal(details.url).catch((openErr) => {
-            console.error('Failed to open Platonus reference URL externally', openErr)
-          })
-        })
+    const browserSession = session.fromPartition(BROWSER_PARTITION)
 
-        return { action: 'deny' }
+    contents.setWindowOpenHandler((details) => {
+      if (contents.session === browserSession) {
+        if (isPlatonusReferencesUrl(details.url)) {
+          void downloadPlatonusReference(details.url).catch((err) => {
+            console.error('Platonus reference browser download failed', err)
+          })
+
+          return { action: 'deny' }
+        }
+
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            autoHideMenuBar: true,
+            backgroundColor: '#ffffff',
+            title: details.frameName || 'Browser',
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              partition: BROWSER_PARTITION,
+            },
+          },
+        }
       }
 
       return {
@@ -1022,16 +1150,32 @@ function installPlatonusDownloadPrintHandler() {
         },
       }
     })
-    contents.on('will-navigate', (event, url) => {
-      if (!isPlatonusReferencesUrl(url)) return
-
-      event.preventDefault()
-      downloadPlatonusReference(url).catch((err) => {
-        console.error('Manual Platonus reference navigation download failed', err)
-      })
-    })
     contents.on('did-create-window', (createdWindow) => {
-      installDownloadPrintHandlerForSession(createdWindow.webContents.session)
+      if (createdWindow.webContents.session === browserSession) {
+        createdWindow.webContents.setWindowOpenHandler((details) => {
+          if (isPlatonusReferencesUrl(details.url)) {
+            void downloadPlatonusReference(details.url).catch((err) => {
+              console.error('Platonus reference browser download failed', err)
+            })
+
+            return { action: 'deny' }
+          }
+
+          return {
+            action: 'allow',
+            overrideBrowserWindowOptions: {
+              autoHideMenuBar: true,
+              backgroundColor: '#ffffff',
+              title: details.frameName || 'Browser',
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                partition: BROWSER_PARTITION,
+              },
+            },
+          }
+        })
+      }
     })
   })
 }
@@ -1046,6 +1190,7 @@ if (!singleInstanceLock) {
   app.whenReady().then(() => {
     config = readConfig()
     installPlatonusDownloadPrintHandler()
+    installBrowserDownloadHandler()
 
     ipcMain.handle('operator:get-config', () => config)
     ipcMain.handle('operator:reload-config', () => {
@@ -1075,6 +1220,7 @@ if (!singleInstanceLock) {
     ipcMain.handle('operator:close-platonus-stream-display', () => closePlatonusStreamDisplayWindow())
     ipcMain.handle('operator:capture-platonus-display', () => capturePlatonusDisplayFrame())
     ipcMain.handle('operator:send-platonus-input', (_event, event: PlatonusInputEvent) => sendPlatonusInput(event))
+    ipcMain.handle('operator:open-browser-download', (_event, downloadId: unknown) => openBrowserDownload(downloadId))
 
     createMainWindow()
 

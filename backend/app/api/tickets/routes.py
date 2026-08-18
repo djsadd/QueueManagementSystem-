@@ -12,6 +12,7 @@ from app.schemas.ticket import (
     MyWindowTicketsResponse,
     ReceptionTicketsResponse,
     TicketAccept,
+    TicketAdminUpdate,
     TicketCreate,
     TicketResponse,
     TicketServiceReassign,
@@ -104,7 +105,14 @@ async def accept_my_window_ticket(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return await TicketService.accept_my_ticket(db, current_user.id, ticket_id, data.iin)
+    return await TicketService.accept_my_ticket(
+        db,
+        current_user.id,
+        ticket_id,
+        data.iin,
+        full_name=data.full_name,
+        born_date=data.born_date,
+    )
 
 
 @tickets_router.patch(
@@ -210,7 +218,13 @@ async def accept_reception_ticket(
     data: TicketAccept,
     db: AsyncSession = Depends(get_db),
 ):
-    return await TicketService.accept_reception_ticket(db, ticket_id, data.iin)
+    return await TicketService.accept_reception_ticket(
+        db,
+        ticket_id,
+        data.iin,
+        full_name=data.full_name,
+        born_date=data.born_date,
+    )
 
 
 @tickets_router.patch(
@@ -310,6 +324,20 @@ async def get_ticket(
     return await TicketService.get_ticket(
         db,
         ticket_id
+    )
+
+
+@tickets_router.patch("/admin/{ticket_id}", response_model=TicketResponse, dependencies=[Depends(require_admin)])
+async def update_ticket_as_admin(
+    ticket_id: uuid.UUID,
+    data: TicketAdminUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+
+    return await TicketService.update_ticket_as_admin(
+        db,
+        ticket_id,
+        data
     )
 
 

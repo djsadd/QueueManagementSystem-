@@ -9,6 +9,7 @@ class RealtimeConnectionManager:
     def __init__(self) -> None:
         self._my_window_connections: dict[int, set[WebSocket]] = defaultdict(set)
         self._queue_display_connections: set[WebSocket] = set()
+        self._reception_connections: set[WebSocket] = set()
 
     async def connect_my_window(self, window_id: int, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -29,6 +30,35 @@ class RealtimeConnectionManager:
 
     def disconnect_queue_display(self, websocket: WebSocket) -> None:
         self._queue_display_connections.discard(websocket)
+
+    async def connect_reception(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self._reception_connections.add(websocket)
+
+    def disconnect_reception(self, websocket: WebSocket) -> None:
+        self._reception_connections.discard(websocket)
+
+    async def broadcast_reception_update(
+        self,
+        reason: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        message = {
+            "type": "reception.updated",
+            "reason": reason,
+            "payload": payload or {},
+            "sent_at": f"{datetime.utcnow().isoformat()}Z",
+        }
+
+        stale_connections: list[WebSocket] = []
+        for websocket in list(self._reception_connections):
+            try:
+                await websocket.send_json(message)
+            except Exception:
+                stale_connections.append(websocket)
+
+        for websocket in stale_connections:
+            self.disconnect_reception(websocket)
 
     async def broadcast_queue_display_update(
         self,

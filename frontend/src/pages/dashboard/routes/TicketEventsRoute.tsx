@@ -34,12 +34,50 @@ const TICKET_EVENT_STATUS_FILTER_OPTIONS = [
   { label: 'CANCELLED', value: 'CANCELLED' },
 ]
 
+function getVisiblePaginationItems(page: number, totalPages: number) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
+
+  const pages = new Set([1, totalPages, page, page - 1, page + 1])
+
+  if (page <= 3) {
+    pages.add(2)
+    pages.add(3)
+    pages.add(4)
+  }
+
+  if (page >= totalPages - 2) {
+    pages.add(totalPages - 3)
+    pages.add(totalPages - 2)
+    pages.add(totalPages - 1)
+  }
+
+  const sortedPages = [...pages]
+    .filter((item) => item >= 1 && item <= totalPages)
+    .sort((left, right) => left - right)
+  const items: Array<number | string> = []
+
+  sortedPages.forEach((item) => {
+    const previousItem = items[items.length - 1]
+
+    if (typeof previousItem === 'number' && item - previousItem > 1) {
+      items.push(`ellipsis-${previousItem}-${item}`)
+    }
+
+    items.push(item)
+  })
+
+  return items
+}
+
 export function TicketEventsRoute({
   dateFrom,
   dateTo,
   eventType,
   loading,
   onDetails,
+  onEdit,
   onFilterReset,
   onDateFromChange,
   onDateToChange,
@@ -47,6 +85,7 @@ export function TicketEventsRoute({
   onOperatorChange,
   onPageChange,
   onSearchChange,
+  onSearchSubmit,
   onStatusChange,
   operatorId,
   operatorOptions,
@@ -62,6 +101,7 @@ export function TicketEventsRoute({
   eventType: string
   loading: boolean
   onDetails: (ticketSummary: TicketEventTicketSummaryItem) => void
+  onEdit: (ticketSummary: TicketEventTicketSummaryItem) => void
   onFilterReset: () => void
   onDateFromChange: (value: string) => void
   onDateToChange: (value: string) => void
@@ -69,6 +109,7 @@ export function TicketEventsRoute({
   onOperatorChange: (value: string) => void
   onPageChange: (page: number) => void
   onSearchChange: (value: string) => void
+  onSearchSubmit: (value: string) => void
   onStatusChange: (value: string) => void
   operatorId: string
   operatorOptions: Array<{ id: string; label: string }>
@@ -79,9 +120,17 @@ export function TicketEventsRoute({
   total: number
   totalPages: number
 }) {
+  const paginationItems = getVisiblePaginationItems(page, totalPages)
+
   return (
     <section className="admin-panel tab-panel" key="ticketEvents">
-      <div className="ticket-events-filter-bar">
+      <form
+        className="ticket-events-filter-bar"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onSearchSubmit(search)
+        }}
+      >
         <label>
           <span>Поиск</span>
           <input
@@ -90,6 +139,9 @@ export function TicketEventsRoute({
             onChange={(event) => onSearchChange(event.target.value)}
           />
         </label>
+        <button className="secondary-action compact" type="submit" disabled={loading}>
+          Поиск
+        </button>
         <label>
           <span>Действие</span>
           <select value={eventType} onChange={(event) => onEventTypeChange(event.target.value)}>
@@ -132,7 +184,7 @@ export function TicketEventsRoute({
         <button className="secondary-action compact" type="button" onClick={onFilterReset}>
           Сбросить
         </button>
-      </div>
+      </form>
 
       <CrudTable
         columns={[
@@ -173,14 +225,14 @@ export function TicketEventsRoute({
               <em>{ticketSummary.change_events_count} изменений</em>
             )}
           </div>,
-          <button
-            className="secondary-action compact"
-            key={`${ticketSummary.ticket_id}-details`}
-            type="button"
-            onClick={() => onDetails(ticketSummary)}
-          >
-            Детали
-          </button>,
+          <div className="ticket-event-action-cell" key={`${ticketSummary.ticket_id}-actions`}>
+            <button className="secondary-action compact" type="button" onClick={() => onDetails(ticketSummary)}>
+              Детали
+            </button>
+            <button className="secondary-action compact" type="button" onClick={() => onEdit(ticketSummary)}>
+              Редактировать
+            </button>
+          </div>,
         ])}
       />
 
@@ -197,9 +249,24 @@ export function TicketEventsRoute({
           >
             Назад
           </button>
-          <strong>
-            {page} / {totalPages}
-          </strong>
+          {paginationItems.map((item) =>
+            typeof item === 'number' ? (
+              <button
+                aria-current={item === page ? 'page' : undefined}
+                className={`secondary-action compact pagination-page${item === page ? ' active' : ''}`}
+                disabled={loading || item === page}
+                key={item}
+                type="button"
+                onClick={() => onPageChange(item)}
+              >
+                {item}
+              </button>
+            ) : (
+              <span className="pagination-ellipsis" key={item}>
+                ...
+              </span>
+            ),
+          )}
           <button
             className="secondary-action compact pagination-page"
             type="button"

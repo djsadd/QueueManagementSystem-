@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react'
 import {
+  ArrowLeft,
+  ArrowRight,
   BellRing,
   CalendarClock,
   Check,
   ClipboardList,
   Clock3,
+  Download,
   DoorOpen,
   ExternalLink,
+  Globe,
   Loader2,
   LogOut,
   MonitorUp,
@@ -24,7 +28,6 @@ import {
 import { api, ApiError } from './api/client'
 import { tokenStorage } from './api/tokenStorage'
 import { useTicketCallSound } from './hooks/useTicketCallSound'
-import platonusLogoUrl from '../platonus logo.png'
 import type {
   AuthTokens,
   AuthUser,
@@ -39,7 +42,7 @@ import type {
   WindowStatus,
 } from './types/domain'
 
-type View = 'window' | 'reception' | 'profile' | 'platonus'
+type View = 'window' | 'reception' | 'profile' | 'browser'
 type TicketSource = 'window' | 'reception'
 type RealtimeState = 'connecting' | 'connected' | 'disconnected'
 type QuickAction = {
@@ -53,10 +56,40 @@ type TicketConfirmation = {
   ticket: TicketItem
 }
 type PlatonusWebviewElement = HTMLElement & {
+  canGoBack?: () => boolean
+  canGoForward?: () => boolean
   getURL?: () => string
+  getTitle?: () => string
+  goBack?: () => void
+  goForward?: () => void
   reload?: () => void
   loadURL?: (url: string) => void
+  stop?: () => void
   capturePage?: () => Promise<PlatonusCaptureImage>
+}
+type BrowserTab = {
+  address: string
+  canGoBack: boolean
+  canGoForward: boolean
+  id: string
+  isLoading: boolean
+  title: string
+  url: string
+}
+type BrowserDownloadState = {
+  id: string
+  fileName: string
+  filePath: string
+  receivedBytes: number
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  totalBytes: number
+  url: string
+}
+type BrowserShortcut = {
+  accent: string
+  description: string
+  label: string
+  url: string
 }
 type PlatonusCaptureImage = {
   getSize?: () => { width: number; height: number }
@@ -70,6 +103,31 @@ type PlatonusInputEvent =
   | { type: 'keyDown' | 'keyUp' | 'char'; keyCode: string }
 
 const PLATONUS_URL = 'https://platonus.tau-edu.kz'
+const BROWSER_HOME_URL = 'operator://home'
+const BROWSER_PARTITION = 'persist:operator-browser'
+const GOOGLE_SEARCH_BASE_URL = 'https://www.google.com/search?q='
+const BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+const BROWSER_HOME_SHORTCUTS: BrowserShortcut[] = [
+  {
+    accent: '#25d366',
+    description: 'web.whatsapp.com',
+    label: 'WhatsApp Web',
+    url: 'https://web.whatsapp.com/',
+  },
+  {
+    accent: '#2563eb',
+    description: 'konkurs-ent.testcenter.kz',
+    label: 'Konkurs ENT',
+    url: 'https://konkurs-ent.testcenter.kz/#/auth/univercity',
+  },
+  {
+    accent: '#9a002d',
+    description: 'platonus.tau-edu.kz',
+    label: 'Platonus',
+    url: PLATONUS_URL,
+  },
+]
 const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
   { value: 'KAZAKH', label: 'KAZ' },
   { value: 'RUSSIAN', label: 'RUS' },
@@ -165,6 +223,70 @@ function parseStudyLanguage(value: string): StudyLanguage | '' {
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
+}
+
+function createBrowserTab(url = BROWSER_HOME_URL): BrowserTab {
+  const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const home = isBrowserHomeUrl(url)
+
+  return {
+    address: home ? '' : url,
+    canGoBack: false,
+    canGoForward: false,
+    id,
+    isLoading: false,
+    title: home ? 'Главная' : getBrowserUrlLabel(url),
+    url,
+  }
+}
+
+function isBrowserHomeUrl(value: string) {
+  return value === BROWSER_HOME_URL
+}
+
+function normalizeBrowserUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return BROWSER_HOME_URL
+
+  if (isBrowserHomeUrl(trimmed)) {
+    return BROWSER_HOME_URL
+  }
+
+  if (/^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed)) {
+    return trimmed
+  }
+
+  if (trimmed.includes('.') && !trimmed.includes(' ')) {
+    return `https://${trimmed}`
+  }
+
+  return `${GOOGLE_SEARCH_BASE_URL}${encodeURIComponent(trimmed)}`
+}
+
+function getBrowserUrlLabel(value: string) {
+  if (isBrowserHomeUrl(value)) {
+    return 'Главная'
+  }
+
+  try {
+    const url = new URL(value)
+    return url.hostname.replace(/^www\./, '')
+  } catch {
+    return value
+  }
+}
+
+function formatDownloadBytes(value: number) {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function getDownloadProgress(download: BrowserDownloadState) {
+  if (download.totalBytes <= 0) return 0
+  return Math.max(0, Math.min(100, Math.round((download.receivedBytes / download.totalBytes) * 100)))
 }
 
 function createQuickAction(): QuickAction {
@@ -440,105 +562,271 @@ function PlatonusRemoteController({ url }: { url: string }) {
   )
 }
 
-function PlatonusView({
-  onUrlChange,
+function BrowserHomePage({
+  onOpen,
+  onSearch,
+}: {
+  onOpen: (url: string) => void
+  onSearch: (query: string) => void
+}) {
+  const [query, setQuery] = useState('')
+
+  function submitSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onSearch(query)
+  }
+
+  return (
+    <section className="browser-home-page">
+      <div className="browser-home-center">
+        <div className="browser-google-wordmark" aria-label="Google">
+          <span>G</span>
+          <span>o</span>
+          <span>o</span>
+          <span>g</span>
+          <span>l</span>
+          <span>e</span>
+        </div>
+        <form className="browser-home-search" onSubmit={submitSearch}>
+          <Search className="h-5 w-5 text-slate-400" />
+          <input
+            autoComplete="off"
+            value={query}
+            placeholder="Поиск в Google или URL"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <button type="submit">Найти</button>
+        </form>
+        <div className="browser-home-shortcuts">
+          {BROWSER_HOME_SHORTCUTS.map((shortcut) => (
+            <button
+              className="browser-home-shortcut"
+              type="button"
+              key={shortcut.url}
+              onClick={() => onOpen(shortcut.url)}
+            >
+              <span style={{ background: shortcut.accent }}>
+                {shortcut.label.slice(0, 1)}
+              </span>
+              <strong>{shortcut.label}</strong>
+              <small>{shortcut.description}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function BrowserView({
+  onActiveUrlChange,
   streamActive,
   visible,
 }: {
-  onUrlChange: (url: string) => void
+  onActiveUrlChange: (url: string) => void
   streamActive: boolean
   visible: boolean
 }) {
   const shellRef = useRef<HTMLElement | null>(null)
-  const webviewRef = useRef<HTMLElement | null>(null)
-  const retryRef = useRef(false)
+  const webviewRefs = useRef<Record<string, HTMLElement | null>>({})
   const visibleRef = useRef(visible)
+  const initialTab = useMemo(() => createBrowserTab(), [])
+  const activeTabIdRef = useRef(initialTab.id)
+  const [tabs, setTabs] = useState<BrowserTab[]>([initialTab])
+  const [activeTabId, setActiveTabId] = useState(initialTab.id)
+  const [downloads, setDownloads] = useState<BrowserDownloadState[]>([])
+  const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]
+  const activeDownloadCount = downloads.filter((download) => download.state === 'progressing').length
 
   useEffect(() => {
     visibleRef.current = visible
   }, [visible])
 
   useEffect(() => {
-    const shell = shellRef.current
-    const webview = webviewRef.current
-    if (!shell || !webview) return
+    activeTabIdRef.current = activeTabId
+  }, [activeTabId])
 
-    const syncWebviewSize = () => {
-      const { width, height } = shell.getBoundingClientRect()
-      webview.style.width = `${Math.max(1, Math.floor(width))}px`
-      webview.style.height = `${Math.max(1, Math.floor(height))}px`
-    }
-
-    syncWebviewSize()
-    const resizeObserver = new ResizeObserver(syncWebviewSize)
-    resizeObserver.observe(shell)
-    window.addEventListener('resize', syncWebviewSize)
-
-    return () => {
-      resizeObserver.disconnect()
-      window.removeEventListener('resize', syncWebviewSize)
-    }
+  useEffect(() => {
+    return window.operatorBridge.onBrowserDownloadUpdated((download) => {
+      setDownloadsOpen(true)
+      setDownloads((current) => {
+        const next = current.filter((item) => item.id !== download.id)
+        return [download, ...next].slice(0, 20)
+      })
+    })
   }, [])
 
   useEffect(() => {
-    const webview = webviewRef.current as PlatonusWebviewElement | null
+    if (activeTab?.url) {
+      onActiveUrlChange(activeTab.url)
+    }
+  }, [activeTab?.url, onActiveUrlChange])
+
+  const updateTab = useCallback((tabId: string, patch: Partial<BrowserTab>) => {
+    setTabs((currentTabs) =>
+      currentTabs.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)),
+    )
+  }, [])
+
+  const getTabWebview = useCallback((tabId?: string) => {
+    const resolvedTabId = tabId ?? activeTabIdRef.current
+    return webviewRefs.current[resolvedTabId] as PlatonusWebviewElement | null
+  }, [])
+
+  const syncActiveTabRef = useCallback((tabId: string) => {
+    activeTabIdRef.current = tabId
+    setActiveTabId(tabId)
+  }, [])
+
+  const syncTabState = useCallback((tabId: string) => {
+    const tab = tabs.find((item) => item.id === tabId)
+    if (tab && isBrowserHomeUrl(tab.url)) return
+
+    const webview = getTabWebview(tabId)
     if (!webview) return
 
-    const syncUrl = () => {
-      try {
-        const url = webview.getURL?.()
-        if (url) onUrlChange(url)
-      } catch {
-        onUrlChange(PLATONUS_URL)
+    const url = webview.getURL?.() ?? ''
+    const title = webview.getTitle?.() || getBrowserUrlLabel(url)
+    updateTab(tabId, {
+      address: url,
+      canGoBack: Boolean(webview.canGoBack?.()),
+      canGoForward: Boolean(webview.canGoForward?.()),
+      title,
+      url,
+    })
+  }, [getTabWebview, tabs, updateTab])
+
+  const loadTabUrl = useCallback((tabId: string, value: string) => {
+    const url = normalizeBrowserUrl(value)
+    if (isBrowserHomeUrl(url)) {
+      updateTab(tabId, {
+        address: '',
+        canGoBack: false,
+        canGoForward: false,
+        isLoading: false,
+        title: 'Главная',
+        url,
+      })
+      getTabWebview(tabId)?.stop?.()
+      return
+    }
+
+    const webview = getTabWebview(tabId)
+    updateTab(tabId, { address: url, isLoading: true, url })
+    webview?.loadURL?.(url)
+  }, [getTabWebview, updateTab])
+
+  function addTab(url = BROWSER_HOME_URL) {
+    const tab = createBrowserTab(url)
+    setTabs((currentTabs) => [...currentTabs, tab])
+    syncActiveTabRef(tab.id)
+  }
+
+  function closeTab(tabId: string) {
+    setTabs((currentTabs) => {
+      if (currentTabs.length === 1) {
+        const resetTab = createBrowserTab()
+        syncActiveTabRef(resetTab.id)
+        webviewRefs.current = {}
+        return [resetTab]
       }
+
+      const closedIndex = currentTabs.findIndex((tab) => tab.id === tabId)
+      const nextTabs = currentTabs.filter((tab) => tab.id !== tabId)
+      delete webviewRefs.current[tabId]
+
+      if (activeTabId === tabId) {
+        syncActiveTabRef(nextTabs[Math.max(0, closedIndex - 1)]?.id ?? nextTabs[0].id)
+      }
+
+      return nextTabs
+    })
+  }
+
+  function submitAddress(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!activeTab) return
+    loadTabUrl(activeTab.id, activeTab.address)
+  }
+
+  function handleWebviewEvent(tabId: string, eventName: 'load-start' | 'load-stop' | 'navigate' | 'title') {
+    const webview = getTabWebview(tabId)
+    if (!webview) return
+
+    if (eventName === 'load-start') {
+      updateTab(tabId, { isLoading: true })
+      return
     }
 
-    webview.addEventListener('dom-ready', syncUrl)
-    webview.addEventListener('did-navigate', syncUrl)
-    webview.addEventListener('did-navigate-in-page', syncUrl)
-
-    return () => {
-      webview.removeEventListener('dom-ready', syncUrl)
-      webview.removeEventListener('did-navigate', syncUrl)
-      webview.removeEventListener('did-navigate-in-page', syncUrl)
+    if (eventName === 'load-stop') {
+      updateTab(tabId, { isLoading: false })
     }
-  }, [onUrlChange])
+
+    syncTabState(tabId)
+  }
+
+  function goBack() {
+    getTabWebview()?.goBack?.()
+  }
+
+  function goForward() {
+    getTabWebview()?.goForward?.()
+  }
+
+  function reloadActiveTab() {
+    const webview = getTabWebview()
+    if (activeTab?.isLoading) {
+      webview?.stop?.()
+      return
+    }
+
+    webview?.reload?.()
+  }
+
+  function openDownload(download: BrowserDownloadState) {
+    if (download.state !== 'completed') return
+    window.operatorBridge.openBrowserDownload(download.id).catch((err) => {
+      console.error('Open browser download failed', err)
+    })
+  }
 
   useEffect(() => {
-    const webview = webviewRef.current as PlatonusWebviewElement | null
-    if (!webview) return
+    const cleanupByTabId = new Map<string, () => void>()
 
-    const handleReady = () => {
-      retryRef.current = false
-    }
-    const handleFail = (event: Event) => {
-      const errorCode = 'errorCode' in event ? Number(event.errorCode) : 0
-      const validatedUrl = 'validatedURL' in event ? String(event.validatedURL) : ''
+    tabs.forEach((tab) => {
+      const webview = getTabWebview(tab.id)
+      if (!webview || cleanupByTabId.has(tab.id)) return
 
-      if (retryRef.current || errorCode === -3 || (validatedUrl && !validatedUrl.startsWith(PLATONUS_URL))) {
-        return
-      }
+      const handleDidStartLoading = () => handleWebviewEvent(tab.id, 'load-start')
+      const handleDidStopLoading = () => handleWebviewEvent(tab.id, 'load-stop')
+      const handleNavigate = () => handleWebviewEvent(tab.id, 'navigate')
+      const handleTitleUpdated = () => handleWebviewEvent(tab.id, 'title')
 
-      retryRef.current = true
-      window.setTimeout(() => {
-        webview.loadURL?.(PLATONUS_URL)
-        webview.reload?.()
-      }, 500)
-    }
+      webview.addEventListener('did-start-loading', handleDidStartLoading)
+      webview.addEventListener('did-stop-loading', handleDidStopLoading)
+      webview.addEventListener('did-navigate', handleNavigate)
+      webview.addEventListener('did-navigate-in-page', handleNavigate)
+      webview.addEventListener('page-title-updated', handleTitleUpdated)
 
-    webview.addEventListener('dom-ready', handleReady)
-    webview.addEventListener('did-fail-load', handleFail)
+      cleanupByTabId.set(tab.id, () => {
+        webview.removeEventListener('did-start-loading', handleDidStartLoading)
+        webview.removeEventListener('did-stop-loading', handleDidStopLoading)
+        webview.removeEventListener('did-navigate', handleNavigate)
+        webview.removeEventListener('did-navigate-in-page', handleNavigate)
+        webview.removeEventListener('page-title-updated', handleTitleUpdated)
+      })
+    })
 
     return () => {
-      webview.removeEventListener('dom-ready', handleReady)
-      webview.removeEventListener('did-fail-load', handleFail)
+      cleanupByTabId.forEach((cleanup) => cleanup())
     }
-  }, [])
+  }, [getTabWebview, syncTabState, tabs, updateTab])
 
   useEffect(() => {
     if (!streamActive) {
       window.operatorBridge.closePlatonusStreamDisplay().catch((err) => {
-        console.error('Platonus stream close failed', err)
+        console.error('Browser stream close failed', err)
       })
       return
     }
@@ -551,7 +839,7 @@ function PlatonusView({
 
       try {
         const shell = shellRef.current
-        const webview = webviewRef.current as PlatonusWebviewElement | null
+        const webview = getTabWebview()
         const rect = shell?.getBoundingClientRect()
 
         if (!cancelled && visibleRef.current && rect && rect.width > 1 && rect.height > 1) {
@@ -574,7 +862,7 @@ function PlatonusView({
           }
         }
       } catch (err) {
-        console.error('Platonus stream capture failed', err)
+        console.error('Browser stream capture failed', err)
       } finally {
         if (!cancelled) {
           timer = window.setTimeout(capture, Math.max(0, PLATONUS_STREAM_FRAME_MS - (performance.now() - startedAt)))
@@ -588,29 +876,159 @@ function PlatonusView({
         if (!cancelled) capture()
       })
       .catch((err) => {
-        console.error('Platonus stream display failed', err)
+        console.error('Browser stream display failed', err)
       })
 
     return () => {
       cancelled = true
       if (timer) window.clearTimeout(timer)
       window.operatorBridge.closePlatonusStreamDisplay().catch((err) => {
-        console.error('Platonus stream close failed', err)
+        console.error('Browser stream close failed', err)
       })
     }
-  }, [streamActive])
+  }, [getTabWebview, streamActive])
 
   return (
-    <section ref={shellRef} className={classNames('platonus-shell', !visible && 'platonus-shell-parked')}>
-      <webview
-        ref={webviewRef}
-        className="platonus-webview"
-        style={{ width: '100%', height: '100%' }}
-        src={PLATONUS_URL}
-        partition="persist:platonus"
-        webpreferences="backgroundThrottling=no"
-        allowpopups={true}
-      />
+    <section ref={shellRef} className={classNames('browser-shell', !visible && 'browser-shell-parked')}>
+      <div className="browser-tabs">
+        {tabs.map((tab) => (
+          <div
+            className={classNames('browser-tab', tab.id === activeTabId && 'browser-tab-active')}
+            key={tab.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => syncActiveTabRef(tab.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                syncActiveTabRef(tab.id)
+              }
+            }}
+          >
+            <Globe className="h-4 w-4 shrink-0" />
+            <span>{tab.title || getBrowserUrlLabel(tab.url)}</span>
+            <button
+              className="browser-tab-close"
+              type="button"
+              aria-label="Закрыть вкладку"
+              onClick={(event) => {
+                event.stopPropagation()
+                closeTab(tab.id)
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+        <button className="browser-new-tab" type="button" onClick={() => addTab()}>
+          <Plus className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="browser-toolbar">
+        <button className="browser-icon-button" type="button" disabled={!activeTab?.canGoBack} onClick={goBack}>
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <button className="browser-icon-button" type="button" disabled={!activeTab?.canGoForward} onClick={goForward}>
+          <ArrowRight className="h-5 w-5" />
+        </button>
+        <button className="browser-icon-button" type="button" onClick={reloadActiveTab}>
+          {activeTab?.isLoading ? <X className="h-5 w-5" /> : <RefreshCw className="h-5 w-5" />}
+        </button>
+        <form className="browser-address-form" onSubmit={submitAddress}>
+          <input
+            value={activeTab?.address ?? ''}
+            onChange={(event) => activeTab && updateTab(activeTab.id, { address: event.target.value })}
+            placeholder="Введите адрес или запрос"
+          />
+        </form>
+        <button className="browser-home-button" type="button" onClick={() => activeTab && loadTabUrl(activeTab.id, BROWSER_HOME_URL)}>
+          Главная
+        </button>
+        <button
+          className={classNames('browser-download-button', downloadsOpen && 'browser-download-button-active')}
+          type="button"
+          onClick={() => setDownloadsOpen((isOpen) => !isOpen)}
+        >
+          <Download className="h-5 w-5" />
+          {activeDownloadCount > 0 ? <span>{activeDownloadCount}</span> : null}
+        </button>
+      </div>
+
+      <div className="browser-content">
+        <div className="browser-webview-stack">
+          {activeTab && isBrowserHomeUrl(activeTab.url) && (
+            <BrowserHomePage
+              onOpen={(url) => loadTabUrl(activeTab.id, url)}
+              onSearch={(query) => loadTabUrl(activeTab.id, query)}
+            />
+          )}
+          {tabs.filter((tab) => !isBrowserHomeUrl(tab.url)).map((tab) => (
+            <webview
+              ref={(element) => {
+                webviewRefs.current[tab.id] = element
+              }}
+              className={classNames('browser-webview', tab.id !== activeTabId && 'browser-webview-hidden')}
+              key={tab.id}
+              src={tab.url}
+              partition={BROWSER_PARTITION}
+              useragent={BROWSER_USER_AGENT}
+              webpreferences="backgroundThrottling=no"
+              allowpopups={true}
+            />
+          ))}
+        </div>
+
+        {downloadsOpen && <div className="browser-downloads-backdrop" onClick={() => setDownloadsOpen(false)} />}
+        <aside className={classNames('browser-downloads', downloadsOpen && 'browser-downloads-open')}>
+          <div className="browser-downloads-header">
+            <div>
+              <Download className="h-4 w-4" />
+              <span>Загрузки</span>
+            </div>
+            <button type="button" onClick={() => setDownloadsOpen(false)} aria-label="Закрыть загрузки">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {downloads.length === 0 ? (
+            <div className="browser-download-empty">Файлов пока нет</div>
+          ) : (
+            downloads.map((download) => {
+              const progress = getDownloadProgress(download)
+
+              return (
+                <article className="browser-download-item" key={download.id}>
+                  <div>
+                    <strong>{download.fileName}</strong>
+                    <span>
+                      {download.state === 'completed'
+                        ? 'Готово'
+                        : download.state === 'progressing'
+                          ? `${progress}% · ${formatDownloadBytes(download.receivedBytes)}`
+                          : download.state === 'cancelled'
+                            ? 'Отменено'
+                            : 'Прервано'}
+                    </span>
+                  </div>
+                  {download.state === 'progressing' && (
+                    <div className="browser-download-progress">
+                      <span style={{ width: `${progress}%` }} />
+                    </div>
+                  )}
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    disabled={download.state !== 'completed'}
+                    onClick={() => openDownload(download)}
+                  >
+                    Открыть
+                  </button>
+                </article>
+              )
+            })
+          )}
+        </aside>
+      </div>
     </section>
   )
 }
@@ -730,8 +1148,8 @@ function App() {
   const [receptionServiceId, setReceptionServiceId] = useState('')
   const [receptionStatusFilter, setReceptionStatusFilter] = useState('')
   const [serverUrlInput, setServerUrlInput] = useState('')
-  const [platonusDisplayUrl, setPlatonusDisplayUrl] = useState(PLATONUS_URL)
-  const [platonusRemoteActive, setPlatonusRemoteActive] = useState(false)
+  const [browserDisplayUrl, setBrowserDisplayUrl] = useState(BROWSER_HOME_URL)
+  const [browserStreamActive, setBrowserStreamActive] = useState(false)
   const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null)
   const [selectedTicketSource, setSelectedTicketSource] = useState<TicketSource>('window')
   const [acceptIin, setAcceptIin] = useState('')
@@ -810,7 +1228,7 @@ function App() {
       ? 'Регистратура'
       : view === 'profile'
         ? 'Профиль оператора'
-        : 'Platonus'
+        : 'Браузер'
   const canModifySelectedTicket = Boolean(
     selectedTicket && (selectedTicketSource === 'reception' || selectedTicket.status === 'CALLED'),
   )
@@ -1094,13 +1512,13 @@ function App() {
     setView('window')
   }
 
-  function togglePlatonusStream() {
-    if (!platonusRemoteActive) {
-      setPlatonusRemoteActive(true)
+  function toggleBrowserStream() {
+    if (!browserStreamActive) {
+      setBrowserStreamActive(true)
       return
     }
 
-    setPlatonusRemoteActive(false)
+    setBrowserStreamActive(false)
     window.operatorBridge
       .openDisplay({
         accessToken: tokenStorage.getAccessToken(),
@@ -1593,11 +2011,11 @@ function App() {
             <Settings2 className="h-6 w-6" />
           </button>
           <button
-            className={classNames('rail-button', view === 'platonus' && 'rail-button-active')}
-            title="Platonus"
-            onClick={() => setView('platonus')}
+            className={classNames('rail-button', view === 'browser' && 'rail-button-active')}
+            title="Браузер"
+            onClick={() => setView('browser')}
           >
-            <img className="h-7 w-7 rounded-sm bg-white object-contain p-0.5" src={platonusLogoUrl} alt="" />
+            <Globe className="h-6 w-6" />
           </button>
         </nav>
         <button className="rail-button" title="Выйти" onClick={logout}>
@@ -1640,13 +2058,14 @@ function App() {
               <RefreshCw className="h-5 w-5" />
               Обновить
             </button>
-            {(view === 'platonus' || platonusRemoteActive) && (
+            {(view === 'browser' || browserStreamActive) && (
               <button
-                className={platonusRemoteActive ? 'danger-button' : 'primary-button'}
-                onClick={togglePlatonusStream}
+                className={browserStreamActive ? 'danger-button' : 'primary-button'}
+                title={browserDisplayUrl}
+                onClick={toggleBrowserStream}
               >
                 <MonitorUp className="h-5 w-5" />
-                {platonusRemoteActive ? 'Остановить трансляцию Platonus' : 'Транслировать Platonus'}
+                {browserStreamActive ? 'Остановить трансляцию браузера' : 'Транслировать браузер'}
               </button>
             )}
             <button
@@ -1664,8 +2083,8 @@ function App() {
           </div>
         </header>
 
-        <div className={classNames('relative min-h-0 flex-1', view === 'platonus' ? 'overflow-hidden p-0' : 'overflow-auto p-8')}>
-          {view !== 'platonus' && (error || message) && (
+        <div className={classNames('relative min-h-0 flex-1', view === 'browser' ? 'overflow-hidden p-0' : 'overflow-auto p-8')}>
+          {view !== 'browser' && (error || message) && (
             <div
               className={classNames(
                 'mb-6 rounded-lg border px-4 py-3 text-sm font-medium',
@@ -2098,10 +2517,10 @@ function App() {
             </div>
           ) : null}
 
-          <PlatonusView
-            onUrlChange={setPlatonusDisplayUrl}
-            streamActive={platonusRemoteActive}
-            visible={view === 'platonus'}
+          <BrowserView
+            onActiveUrlChange={setBrowserDisplayUrl}
+            streamActive={browserStreamActive}
+            visible={view === 'browser'}
           />
         </div>
       </section>

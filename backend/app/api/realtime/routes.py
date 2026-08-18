@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import AsyncSessionLocal
 from app.models.operator import Operator
+from app.models.user import UserRole
 from app.security.jwt import ALGORITHM, SECRET_KEY
 from app.services.user_service import UserService
 from app.realtime import realtime_manager
@@ -35,6 +36,11 @@ async def get_operator_window_id(db: AsyncSession, user_id: uuid.UUID) -> int | 
     result = await db.execute(select(Operator).where(Operator.user_id == user_id))
     operator = result.scalar_one_or_none()
     return operator.window_id if operator is not None else None
+
+
+async def is_active_admin(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    user = await UserService.get_by_id(db, user_id)
+    return user is not None and user.is_active and user.role == UserRole.ADMIN
 
 
 @realtime_router.websocket("/my-window")
@@ -74,3 +80,30 @@ async def queue_display_websocket(websocket: WebSocket) -> None:
             await websocket.receive_text()
     except WebSocketDisconnect:
         realtime_manager.disconnect_queue_display(websocket)
+
+
+@realtime_router.websocket("/reception")
+async def reception_websocket(
+    websocket: WebSocket,
+    token: str | None = Query(default=None),
+) -> None:
+    user_id = await get_user_id_from_token(token)
+    if user_id is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    async with AsyncSessionLocal() as db:
+        allowed = await is_active_admin(db, user_id)
+
+    if not allowed:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await realtime_manager.connect_reception(websocket)
+    await websocket.send_json({"type": "reception.connected"})
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        realtime_manager.disconnect_reception(websocket)

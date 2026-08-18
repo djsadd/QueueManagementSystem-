@@ -1,24 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
-  CheckCircle2,
+  ArrowLeft,
+  Camera,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   Clock3,
-  GraduationCap,
   Languages,
   Loader2,
   Printer,
   RefreshCw,
-  Search,
-  Ticket,
   X,
 } from 'lucide-react'
 import logoUrl from '../../frontend/src/assets/Logo+RGB.png'
 import type { ServiceLanguage, StudyLanguage, TerminalConfig, TerminalLanguage, TerminalProgram, TerminalService, TerminalTicket } from './types'
 
 type ModalKind = 'programs' | 'service-language' | 'study-language' | null
+
+type TicketDraft = {
+  service?: TerminalService | null
+  program?: TerminalProgram | null
+  studyLanguage?: StudyLanguage | null
+  serviceLanguage?: ServiceLanguage | null
+}
 
 const languages: Array<{ value: TerminalLanguage; label: string }> = [
   { value: 'kk', label: 'Қаз' },
@@ -27,9 +31,9 @@ const languages: Array<{ value: TerminalLanguage; label: string }> = [
 ]
 
 const serviceLanguageOptions: Array<{ value: ServiceLanguage; label: string }> = [
-  { value: 'KAZAKH', label: 'KAZ' },
-  { value: 'RUSSIAN', label: 'RUS' },
-  { value: 'ENGLISH', label: 'ENG' },
+  { value: 'KAZAKH', label: 'Қазақ тілі' },
+  { value: 'RUSSIAN', label: 'Русский' },
+  { value: 'ENGLISH', label: 'English' },
 ]
 
 const translations = {
@@ -51,7 +55,6 @@ const translations = {
     newTicket: 'Жаңа талон',
     ticketReady: 'Талон дайын',
     ticketLabel: 'Сіздің талоныңыз',
-    printerOk: 'Талон басып шығаруға жіберілді',
     printerFail: 'Талон жасалды, бірақ басып шығару орындалмады',
     serviceRequired: 'Қызметті таңдаңыз',
     programRequired: 'Бұл қызмет үшін бағдарламаны таңдаңыз',
@@ -78,7 +81,6 @@ const translations = {
     newTicket: 'Новый талон',
     ticketReady: 'Талон готов',
     ticketLabel: 'Ваш талон',
-    printerOk: 'Талон отправлен на печать',
     printerFail: 'Талон создан, но печать не выполнена',
     serviceRequired: 'Выберите услугу',
     programRequired: 'Для этой услуги нужна образовательная программа',
@@ -105,7 +107,6 @@ const translations = {
     newTicket: 'New ticket',
     ticketReady: 'Ticket ready',
     ticketLabel: 'Your ticket',
-    printerOk: 'Ticket sent to printer',
     printerFail: 'Ticket created, but printing failed',
     serviceRequired: 'Choose a service',
     programRequired: 'Choose a program for this service',
@@ -122,7 +123,7 @@ const defaultConfig: TerminalConfig = {
   fullScreen: true,
   receiptWidthMm: 80,
   receiptBottomFeedMm: 5,
-  autoResetSeconds: 10,
+  autoResetSeconds: 30,
 }
 
 function getLocalizedName(item: { name: string; name_kk?: string | null; name_en?: string | null; display_name?: string | null }, language: TerminalLanguage) {
@@ -155,6 +156,60 @@ function formatDateTime(value: string, locale: string) {
   }).format(date)
 }
 
+function getTicketResultCopy(language: TerminalLanguage) {
+  if (language === 'kk') {
+    return {
+      title: 'Фото',
+      subtitle: '',
+      ticketLabel: 'Сіздің талоныңыз',
+      serviceLabel: 'Қызмет',
+      programLabel: 'Бағдарлама',
+      printing: 'Талон басып шығарылуда...',
+      returnButton: 'Қайту',
+    }
+  }
+
+  if (language === 'en') {
+    return {
+      title: 'Photo',
+      subtitle: '',
+      ticketLabel: 'Your ticket',
+      serviceLabel: 'Service',
+      programLabel: 'Program',
+      printing: 'Printing ticket...',
+      returnButton: 'Back',
+    }
+  }
+
+  return {
+    title: 'Фото',
+    subtitle: '',
+    ticketLabel: 'Ваш талон',
+    serviceLabel: 'Услуга',
+    programLabel: 'Программа',
+    printing: 'Печать талона...',
+    returnButton: 'Вернуться',
+  }
+}
+
+function getTicketServiceName(ticket: TerminalTicket, language: TerminalLanguage) {
+  if (language === 'kk') return ticket.service_name_kk || ticket.service_name || ticket.service_name_en || '-'
+  if (language === 'en') return ticket.service_name_en || ticket.service_name || ticket.service_name_kk || '-'
+  return ticket.service_name || ticket.service_name_kk || ticket.service_name_en || '-'
+}
+
+function getTicketProgramName(ticket: TerminalTicket, language: TerminalLanguage) {
+  if (language === 'kk') return ticket.educational_program_name_kk || ticket.educational_program_name || ticket.educational_program_name_en || ''
+  if (language === 'en') return ticket.educational_program_name_en || ticket.educational_program_name || ticket.educational_program_name_kk || ''
+  return ticket.educational_program_name || ticket.educational_program_name_kk || ticket.educational_program_name_en || ''
+}
+
+function getProgramChoiceTitle(language: TerminalLanguage) {
+  if (language === 'kk') return 'Білім беру бағдарламасын таңдаңыз'
+  if (language === 'en') return 'Choose an educational program'
+  return 'Выберите образовательную программу'
+}
+
 function sortServices(services: TerminalService[]) {
   return [...services]
     .filter((service) => service.is_active)
@@ -178,7 +233,6 @@ function App() {
   const [selectedProgramId, setSelectedProgramId] = useState<number | null>(null)
   const [selectedStudyLanguage, setSelectedStudyLanguage] = useState<StudyLanguage | null>(null)
   const [selectedServiceLanguage, setSelectedServiceLanguage] = useState<ServiceLanguage | null>(null)
-  const [programQuery, setProgramQuery] = useState('')
   const [modal, setModal] = useState<ModalKind>(null)
   const [lastTicket, setLastTicket] = useState<TerminalTicket | null>(null)
   const [loading, setLoading] = useState(true)
@@ -199,12 +253,7 @@ function App() {
   const mustSelectProgram = Boolean(selectedService?.requires_educational_program)
   const mustSelectStudyLanguage = mustSelectProgram && Boolean(selectedProgram?.requires_service_language)
   const mustSelectServiceLanguage = Boolean(selectedService?.requires_service_language)
-  const filteredPrograms = useMemo(() => {
-    const query = programQuery.trim().toLowerCase()
-    if (!query) return programs
-
-    return programs.filter((program) => `${program.name} ${program.name_kk ?? ''} ${program.name_en ?? ''} ${program.code}`.toLowerCase().includes(query))
-  }, [programQuery, programs])
+  const programChoiceTitle = getProgramChoiceTitle(language)
 
   useEffect(() => {
     localStorage.setItem('terminal-language', language)
@@ -219,8 +268,7 @@ function App() {
     if (!lastTicket) return
 
     const timeout = window.setTimeout(() => {
-      setLastTicket(null)
-      setMessage('')
+      resetTicket()
     }, config.autoResetSeconds * 1000)
 
     return () => window.clearTimeout(timeout)
@@ -228,7 +276,7 @@ function App() {
 
   useEffect(() => {
     modalListRef.current?.scrollTo({ top: 0 })
-  }, [modal, programQuery])
+  }, [modal])
 
   function scrollModalList(direction: -1 | 1) {
     const list = modalListRef.current
@@ -281,33 +329,42 @@ function App() {
     else if (service.requires_educational_program) setModal('programs')
   }
 
-  async function createTicket() {
+  async function createTicket(draft: TicketDraft = {}) {
     setError('')
     setMessage('')
 
-    if (!selectedService) {
+    const serviceForTicket = draft.service ?? selectedService
+    const programForTicket = draft.program ?? selectedProgram
+    const studyLanguageForTicket = draft.studyLanguage ?? selectedStudyLanguage
+    const serviceLanguageForTicket = draft.serviceLanguage ?? selectedServiceLanguage
+    const needsProgram = Boolean(serviceForTicket?.requires_educational_program)
+    const needsStudyLanguage = needsProgram && Boolean(programForTicket?.requires_service_language)
+    const needsServiceLanguage = Boolean(serviceForTicket?.requires_service_language)
+
+    if (!serviceForTicket) {
       setError(t.serviceRequired)
       return
     }
 
-    if (mustSelectProgram && !selectedProgram) {
+    if (needsProgram && !programForTicket) {
       setError(t.programRequired)
       setModal('programs')
       return
     }
 
-    if (mustSelectStudyLanguage && !selectedStudyLanguage) {
-      setError('Выберите язык ОП')
+    if (needsStudyLanguage && !studyLanguageForTicket) {
+      setError('Выберите язык консультации')
       setModal('study-language')
       return
     }
 
-    if (mustSelectServiceLanguage && !selectedServiceLanguage) {
+    if (needsServiceLanguage && !serviceLanguageForTicket) {
       setError('Выберите язык обслуживания')
       setModal('service-language')
       return
     }
 
+    setModal(null)
     setBusy(true)
 
     try {
@@ -315,10 +372,10 @@ function App() {
         path: '/public/tickets',
         method: 'POST',
         body: {
-          service_id: selectedService.id,
-          educational_program_id: mustSelectProgram ? selectedProgram?.id ?? null : null,
-          study_language: mustSelectStudyLanguage ? selectedStudyLanguage : null,
-          service_language: mustSelectServiceLanguage ? selectedServiceLanguage : null,
+          service_id: serviceForTicket.id,
+          educational_program_id: needsProgram ? programForTicket?.id ?? null : null,
+          study_language: needsStudyLanguage ? studyLanguageForTicket : null,
+          service_language: needsServiceLanguage ? serviceLanguageForTicket : null,
         },
       })
 
@@ -327,7 +384,7 @@ function App() {
       setLastTicket(response.payload)
       const printResult = await window.terminalBridge.printTicket(response.payload, language)
 
-      setMessage(printResult.ok ? t.printerOk : `${t.printerFail}: ${printResult.message ?? ''}`)
+      setMessage(printResult.ok ? '' : `${t.printerFail}: ${printResult.message ?? ''}`)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : t.serverError)
     } finally {
@@ -335,25 +392,29 @@ function App() {
     }
   }
 
-  async function reprintTicket() {
-    if (!lastTicket) return
-
-    setBusy(true)
-    setMessage('')
-    setError('')
-
-    try {
-      const printResult = await window.terminalBridge.printTicket(lastTicket, language)
-      setMessage(printResult.ok ? t.printerOk : `${t.printerFail}: ${printResult.message ?? ''}`)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   function resetTicket() {
+    setSelectedServiceId(null)
+    setSelectedProgramId(null)
+    setSelectedStudyLanguage(null)
+    setSelectedServiceLanguage(null)
+    setModal(null)
     setLastTicket(null)
     setMessage('')
     setError('')
+  }
+
+  if (lastTicket) {
+    return (
+      <TicketResultPage
+        autoResetSeconds={config.autoResetSeconds}
+        busy={busy}
+        language={language}
+        locale={t.locale}
+        message={message}
+        onBack={resetTicket}
+        ticket={lastTicket}
+      />
+    )
   }
 
   return (
@@ -419,10 +480,6 @@ function App() {
                   onClick={() => selectService(service)}
                 >
                   <strong>{getLocalizedName(service, language)}</strong>
-                  <small>
-                    {service.requires_educational_program ? t.program : t.issue}
-                    <ChevronRight size={18} />
-                  </small>
                 </button>
               ))}
             </div>
@@ -430,23 +487,6 @@ function App() {
         </div>
 
         <aside className="ticket-panel">
-          <div className="ticket-preview">
-            {lastTicket ? (
-              <div className="ticket-success">
-                <CheckCircle2 size={54} />
-                <span>{t.ticketReady}</span>
-                <strong>{lastTicket.ticket_number}</strong>
-                <p>{formatDateTime(lastTicket.created_at, t.locale)}</p>
-              </div>
-            ) : (
-              <div className="ticket-idle">
-                <Ticket size={72} />
-                <span>{t.ticketLabel}</span>
-                <strong>---</strong>
-              </div>
-            )}
-          </div>
-
           <div className="selection-summary">
             <span>{t.services}</span>
             <strong>{selectedService ? getLocalizedName(selectedService, language) : '-'}</strong>
@@ -457,7 +497,7 @@ function App() {
             ) : null}
             {mustSelectStudyLanguage ? (
               <button type="button" disabled={busy} onClick={() => setModal('study-language')}>
-                {selectedStudyLanguage ?? 'Выберите язык ОП'}
+                {selectedStudyLanguage ?? 'Выберите язык консультации'}
               </button>
             ) : null}
             {mustSelectServiceLanguage ? (
@@ -469,46 +509,30 @@ function App() {
 
           {error ? <div className="notice error">{error}</div> : null}
           {message ? <div className="notice success">{message}</div> : null}
-
-          <div className="ticket-actions">
-            <button className="issue-button" type="button" disabled={busy || loading || !selectedService} onClick={createTicket}>
-              {busy ? <Loader2 className="spin" size={30} /> : <Printer size={30} />}
-              {busy ? t.issuing : t.issue}
-            </button>
-
-            <div className="secondary-actions">
-              <button type="button" disabled={busy || !lastTicket} onClick={reprintTicket}>
-                <Printer size={22} />
-                {t.printAgain}
-              </button>
-              <button type="button" disabled={busy} onClick={resetTicket}>
-                <RefreshCw size={22} />
-                {t.newTicket}
-              </button>
-            </div>
-          </div>
         </aside>
       </section>
 
+      <footer className="kiosk-action-bar">
+        <button className="issue-button" type="button" disabled={busy || loading || !selectedService} onClick={() => void createTicket()}>
+          {busy ? <Loader2 className="spin" size={30} /> : <Printer size={30} />}
+          {busy ? t.issuing : t.issue}
+        </button>
+      </footer>
+
       {modal === 'programs' ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setModal(null)}>
-          <section className="choice-modal" role="dialog" aria-modal="true" aria-label={t.chooseProgram} onMouseDown={(event) => event.stopPropagation()}>
+          <section className="choice-modal" role="dialog" aria-modal="true" aria-label={programChoiceTitle} onMouseDown={(event) => event.stopPropagation()}>
             <header>
-              <h2>{t.chooseProgram}</h2>
+              <h2>{programChoiceTitle}</h2>
               <button type="button" aria-label="Close" onClick={() => setModal(null)}>
                 <X size={26} />
               </button>
             </header>
 
-            <div className="program-search">
-              <Search size={24} />
-              <input value={programQuery} placeholder={t.searchProgram} onChange={(event) => setProgramQuery(event.target.value)} autoFocus />
-            </div>
-
             <div className="modal-scroll-shell">
               <div className="program-list" ref={modalListRef}>
-                {filteredPrograms.length === 0 ? <div className="empty-state small">{t.noPrograms}</div> : null}
-                {filteredPrograms.map((program) => (
+                {programs.length === 0 ? <div className="empty-state small">{t.noPrograms}</div> : null}
+                {programs.map((program) => (
                   <button
                     className={selectedProgramId === program.id ? 'selected' : ''}
                     key={program.id}
@@ -516,14 +540,13 @@ function App() {
                     onClick={() => {
                       setSelectedProgramId(program.id)
                       setSelectedStudyLanguage(null)
-                      setModal(program.requires_service_language ? 'study-language' : null)
-                      setProgramQuery('')
+                      if (program.requires_service_language) {
+                        setModal('study-language')
+                      } else {
+                        void createTicket({ program, studyLanguage: null })
+                      }
                     }}
                   >
-                    <span>
-                      <GraduationCap size={20} />
-                      {program.code}
-                    </span>
                     <strong>{getLocalizedName(program, language)}</strong>
                   </button>
                 ))}
@@ -558,7 +581,11 @@ function App() {
                   type="button"
                   onClick={() => {
                     setSelectedServiceLanguage(option.value)
-                    setModal(selectedService?.requires_educational_program ? 'programs' : null)
+                    if (selectedService?.requires_educational_program) {
+                      setModal('programs')
+                    } else {
+                      void createTicket({ serviceLanguage: option.value })
+                    }
                   }}
                 >
                   <strong>{option.label}</strong>
@@ -570,9 +597,9 @@ function App() {
       ) : null}
       {modal === 'study-language' ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setModal(null)}>
-          <section className="choice-modal" role="dialog" aria-modal="true" aria-label="Study language" onMouseDown={(event) => event.stopPropagation()}>
+          <section className="choice-modal" role="dialog" aria-modal="true" aria-label="Consultation language" onMouseDown={(event) => event.stopPropagation()}>
             <header>
-              <h2>Выберите язык ОП</h2>
+              <h2>Выберите язык консультации</h2>
               <button type="button" aria-label="Close" onClick={() => setModal(null)}>
                 <X size={26} />
               </button>
@@ -585,7 +612,7 @@ function App() {
                   type="button"
                   onClick={() => {
                     setSelectedStudyLanguage(option.value)
-                    setModal(null)
+                    void createTicket({ studyLanguage: option.value })
                   }}
                 >
                   <strong>{option.label}</strong>
@@ -595,6 +622,89 @@ function App() {
           </section>
         </div>
       ) : null}
+    </main>
+  )
+}
+
+function TicketResultPage({
+  autoResetSeconds,
+  busy,
+  language,
+  locale,
+  message,
+  onBack,
+  ticket,
+}: {
+  autoResetSeconds: number
+  busy: boolean
+  language: TerminalLanguage
+  locale: string
+  message: string
+  onBack: () => void
+  ticket: TerminalTicket
+}) {
+  const copy = getTicketResultCopy(language)
+  const programName = getTicketProgramName(ticket, language)
+
+  return (
+    <main className="ticket-result-page">
+      <header className="ticket-result-header">
+        <img src={logoUrl} alt="Turan Astana University" />
+        <LiveClock locale={locale} />
+      </header>
+
+      <section className="ticket-result-content">
+        <div className="ticket-result-instruction">
+          <Camera size={72} />
+          <h1>{copy.title}</h1>
+          {copy.subtitle ? <p>{copy.subtitle}</p> : null}
+        </div>
+
+        <div className="ticket-result-status" aria-live="polite">
+          {busy ? (
+            <span>
+              <Loader2 className="spin" size={24} />
+              {copy.printing}
+            </span>
+          ) : message ? (
+            <span>{message}</span>
+          ) : null}
+        </div>
+
+        <article className="photo-ticket">
+          <span>{copy.ticketLabel}</span>
+          <strong>{ticket.ticket_number}</strong>
+          <div className="photo-ticket-details">
+            <p>
+              <b>{copy.serviceLabel}</b>
+              {getTicketServiceName(ticket, language)}
+            </p>
+            {programName ? (
+              <p>
+                <b>{copy.programLabel}</b>
+                {programName}
+              </p>
+            ) : null}
+            <time>{formatDateTime(ticket.created_at, locale)}</time>
+          </div>
+        </article>
+      </section>
+
+      <footer className="ticket-result-footer">
+        <div className="ticket-return-progress" aria-hidden="true">
+          <div
+            key={ticket.id}
+            style={{
+              animationDuration: `${autoResetSeconds}s`,
+              animationTimingFunction: `steps(${Math.max(1, autoResetSeconds)}, end)`,
+            }}
+          />
+        </div>
+        <button type="button" onClick={onBack}>
+          <ArrowLeft size={28} />
+          {copy.returnButton}
+        </button>
+      </footer>
     </main>
   )
 }

@@ -22,4 +22,13 @@ contextBridge.exposeInMainWorld('operatorBridge', {
   closePlatonusStreamDisplay: () => ipcRenderer.invoke('operator:close-platonus-stream-display'),
   capturePlatonusDisplay: () => ipcRenderer.invoke('operator:capture-platonus-display'),
   sendPlatonusInput: (event: unknown) => ipcRenderer.invoke('operator:send-platonus-input', event),
+  onBrowserDownloadUpdated: (callback: (download: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, download: unknown) => {
+      callback(download)
+    }
+
+    ipcRenderer.on('operator:browser-download-updated', listener)
+    return () => ipcRenderer.removeListener('operator:browser-download-updated', listener)
+  },
+  openBrowserDownload: (downloadId: string) => ipcRenderer.invoke('operator:open-browser-download', downloadId),
 })

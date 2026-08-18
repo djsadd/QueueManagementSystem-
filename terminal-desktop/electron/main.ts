@@ -46,7 +46,7 @@ function getDefaultConfig(): TerminalConfig {
     fullScreen: true,
     receiptWidthMm: 80,
     receiptBottomFeedMm: 5,
-    autoResetSeconds: 10,
+    autoResetSeconds: 30,
   }
 }
 
@@ -154,7 +154,7 @@ function apiRequest({ path: requestPath, method = 'GET', body }: ApiRequest) {
     const chunks: Buffer[] = []
 
     request.setHeader('Accept', 'application/json')
-    request.setHeader('X-Queue-Client', 'electron-terminal')
+    request.setHeader('X-Queue-Client', 'desktop-terminal')
     if (bodyText) request.setHeader('Content-Type', 'application/json; charset=utf-8')
 
     request.on('response', (response) => {

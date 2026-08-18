@@ -185,6 +185,19 @@ def test_admin_can_load_paginated_ticket_event_tickets(client, monkeypatch, admi
     assert response_json["items"][0]["latest_event"]["id"] == str(event_id)
 
 
+def test_ticket_event_search_normalizes_cyrillic_to_latin():
+    assert TicketEventService.to_latin_search_text("Ерасыл Әлібек Қанатұлы") == "erasyl alibek qanatuly"
+
+
+def test_ticket_event_search_accepts_k_and_q_name_variants():
+    assert TicketEventService.get_normalized_search_variants("Kairat") == ["kairat", "qairat"]
+    assert TicketEventService.get_normalized_search_variants("Қайрат") == ["qairat", "kairat"]
+
+
+def test_ticket_event_search_escapes_like_wildcards():
+    assert TicketEventService.escape_like(r"A_15%") == r"A\_15\%"
+
+
 def test_ticket_event_history_is_read_only(client, admin_user):
     app.dependency_overrides[require_admin] = lambda: admin_user
     event_id = uuid.uuid4()

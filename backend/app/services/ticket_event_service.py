@@ -19,6 +19,51 @@ from app.schemas.ticket_event import TicketEventCreate
 
 
 class TicketEventService:
+    CYRILLIC_TO_LATIN = {
+        "а": "a",
+        "ә": "a",
+        "б": "b",
+        "в": "v",
+        "г": "g",
+        "ғ": "g",
+        "д": "d",
+        "е": "e",
+        "ё": "e",
+        "ж": "zh",
+        "з": "z",
+        "и": "i",
+        "й": "i",
+        "к": "k",
+        "қ": "q",
+        "л": "l",
+        "м": "m",
+        "н": "n",
+        "ң": "n",
+        "о": "o",
+        "ө": "o",
+        "п": "p",
+        "р": "r",
+        "с": "s",
+        "т": "t",
+        "у": "u",
+        "ұ": "u",
+        "ү": "u",
+        "ф": "f",
+        "х": "h",
+        "һ": "h",
+        "ц": "ts",
+        "ч": "ch",
+        "ш": "sh",
+        "щ": "sh",
+        "ъ": "",
+        "ы": "y",
+        "і": "i",
+        "ь": "",
+        "э": "e",
+        "ю": "yu",
+        "я": "ya",
+    }
+
     @staticmethod
     async def create(db: AsyncSession, data: TicketEventCreate) -> TicketEvent:
         create_data = data.model_dump()
@@ -311,19 +356,114 @@ class TicketEventService:
 
         normalized_search = (search or "").strip()
         if normalized_search:
-            search_pattern = f"%{normalized_search}%"
-            conditions.append(
-                or_(
-                    cast(TicketEvent.id, String).ilike(search_pattern),
-                    cast(TicketEvent.ticket_id, String).ilike(search_pattern),
-                    TicketEvent.event_type.ilike(search_pattern),
-                    TicketEvent.old_status.ilike(search_pattern),
-                    TicketEvent.new_status.ilike(search_pattern),
-                    cast(TicketEvent.metadata_, String).ilike(search_pattern),
-                )
-            )
+            conditions.append(TicketEventService.build_search_condition(normalized_search))
 
         return conditions
+
+    @staticmethod
+    def build_search_condition(search: str):
+        variants = TicketEventService.get_search_variants(search)
+        normalized_variants = TicketEventService.get_normalized_search_variants(search)
+        search_expressions = TicketEventService.get_search_expressions()
+        raw_conditions = [
+            expression.ilike(TicketEventService.escape_like(variant), escape="\\")
+            for expression in search_expressions
+            for variant in variants
+        ]
+        normalized_conditions = [
+            TicketEventService.normalize_search_expression(expression) == variant
+            for expression in search_expressions
+            for variant in normalized_variants
+        ]
+
+        return or_(*(raw_conditions + normalized_conditions))
+
+    @staticmethod
+    def get_search_expressions():
+        snapshot_fields = [
+            "ticket_number",
+            "iin",
+            "full_name",
+            "service_name",
+            "service_code",
+            "service_name_kk",
+            "service_name_en",
+            "educational_program_name",
+            "educational_program_name_kk",
+            "educational_program_name_en",
+            "educational_program_code",
+            "academic_degree_name",
+            "academic_degree_code",
+            "operator_name",
+            "operator_email",
+            "window_name",
+            "status",
+        ]
+
+        return [
+            cast(TicketEvent.id, String),
+            cast(TicketEvent.ticket_id, String),
+            TicketEvent.event_type,
+            TicketEvent.old_status,
+            TicketEvent.new_status,
+            *[
+                TicketEventService.get_ticket_snapshot_expression(field)
+                for field in snapshot_fields
+            ],
+            TicketEventService.get_metadata_expression("actor_operator", "full_name"),
+            TicketEventService.get_metadata_expression("assigned_operator", "full_name"),
+            TicketEventService.get_metadata_expression("assigned_window", "window_name"),
+        ]
+
+    @staticmethod
+    def get_ticket_snapshot_expression(field: str):
+        return TicketEventService.get_metadata_expression("ticket_snapshot", field)
+
+    @staticmethod
+    def get_metadata_expression(section: str, field: str):
+        return TicketEvent.metadata_[section][field].as_string()
+
+    @staticmethod
+    def get_search_variants(token: str) -> list[str]:
+        variants = [
+            token.strip(),
+            TicketEventService.to_latin_search_text(token),
+        ]
+
+        return list(dict.fromkeys(variant for variant in variants if variant))
+
+    @staticmethod
+    def get_normalized_search_variants(token: str) -> list[str]:
+        normalized_token = TicketEventService.to_latin_search_text(token)
+        variants = [normalized_token]
+
+        if "k" in normalized_token:
+            variants.append(normalized_token.replace("k", "q"))
+
+        if "q" in normalized_token:
+            variants.append(normalized_token.replace("q", "k"))
+
+        return list(dict.fromkeys(variant for variant in variants if variant))
+
+    @staticmethod
+    def to_latin_search_text(value: str) -> str:
+        return "".join(
+            TicketEventService.CYRILLIC_TO_LATIN.get(character, character)
+            for character in value.casefold()
+        )
+
+    @staticmethod
+    def normalize_search_expression(expression):
+        normalized_expression = func.lower(expression)
+
+        for character, replacement in TicketEventService.CYRILLIC_TO_LATIN.items():
+            normalized_expression = func.replace(normalized_expression, character, replacement)
+
+        return normalized_expression
+
+    @staticmethod
+    def escape_like(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     @staticmethod
     async def get_by_operator_id(db: AsyncSession, operator_id: uuid.UUID) -> list[TicketEvent]:

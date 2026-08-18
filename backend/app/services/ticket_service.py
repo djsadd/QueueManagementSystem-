@@ -20,7 +20,7 @@ from app.repositories.ticket_repository import (
     TicketRepository
 )
 from app.realtime import realtime_manager
-from app.schemas.ticket import ServiceLanguage, StudyLanguage, TicketServiceReassign, TicketUpdate
+from app.schemas.ticket import ServiceLanguage, StudyLanguage, TicketAdminUpdate, TicketServiceReassign, TicketUpdate
 from app.services.assignment_service import AssignmentService
 from app.services.kafka_event_service import KafkaEventService
 from app.services.service_service import ServiceService
@@ -101,10 +101,24 @@ class TicketService:
         "priority",
         "status",
         "estimated_wait",
+        "created_at",
         "called_at",
         "started_at",
         "completed_at",
     }
+
+    @staticmethod
+    def is_reception_service(service: Service | None) -> bool:
+        return service is not None and service.requires_reception_desk
+
+    @staticmethod
+    async def broadcast_reception_update_for_service(
+        service: Service | None,
+        reason: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        if TicketService.is_reception_service(service):
+            await realtime_manager.broadcast_reception_update(reason, payload)
 
     @staticmethod
     async def create_ticket(
@@ -190,6 +204,11 @@ class TicketService:
         )
         await realtime_manager.broadcast_all_my_windows_update(
             "global_waiting_count_changed",
+            {"ticket_id": str(ticket.id)},
+        )
+        await TicketService.broadcast_reception_update_for_service(
+            service,
+            "ticket_created",
             {"ticket_id": str(ticket.id)},
         )
 
@@ -553,23 +572,7 @@ class TicketService:
             base_conditions.append(Ticket.service_id == service_id)
 
         if normalized_search:
-            search_pattern = f"%{normalized_search}%"
-            base_conditions.append(
-                or_(
-                    Ticket.ticket_number.ilike(search_pattern),
-                    Ticket.status.ilike(search_pattern),
-                    Applicant.full_name.ilike(search_pattern),
-                    Applicant.iin.ilike(search_pattern),
-                    Applicant.phone.ilike(search_pattern),
-                    Service.name.ilike(search_pattern),
-                    Service.name_kk.ilike(search_pattern),
-                    Service.name_en.ilike(search_pattern),
-                    EducationalProgram.name.ilike(search_pattern),
-                    EducationalProgram.name_kk.ilike(search_pattern),
-                    EducationalProgram.name_en.ilike(search_pattern),
-                    EducationalProgram.code.ilike(search_pattern),
-                )
-            )
+            base_conditions.append(Ticket.ticket_number.ilike(normalized_search))
         conditions = [
             *base_conditions,
             Ticket.status.in_(TicketService.ACTIVE_RECEPTION_TICKET_STATUSES),
@@ -926,13 +929,25 @@ class TicketService:
         return await TicketService.build_ticket_response(db, ticket)
 
     @staticmethod
-    async def accept_my_ticket(db, user_id: uuid.UUID, ticket_id: uuid.UUID, iin: str | None) -> dict:
+    async def accept_my_ticket(
+        db,
+        user_id: uuid.UUID,
+        ticket_id: uuid.UUID,
+        iin: str | None,
+        full_name: str | None = None,
+        born_date: str | None = None,
+    ) -> dict:
         operator, ticket = await TicketService.get_owned_ticket(db, user_id, ticket_id)
         old_status = ticket.status
         old_applicant_id = ticket.applicant_id
 
         if iin is not None:
-            ticket.applicant_id = await TicketService.resolve_applicant_id_by_iin(db, iin)
+            ticket.applicant_id = await TicketService.resolve_applicant_id_by_iin(
+                db,
+                iin,
+                full_name=full_name,
+                born_date=born_date,
+            )
         ticket.operator_id = operator.id
         ticket.status = TicketStatus.CALLED.value
         now = datetime.utcnow()
@@ -983,13 +998,24 @@ class TicketService:
         return await TicketService.build_ticket_response(db, ticket)
 
     @staticmethod
-    async def accept_reception_ticket(db, ticket_id: uuid.UUID, iin: str | None) -> dict:
+    async def accept_reception_ticket(
+        db,
+        ticket_id: uuid.UUID,
+        iin: str | None,
+        full_name: str | None = None,
+        born_date: str | None = None,
+    ) -> dict:
         ticket = await TicketService.get_reception_ticket(db, ticket_id)
         old_status = ticket.status
         old_applicant_id = ticket.applicant_id
 
         if iin is not None:
-            ticket.applicant_id = await TicketService.resolve_applicant_id_by_iin(db, iin)
+            ticket.applicant_id = await TicketService.resolve_applicant_id_by_iin(
+                db,
+                iin,
+                full_name=full_name,
+                born_date=born_date,
+            )
 
         ticket.status = TicketStatus.CALLED.value
         now = datetime.utcnow()
@@ -1037,22 +1063,36 @@ class TicketService:
             "global_waiting_count_changed",
             {"ticket_id": str(ticket.id)},
         )
+        await realtime_manager.broadcast_reception_update(
+            "ticket_accepted",
+            {"ticket_id": str(ticket.id)},
+        )
 
         return await TicketService.build_ticket_response(db, ticket)
 
     @staticmethod
-    async def resolve_applicant_id_by_iin(db, iin: str) -> uuid.UUID:
+    async def resolve_applicant_id_by_iin(
+        db,
+        iin: str,
+        full_name: str | None = None,
+        born_date: str | None = None,
+    ) -> uuid.UUID:
         result = await db.execute(select(Applicant).where(Applicant.iin == iin))
         applicant = result.scalar_one_or_none()
 
         if applicant is None:
-            applicant = Applicant(iin=iin)
+            applicant = Applicant(iin=iin, full_name=full_name, born_date=born_date)
             db.add(applicant)
             try:
                 await db.flush()
             except IntegrityError:
                 await db.rollback()
                 raise HTTPException(status_code=409, detail="Абитуриент с таким ИИН уже существует")
+        else:
+            if full_name is not None:
+                applicant.full_name = full_name
+            if born_date is not None:
+                applicant.born_date = born_date
 
         return applicant.id
 
@@ -1118,6 +1158,10 @@ class TicketService:
         )
         await realtime_manager.broadcast_all_my_windows_update(
             "global_waiting_count_changed",
+            {"ticket_id": str(ticket.id)},
+        )
+        await realtime_manager.broadcast_reception_update(
+            "ticket_completed",
             {"ticket_id": str(ticket.id)},
         )
 
@@ -1187,6 +1231,10 @@ class TicketService:
         )
         await realtime_manager.broadcast_all_my_windows_update(
             "global_waiting_count_changed",
+            {"ticket_id": str(ticket.id)},
+        )
+        await realtime_manager.broadcast_reception_update(
+            "ticket_skipped",
             {"ticket_id": str(ticket.id)},
         )
 
@@ -1371,6 +1419,10 @@ class TicketService:
             "global_waiting_count_changed",
             {"ticket_id": str(ticket.id)},
         )
+        await realtime_manager.broadcast_reception_update(
+            "ticket_reassigned",
+            {"ticket_id": str(ticket.id)},
+        )
 
         return await TicketService.build_ticket_response(db, ticket)
 
@@ -1449,6 +1501,10 @@ class TicketService:
             "ticket_updated",
             {"ticket_id": str(ticket.id)},
         )
+        await realtime_manager.broadcast_reception_update(
+            "ticket_updated",
+            {"ticket_id": str(ticket.id)},
+        )
 
         return await TicketService.build_ticket_response(db, ticket)
 
@@ -1523,6 +1579,7 @@ class TicketService:
 
         old_status = ticket.status
         old_window_id = ticket.window_id
+        old_service = await ServiceService.get_by_id(db, ticket.service_id)
         update_data = data.model_dump(
             exclude_unset=True
         )
@@ -1540,7 +1597,7 @@ class TicketService:
                     detail="Услуга не найдена"
                 )
         else:
-            service = await ServiceService.get_by_id(db, ticket.service_id)
+            service = old_service
 
         if "service_id" in update_data or "educational_program_id" in update_data:
             await TicketService.validate_educational_program(
@@ -1628,6 +1685,169 @@ class TicketService:
             "global_waiting_count_changed",
             {"ticket_id": str(ticket.id)},
         )
+        if TicketService.is_reception_service(old_service) or TicketService.is_reception_service(service):
+            await realtime_manager.broadcast_reception_update(
+                "ticket_updated",
+                {"ticket_id": str(ticket.id)},
+            )
+
+        return await TicketService.build_ticket_response(db, ticket)
+
+    @staticmethod
+    async def update_ticket_as_admin(
+        db,
+        ticket_id: uuid.UUID,
+        data: TicketAdminUpdate,
+    ) -> dict:
+        ticket = await TicketRepository.get_by_id(db, ticket_id)
+
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="РўР°Р»РѕРЅ РЅРµ РЅР°Р№РґРµРЅ")
+
+        old_status = ticket.status
+        old_window_id = ticket.window_id
+        old_service = await ServiceService.get_by_id(db, ticket.service_id)
+        update_data = data.model_dump(exclude_unset=True)
+        applicant_update_fields = {"full_name", "iin", "born_date", "phone"}
+        applicant_update_data = {
+            field: update_data.pop(field)
+            for field in list(update_data)
+            if field in applicant_update_fields
+        }
+
+        service_id = update_data.get("service_id", ticket.service_id)
+        service = await ServiceService.get_by_id(db, service_id)
+        if service is None:
+            raise HTTPException(status_code=404, detail="РЈСЃР»СѓРіР° РЅРµ РЅР°Р№РґРµРЅР°")
+
+        educational_program_id = update_data.get("educational_program_id", ticket.educational_program_id)
+        educational_program = await TicketService.validate_educational_program(
+            db,
+            service,
+            educational_program_id,
+        )
+
+        if "study_language" in update_data:
+            update_data["study_language"] = TicketService.validate_study_language(
+                educational_program,
+                update_data["study_language"],
+            )
+
+        if "service_language" in update_data:
+            update_data["service_language"] = TicketService.validate_service_language(
+                service,
+                update_data["service_language"],
+            )
+
+        if "service_id" in update_data or "educational_program_id" in update_data:
+            academic_degree_id, routing_key = await AssignmentService.prepare_ticket_routing(
+                db,
+                service_id,
+                educational_program_id,
+            )
+            update_data["academic_degree_id"] = academic_degree_id
+            update_data["routing_key"] = update_data.get("routing_key", routing_key)
+
+        if "applicant_id" in update_data and update_data["applicant_id"] is not None:
+            await TicketService.ensure_applicant_exists(db, update_data["applicant_id"])
+
+        old_applicant_id = update_data.get("applicant_id", ticket.applicant_id)
+        old_applicant = await db.get(Applicant, old_applicant_id) if old_applicant_id is not None else None
+        old_applicant_values = {
+            field: TicketService.to_metadata_value(getattr(old_applicant, field) if old_applicant else None)
+            for field in applicant_update_data
+        }
+
+        if applicant_update_data:
+            update_data["applicant_id"] = await TicketService.update_admin_ticket_applicant(
+                db,
+                ticket.applicant_id,
+                update_data.get("applicant_id", ticket.applicant_id),
+                applicant_update_data,
+            )
+
+        if update_data.get("operator_id") is not None:
+            await TicketService.ensure_operator_exists(db, update_data["operator_id"])
+
+        if update_data.get("window_id") is not None:
+            await TicketService.ensure_window_exists(db, update_data["window_id"])
+
+        new_status = update_data.get("status")
+        if new_status == TicketStatus.CALLED.value and "called_at" not in update_data:
+            update_data["called_at"] = datetime.utcnow()
+        elif new_status == TicketStatus.COMPLETED.value and "completed_at" not in update_data:
+            update_data["completed_at"] = datetime.utcnow()
+
+        tracked_update_fields = sorted(set(update_data) & TicketService.TICKET_STATE_FIELDS)
+        old_values = {
+            field: TicketService.to_metadata_value(getattr(ticket, field))
+            for field in tracked_update_fields
+        }
+
+        for field, value in update_data.items():
+            setattr(ticket, field, value)
+
+        try:
+            ticket = await TicketRepository.update(db, ticket)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="Ticket could not be saved")
+
+        changes = TicketService.compact_changes(
+            {
+                **{
+                    field: {
+                        "old": old_values[field],
+                        "new": getattr(ticket, field),
+                    }
+                    for field in tracked_update_fields
+                },
+                **{
+                    field: {
+                        "old": old_applicant_values[field],
+                        "new": applicant_update_data[field],
+                    }
+                    for field in applicant_update_data
+                },
+            }
+        )
+
+        status_changed = "status" in update_data and ticket.status != old_status
+        if status_changed or changes:
+            await TicketService.create_ticket_event(
+                db,
+                ticket_id=ticket.id,
+                event_type=(
+                    TicketService.get_event_type_for_status(ticket.status)
+                    if status_changed
+                    else "TICKET_UPDATED"
+                ),
+                old_status=old_status,
+                new_status=ticket.status,
+                operator_id=ticket.operator_id,
+                metadata_extra={"changes": changes, "source": "admin_ticket_edit"},
+            )
+
+        await realtime_manager.broadcast_my_window_update(
+            old_window_id,
+            "ticket_updated",
+            {"ticket_id": str(ticket.id)},
+        )
+        if ticket.window_id != old_window_id:
+            await realtime_manager.broadcast_my_window_update(
+                ticket.window_id,
+                "ticket_updated",
+                {"ticket_id": str(ticket.id)},
+            )
+        await realtime_manager.broadcast_all_my_windows_update(
+            "global_waiting_count_changed",
+            {"ticket_id": str(ticket.id)},
+        )
+        if TicketService.is_reception_service(old_service) or TicketService.is_reception_service(service):
+            await realtime_manager.broadcast_reception_update(
+                "ticket_updated",
+                {"ticket_id": str(ticket.id)},
+            )
 
         return await TicketService.build_ticket_response(db, ticket)
 
@@ -1649,6 +1869,7 @@ class TicketService:
             )
 
         window_id = ticket.window_id
+        service = await ServiceService.get_by_id(db, ticket.service_id)
         try:
             await TicketRepository.delete(
                 db,
@@ -1668,6 +1889,11 @@ class TicketService:
         )
         await realtime_manager.broadcast_all_my_windows_update(
             "global_waiting_count_changed",
+            {"ticket_id": str(ticket_id)},
+        )
+        await TicketService.broadcast_reception_update_for_service(
+            service,
+            "ticket_deleted",
             {"ticket_id": str(ticket_id)},
         )
 
@@ -1713,6 +1939,46 @@ class TicketService:
 
         if result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Оператор не найден")
+
+    @staticmethod
+    async def ensure_window_exists(db, window_id: int) -> None:
+        result = await db.execute(select(Window.id).where(Window.id == window_id))
+
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Window not found")
+
+    @staticmethod
+    async def update_admin_ticket_applicant(
+        db,
+        current_applicant_id: uuid.UUID | None,
+        requested_applicant_id: uuid.UUID | None,
+        applicant_update_data: dict[str, Any],
+    ) -> uuid.UUID | None:
+        applicant_id = requested_applicant_id or current_applicant_id
+        applicant = await db.get(Applicant, applicant_id) if applicant_id is not None else None
+
+        if applicant is None:
+            applicant = Applicant()
+            db.add(applicant)
+
+        iin = applicant_update_data.get("iin")
+        if iin:
+            result = await db.execute(select(Applicant).where(Applicant.iin == iin))
+            existing_applicant = result.scalar_one_or_none()
+
+            if existing_applicant is not None and existing_applicant.id != applicant.id:
+                raise HTTPException(status_code=409, detail="Applicant with this IIN already exists")
+
+        for field, value in applicant_update_data.items():
+            setattr(applicant, field, value)
+
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="Applicant with this IIN already exists")
+
+        return applicant.id
 
     @staticmethod
     async def validate_educational_program(
@@ -2101,6 +2367,7 @@ class TicketService:
             "service_language": ticket.service_language,
             "full_name": applicant.full_name if applicant else None,
             "iin": applicant.iin if applicant else None,
+            "born_date": getattr(applicant, "born_date", None) if applicant else None,
             "phone": applicant.phone if applicant else None,
             "service_name": service.name if service else None,
             "service_code": service.code if service else None,

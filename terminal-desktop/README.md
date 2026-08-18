@@ -32,7 +32,7 @@ PrinterName=Custom VKP 80
 FullScreen=true
 ReceiptWidthMm=80
 ReceiptBottomFeedMm=5
-AutoResetSeconds=10
+AutoResetSeconds=30
 ```
 
 Leave `PrinterName` empty to use the default Windows printer. `ApiBaseUrl` must

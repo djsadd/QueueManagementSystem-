@@ -49,6 +49,31 @@ class TicketUpdate(BaseModel):
     completed_at: datetime | None = None
 
 
+class TicketAdminUpdate(BaseModel):
+    applicant_id: uuid.UUID | None = None
+    full_name: str | None = Field(default=None, max_length=255)
+    iin: str | None = Field(default=None, min_length=12, max_length=12)
+    born_date: str | None = Field(default=None, max_length=10)
+    phone: str | None = Field(default=None, max_length=20)
+    service_id: int | None = Field(default=None, gt=0)
+    educational_program_id: int | None = Field(default=None, gt=0)
+    study_language: StudyLanguage | None = None
+    service_language: ServiceLanguage | None = None
+    window_id: int | None = Field(default=None, gt=0)
+    operator_id: uuid.UUID | None = None
+    ticket_number: str | None = Field(default=None, min_length=1, max_length=50)
+    queue_number: int | None = Field(default=None, ge=0)
+    priority: int | None = Field(default=None, ge=0)
+    status: str | None = Field(default=None, min_length=1, max_length=50)
+    estimated_wait: int | None = Field(default=None, ge=0)
+    assignment_score: int | None = Field(default=None, ge=0)
+    routing_key: str | None = Field(default=None, max_length=255)
+    created_at: datetime | None = None
+    called_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class TicketServiceReassign(BaseModel):
     service_id: int = Field(gt=0)
     educational_program_id: int | None = Field(default=None, gt=0)
@@ -58,6 +83,8 @@ class TicketServiceReassign(BaseModel):
 
 class TicketAccept(BaseModel):
     iin: str | None = Field(default=None, min_length=12, max_length=12, pattern=r"^[0-9]{12}$")
+    full_name: str | None = Field(default=None, min_length=1, max_length=255)
+    born_date: str | None = Field(default=None, min_length=1, max_length=10)
 
 
 class TicketStudyLanguageUpdate(BaseModel):
@@ -74,6 +101,7 @@ class TicketResponse(BaseModel):
     service_language: ServiceLanguage | None = None
     full_name: str | None = None
     iin: str | None = None
+    born_date: str | None = None
     phone: str | None = None
     service_name: str | None = None
     service_code: str | None = None

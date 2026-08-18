@@ -34,6 +34,9 @@ button:disabled {
 
 .kiosk-shell {
   position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
   height: 100vh;
   overflow: hidden;
   background: #f7fafc;
@@ -181,8 +184,7 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
   gap: 14px;
-  height: calc(100vh - 120px);
-  margin-top: 14px;
+  min-height: 0;
 }
 
 .service-panel,
@@ -226,9 +228,9 @@ button:disabled {
 .service-grid {
   display: grid;
   min-height: 0;
-  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
-  grid-auto-rows: minmax(88px, auto);
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-auto-rows: minmax(96px, auto);
+  gap: 8px;
   overflow: auto;
   padding-right: 4px;
   scrollbar-gutter: stable;
@@ -250,16 +252,15 @@ button:disabled {
 .service-button {
   position: relative;
   display: grid;
-  min-height: 88px;
-  grid-template-rows: auto auto;
-  align-content: stretch;
-  gap: 6px;
+  height: 100%;
+  min-height: 96px;
+  align-items: center;
   border: 1px solid rgba(119, 134, 153, 0.28);
   border-radius: 8px;
   background: #fff;
   color: #16212f;
   cursor: pointer;
-  padding: 11px 12px;
+  padding: 14px 16px;
   text-align: left;
   box-shadow: 0 4px 12px rgba(35, 48, 64, 0.07);
   overflow: hidden;
@@ -301,13 +302,12 @@ button:disabled {
   font-size: 16px;
   font-weight: 820;
   letter-spacing: 0;
-  line-height: 1.18;
+  line-height: 1.2;
   overflow-wrap: anywhere;
   white-space: normal;
   word-break: normal;
 }
 
-.service-button small,
 .program-list button small {
   display: flex;
   align-items: center;
@@ -322,7 +322,6 @@ button:disabled {
   white-space: normal;
 }
 
-.service-button small svg,
 .program-list button small svg {
   flex: 0 0 auto;
 }
@@ -343,8 +342,8 @@ button:disabled {
 }
 
 .ticket-panel {
-  display: grid;
-  grid-template-rows: minmax(150px, 1fr) auto auto auto;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   padding: 14px;
 }
@@ -456,10 +455,20 @@ button:disabled {
 .ticket-actions {
   display: grid;
   gap: 8px;
+  margin-top: auto;
+}
+
+.kiosk-action-bar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 2px;
 }
 
 .issue-button {
   display: inline-flex;
+  width: min(460px, 100%);
   min-height: 68px;
   align-items: center;
   justify-content: center;
@@ -526,7 +535,7 @@ button:disabled {
   display: grid;
   width: min(1040px, 100%);
   max-height: min(720px, calc(100vh - 36px));
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   border-radius: 8px;
 }
@@ -551,36 +560,6 @@ button:disabled {
 .choice-modal header button {
   width: 46px;
   height: 46px;
-}
-
-.program-search {
-  position: relative;
-  margin: 14px 14px 0;
-}
-
-.program-search svg {
-  position: absolute;
-  left: 18px;
-  top: 50%;
-  color: #778699;
-  transform: translateY(-50%);
-}
-
-.program-search input {
-  width: 100%;
-  min-height: 52px;
-  border: 1px solid rgba(119, 134, 153, 0.34);
-  border-radius: 8px;
-  color: #16212f;
-  outline: none;
-  padding: 0 18px 0 54px;
-  font-size: 18px;
-  font-weight: 780;
-}
-
-.program-search input:focus {
-  border-color: #0f766e;
-  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
 }
 
 .modal-scroll-shell {
@@ -628,8 +607,8 @@ button:disabled {
 .program-list {
   display: grid;
   min-height: 0;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  grid-auto-rows: minmax(92px, auto);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-auto-rows: 82px;
   gap: 10px;
   overflow: auto;
   padding: 14px;
@@ -641,17 +620,15 @@ button:disabled {
 
 .program-list button {
   position: relative;
-  display: grid;
-  min-height: 92px;
-  grid-template-rows: auto auto;
-  align-content: stretch;
-  gap: 6px;
+  display: flex;
+  min-height: 82px;
+  align-items: center;
   border: 1px solid rgba(119, 134, 153, 0.28);
   border-radius: 8px;
   background: #fff;
   color: #16212f;
   cursor: pointer;
-  padding: 11px 12px;
+  padding: 14px 16px;
   text-align: left;
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(35, 48, 64, 0.07);
@@ -669,15 +646,18 @@ button:disabled {
 }
 
 .program-list button strong {
-  display: block;
+  display: -webkit-box;
   min-width: 0;
   color: #223044;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 850;
   line-height: 1.2;
+  overflow: hidden;
   overflow-wrap: anywhere;
   white-space: normal;
   word-break: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .program-list button.selected {
@@ -686,13 +666,289 @@ button:disabled {
   box-shadow: inset 0 0 0 2px rgba(15, 118, 110, 0.18), 0 8px 20px rgba(15, 118, 110, 0.12);
 }
 
-.program-list button.selected span {
-  background: #0f766e;
-  color: #fff;
-}
-
 .spin {
   animation: spin 900ms linear infinite;
+}
+
+.ticket-result-page {
+  display: grid;
+  height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f7fafc 52%, #edf7f5 100%),
+    #f7fafc;
+  color: #16212f;
+  padding: 18px 22px;
+}
+
+.ticket-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 72px;
+}
+
+.ticket-result-header img {
+  width: 92px;
+  height: auto;
+  object-fit: contain;
+}
+
+.ticket-result-header span {
+  color: #314253;
+  font-size: 30px;
+  font-weight: 900;
+}
+
+.ticket-result-content {
+  display: grid;
+  width: min(1180px, 100%);
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-items: center;
+  justify-self: center;
+  padding: 2px 0 20px;
+}
+
+.ticket-result-instruction {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding-top: 4px;
+  text-align: center;
+  animation: ticket-result-enter 420ms ease-out both;
+}
+
+.ticket-result-instruction svg {
+  color: #0f766e;
+  width: 58px;
+  height: 58px;
+}
+
+.ticket-result-instruction h1 {
+  max-width: 920px;
+  margin: 0;
+  color: #2a1720;
+  font-size: 46px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1.02;
+}
+
+.ticket-result-instruction p {
+  margin: 0;
+  color: #516171;
+  font-size: 21px;
+  font-weight: 850;
+}
+
+.ticket-result-status {
+  display: grid;
+  min-height: 42px;
+  place-items: center;
+  color: #0f766e;
+  font-size: 18px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.ticket-result-status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.photo-ticket {
+  position: relative;
+  display: grid;
+  width: min(920px, 94vw);
+  min-height: min(470px, 58vh);
+  align-content: center;
+  justify-self: center;
+  gap: 18px;
+  border: 1px solid rgba(119, 134, 153, 0.34);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 26px 58px rgba(35, 48, 64, 0.22);
+  padding: 34px 46px 32px;
+  text-align: center;
+  animation:
+    ticket-card-enter 520ms ease-out both,
+    ticket-card-float 3800ms ease-in-out 650ms infinite;
+}
+
+.photo-ticket::before,
+.photo-ticket::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 34px;
+  height: 68px;
+  border: 1px solid rgba(119, 134, 153, 0.28);
+  background: #f7fafc;
+  transform: translateY(-50%);
+}
+
+.photo-ticket::before {
+  left: -1px;
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+}
+
+.photo-ticket::after {
+  right: -1px;
+  border-right: 0;
+  border-radius: 999px 0 0 999px;
+}
+
+.photo-ticket > span {
+  color: #516171;
+  font-size: 22px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.photo-ticket > strong {
+  display: block;
+  color: #5d0f25;
+  font-size: clamp(116px, 16vw, 190px);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.98;
+  overflow-wrap: anywhere;
+  text-shadow: 0 8px 18px rgba(93, 15, 37, 0.12);
+  animation: ticket-number-pulse 1800ms ease-in-out 700ms infinite;
+}
+
+.photo-ticket-details {
+  display: grid;
+  gap: 8px;
+  border-top: 1px dashed rgba(119, 134, 153, 0.42);
+  margin-top: 4px;
+  padding-top: 18px;
+  color: #314253;
+  font-size: 22px;
+  font-weight: 760;
+}
+
+.photo-ticket-details p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+
+.photo-ticket-details b {
+  color: #778699;
+  font-size: 14px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.photo-ticket-details time {
+  color: #516171;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.ticket-result-footer {
+  display: grid;
+  width: min(980px, 100%);
+  justify-self: center;
+  gap: 16px;
+}
+
+.ticket-return-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(119, 134, 153, 0.22);
+}
+
+.ticket-return-progress div {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f766e, #b98a2f);
+  transform-origin: left center;
+  animation-name: ticket-return-progress;
+  animation-fill-mode: forwards;
+}
+
+.ticket-result-footer button {
+  display: inline-flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #5d0f25;
+  color: #fff;
+  cursor: pointer;
+  font-size: 22px;
+  font-weight: 900;
+  box-shadow: 0 10px 24px rgba(93, 15, 37, 0.2);
+}
+
+.ticket-result-footer button:hover,
+.ticket-result-footer button:focus-visible {
+  outline: 0;
+  background: #7a1631;
+  box-shadow: 0 12px 28px rgba(93, 15, 37, 0.28);
+}
+
+@keyframes ticket-return-progress {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes ticket-result-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ticket-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ticket-card-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes ticket-number-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.025);
+  }
 }
 
 @keyframes spin {
@@ -745,7 +1001,25 @@ button:disabled {
   }
 
   .ticket-panel {
-    grid-template-rows: auto;
+    min-height: 360px;
+  }
+
+  .ticket-result-page {
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+  }
+
+  .ticket-result-instruction h1 {
+    font-size: 38px;
+  }
+
+  .ticket-result-instruction p {
+    font-size: 20px;
+  }
+
+  .photo-ticket > strong {
+    font-size: 86px;
   }
 }
 

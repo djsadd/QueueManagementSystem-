@@ -499,6 +499,17 @@
   width: min(420px, 100%);
 }
 
+.reception-ticket-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reception-ticket-search .reception-ticket-search-input {
+  width: min(260px, 100%);
+  min-width: 180px;
+}
+
 .primary-action,
 .secondary-action {
   display: inline-flex;
@@ -616,9 +627,9 @@
 }
 
 .admin-form input,
-.admin-form select {
+.admin-form select,
+.admin-form textarea {
   width: 100%;
-  min-height: 50px;
   border: 1px solid #d8dee8;
   border-radius: 8px;
   background: #ffffff;
@@ -626,6 +637,17 @@
   font: inherit;
   font-weight: 700;
   padding: 0 14px;
+}
+
+.admin-form input,
+.admin-form select {
+  min-height: 50px;
+}
+
+.admin-form textarea {
+  min-height: 132px;
+  padding: 14px;
+  resize: vertical;
 }
 
 .admin-form label {
@@ -639,9 +661,48 @@
 }
 
 .admin-form input:focus,
-.admin-form select:focus {
+.admin-form select:focus,
+.admin-form textarea:focus {
   border-color: #9a002d;
   outline: 3px solid #f5e6eb;
+}
+
+.admin-form input[readonly] {
+  background: #f8fafc;
+  color: #475467;
+}
+
+.applicant-lookup-status {
+  grid-column: 1 / -1;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-block {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-block h2 {
+  margin: 8px 0 0;
+  color: #101b33;
+}
+
+.settings-block p {
+  margin: 8px 0 0;
+  color: #667085;
+}
+
+.settings-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  margin-bottom: 0;
 }
 
 .check-field {
@@ -1166,6 +1227,22 @@
 
 .pagination-page {
   min-width: 40px;
+}
+
+.pagination-page.active,
+.pagination-page[aria-current='page'] {
+  border-color: #9a002d;
+  background: #9a002d;
+  color: #ffffff;
+}
+
+.pagination-ellipsis {
+  min-width: 28px;
+  align-self: center;
+  color: #667085;
+  font-size: 14px;
+  font-weight: 900;
+  text-align: center;
 }
 
 .analytics-section {
@@ -2260,7 +2337,7 @@
 
 .ticket-events-filter-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(150px, 1fr)) auto;
+  grid-template-columns: minmax(220px, 1.4fr) auto repeat(5, minmax(150px, 1fr)) auto;
   gap: 12px;
   align-items: end;
   border-bottom: 1px solid #e6e9ee;
@@ -2318,6 +2395,46 @@
 .ticket-event-details {
   display: grid;
   gap: 16px;
+}
+
+.ticket-event-action-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ticket-admin-edit-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #e6e9ee;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.ticket-admin-edit-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 0;
+}
+
+.ticket-admin-date-field {
+  display: grid;
+  gap: 6px;
+}
+
+.ticket-admin-date-field span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ticket-admin-edit-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  margin-top: 2px;
 }
 
 .ticket-event-detail-grid {
@@ -2577,7 +2694,7 @@
 
 .ticket-form-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.2fr) minmax(140px, 0.8fr) minmax(180px, 1fr) auto;
   gap: 12px;
   align-items: center;
 }
@@ -3389,6 +3506,16 @@
     flex-direction: column;
   }
 
+  .reception-ticket-search {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .reception-ticket-search .reception-ticket-search-input,
+  .reception-ticket-search .secondary-action {
+    width: 100%;
+  }
+
   .admin-form {
     grid-template-columns: 1fr;
   }
@@ -3537,6 +3664,14 @@
     flex-direction: column;
   }
 
+  .ticket-admin-edit-form {
+    grid-template-columns: 1fr;
+  }
+
+  .ticket-admin-edit-actions {
+    justify-content: stretch;
+  }
+
   .ticket-event-detail-grid,
   .ticket-event-change-row {
     grid-template-columns: 1fr;
@@ -3552,6 +3687,10 @@
   }
 
   .ticket-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-form {
     grid-template-columns: 1fr;
   }
 

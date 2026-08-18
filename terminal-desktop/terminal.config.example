@@ -12,4 +12,4 @@ ReceiptWidthMm=80
 ReceiptBottomFeedMm=5
 
 # How long the issued ticket stays on screen before the panel resets.
-AutoResetSeconds=10
+AutoResetSeconds=30

@@ -21,6 +21,7 @@ import {
   type OperatorTicketAnalyticsItem,
   type ReceptionTickets,
   type TicketCreatePayload,
+  type TicketAdminUpdatePayload,
   type TicketItem,
   type TicketEventItem,
   type TicketEventTicketSummaryItem,
@@ -93,7 +94,7 @@ import {
 } from './routes'
 import './dashboard-page.css'
 
-type MyWindowRealtimeStatus = 'connecting' | 'connected' | 'disconnected'
+type RealtimeStatus = 'connecting' | 'connected' | 'disconnected'
 type MyWindowTicketHighlight = 'new' | 'updated'
 type AnalyticsTimeGrouping = 'day' | 'month'
 type AnalyticsPieSegment = {
@@ -187,11 +188,27 @@ type TicketCreateFormState = {
   service_language: ServiceLanguage | ''
 }
 type TicketAdminEditFormState = {
+  full_name: string
+  iin: string
+  born_date: string
+  phone: string
+  service_id: string
+  educational_program_id: string
+  study_language: StudyLanguage | ''
+  service_language: ServiceLanguage | ''
+  ticket_number: string
+  queue_number: string
   status: string
   priority: string
   estimated_wait: string
   window_id: string
   operator_id: string
+  routing_key: string
+  assignment_score: string
+  created_at: string
+  called_at: string
+  started_at: string
+  completed_at: string
 }
 
 const ANALYTICS_OPERATORS_SELECTION = 'operators'
@@ -286,11 +303,27 @@ const emptyTicketCreateForm: TicketCreateFormState = {
   service_language: '',
 }
 const emptyTicketAdminEditForm: TicketAdminEditFormState = {
+  full_name: '',
+  iin: '',
+  born_date: '',
+  phone: '',
+  service_id: '',
+  educational_program_id: '',
+  study_language: '',
+  service_language: '',
+  ticket_number: '',
+  queue_number: '',
   status: '',
   priority: '',
   estimated_wait: '',
   window_id: '',
   operator_id: '',
+  routing_key: '',
+  assignment_score: '',
+  created_at: '',
+  called_at: '',
+  started_at: '',
+  completed_at: '',
 }
 const emptyWindow: WindowPayload = { name: '', floor: '', status: 'OPEN', current_operator_id: null }
 const emptyUser: UserPayload = {
@@ -318,8 +351,13 @@ const emptyEducationalProgram: EducationalProgramPayload = {
 const emptyApplicant: ApplicantPayload = {
   full_name: '',
   iin: '',
+  born_date: '',
   phone: '',
   telegram_chat_id: null,
+}
+
+function normalizeIinInput(value: string) {
+  return value.replace(/\D/g, '').slice(0, 12)
 }
 
 const operatorStatusActions: Array<{ status: OperatorStatus; label: string }> = [
@@ -1495,13 +1533,44 @@ function parseStudyLanguage(value: string): StudyLanguage | null {
   return studyLanguageOptions.some((option) => option.value === value) ? (value as StudyLanguage) : null
 }
 
+function formatDateTimeLocalInput(value: string | null) {
+  if (!value) {
+    return ''
+  }
+
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  const timezoneOffset = date.getTimezoneOffset() * 60000
+  return new Date(date.getTime() - timezoneOffset).toISOString().slice(0, 16)
+}
+
 function buildTicketAdminEditForm(ticket: TicketItem): TicketAdminEditFormState {
   return {
+    full_name: ticket.full_name ?? '',
+    iin: ticket.iin ?? '',
+    born_date: ticket.born_date ?? '',
+    phone: ticket.phone ?? '',
+    service_id: String(ticket.service_id),
+    educational_program_id: ticket.educational_program_id === null ? '' : String(ticket.educational_program_id),
+    study_language: ticket.study_language ?? '',
+    service_language: ticket.service_language ?? '',
+    ticket_number: ticket.ticket_number,
+    queue_number: String(ticket.queue_number),
     status: ticket.status,
     priority: String(ticket.priority),
     estimated_wait: ticket.estimated_wait === null ? '' : String(ticket.estimated_wait),
     window_id: ticket.window_id === null ? '' : String(ticket.window_id),
     operator_id: ticket.operator_id ?? '',
+    routing_key: ticket.routing_key ?? '',
+    assignment_score: ticket.assignment_score === null || ticket.assignment_score === undefined ? '' : String(ticket.assignment_score),
+    created_at: formatDateTimeLocalInput(ticket.created_at),
+    called_at: formatDateTimeLocalInput(ticket.called_at),
+    started_at: formatDateTimeLocalInput(ticket.started_at),
+    completed_at: formatDateTimeLocalInput(ticket.completed_at),
   }
 }
 
@@ -2016,6 +2085,13 @@ function getMyWindowWebSocketUrl(token: string) {
   return url.toString()
 }
 
+function getReceptionWebSocketUrl(token: string) {
+  const baseUrl = env.apiWsBaseUrl.replace(/\/$/, '')
+  const url = new URL(`${baseUrl}/ws/reception`)
+  url.searchParams.set('token', token)
+  return url.toString()
+}
+
 export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const currentUserId = getCurrentUserIdFromToken()
   const isAdminUser = authUser.role === 'ADMIN'
@@ -2037,7 +2113,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [applicants, setApplicants] = useState<ApplicantItem[]>([])
   const [ticketEventTickets, setTicketEventTickets] = useState<TicketEventTicketSummaryItem[]>([])
   const [analyticsTicketEvents, setAnalyticsTicketEvents] = useState<TicketEventItem[]>([])
+  const [ticketEventSearchInput, setTicketEventSearchInput] = useState('')
   const [ticketEventSearch, setTicketEventSearch] = useState('')
+  const [ticketEventSearchVersion, setTicketEventSearchVersion] = useState(0)
   const [ticketEventTypeFilter, setTicketEventTypeFilter] = useState('')
   const [ticketEventOperatorFilter, setTicketEventOperatorFilter] = useState('')
   const [ticketEventStatusFilter, setTicketEventStatusFilter] = useState('')
@@ -2048,8 +2126,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [ticketEventTotalPages, setTicketEventTotalPages] = useState(1)
   const [selectedTicketEventTicket, setSelectedTicketEventTicket] =
     useState<TicketEventTicketSummaryItem | null>(null)
+  const [selectedTicketEventEditableTicket, setSelectedTicketEventEditableTicket] = useState<TicketItem | null>(null)
   const [selectedTicketEvents, setSelectedTicketEvents] = useState<TicketEventItem[]>([])
   const [selectedTicketEventsLoading, setSelectedTicketEventsLoading] = useState(false)
+  const [selectedTicketEventSaving, setSelectedTicketEventSaving] = useState(false)
+  const [ticketEventEditOpen, setTicketEventEditOpen] = useState(false)
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorTicketAnalyticsItem[]>([])
   const [analyticsTickets, setAnalyticsTickets] = useState<TicketItem[]>([])
   const [operatorAnalyticsTickets, setOperatorAnalyticsTickets] = useState<TicketItem[]>([])
@@ -2077,7 +2158,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   )
   const [myWindowTickets, setMyWindowTickets] = useState<MyWindowTickets | null>(null)
   const [myWindowRealtimeStatus, setMyWindowRealtimeStatus] =
-    useState<MyWindowRealtimeStatus>('disconnected')
+    useState<RealtimeStatus>('disconnected')
   const [myWindowRefreshing, setMyWindowRefreshing] = useState(false)
   const [myWindowTicketHighlights, setMyWindowTicketHighlights] = useState<
     Record<string, MyWindowTicketHighlight>
@@ -2087,8 +2168,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const [myWindowSearch, setMyWindowSearch] = useState('')
   const [selectedMyWindowTicket, setSelectedMyWindowTicket] = useState<TicketItem | null>(null)
   const [receptionTickets, setReceptionTickets] = useState<ReceptionTickets | null>(null)
+  const [, setReceptionRealtimeStatus] = useState<RealtimeStatus>('disconnected')
+  const receptionRealtimeRefreshRef = useRef<(() => void) | null>(null)
   const [receptionPage, setReceptionPage] = useState(1)
-  const [receptionServiceId, setReceptionServiceId] = useState('')
+  const [receptionTicketSearchInput, setReceptionTicketSearchInput] = useState('')
   const [receptionSearch, setReceptionSearch] = useState('')
   const [receptionRefreshing, setReceptionRefreshing] = useState(false)
   const [receptionError, setReceptionError] = useState('')
@@ -2589,18 +2672,38 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
-  async function openTicketEventTicketDetails(ticketSummary: TicketEventTicketSummaryItem) {
+  async function openTicketEventTicketDetails(ticketSummary: TicketEventTicketSummaryItem, { edit = false } = {}) {
     setError('')
     setSelectedTicketEventTicket(ticketSummary)
+    setSelectedTicketEventEditableTicket(null)
+    setTicketAdminEditForm(emptyTicketAdminEditForm)
     setSelectedTicketEvents([])
     setSelectedTicketEventsLoading(true)
+    setTicketEventEditOpen(edit)
     setFormModal('ticketEvents')
 
     try {
-      const ticketEvents = await adminApi.ticketEvents.byTicket(ticketSummary.ticket_id)
+      const [ticketEvents, ticketDetails, serviceRows, programRows, windowRows, operatorRows, userRows] =
+        await Promise.all([
+          adminApi.ticketEvents.byTicket(ticketSummary.ticket_id),
+          adminApi.tickets.get(ticketSummary.ticket_id),
+          adminApi.services.list(),
+          adminApi.operators.availablePrograms(),
+          adminApi.windows.list(),
+          adminApi.operators.list(),
+          adminApi.users.list(),
+        ])
       setSelectedTicketEvents(ticketEvents)
+      setSelectedTicketEventEditableTicket(ticketDetails)
+      setTicketAdminEditForm(buildTicketAdminEditForm(ticketDetails))
+      setServices(serviceRows)
+      setEducationalPrograms(programRows)
+      setWindows(windowRows)
+      setOperators(operatorRows)
+      setUsers(userRows)
     } catch (requestError) {
       setSelectedTicketEvents([])
+      setSelectedTicketEventEditableTicket(null)
       setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить события талона')
     } finally {
       setSelectedTicketEventsLoading(false)
@@ -2803,7 +2906,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       const [receptionRows, serviceRows, programRows, degreeRows] = await Promise.all([
         adminApi.tickets.reception({
           search: receptionSearch,
-          service_id: receptionServiceId ? Number(receptionServiceId) : undefined,
           page: receptionPage,
           page_size: MY_WINDOW_PAGE_SIZE,
         }),
@@ -2914,6 +3016,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     ticketEventOperatorFilter,
     ticketEventPage,
     ticketEventSearch,
+    ticketEventSearchVersion,
     ticketEventStatusFilter,
     ticketEventTypeFilter,
   ])
@@ -3070,7 +3173,13 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }, 250)
 
     return () => window.clearTimeout(timerId)
-  }, [activeSection, isAdminUser, receptionPage, receptionSearch, receptionServiceId])
+  }, [activeSection, isAdminUser, receptionPage, receptionSearch])
+
+  useEffect(() => {
+    receptionRealtimeRefreshRef.current = () => {
+      void loadReceptionData({ silent: true })
+    }
+  })
 
   useEffect(() => {
     if (activeSection !== 'myWindow' || !myWindowTickets) {
@@ -3155,6 +3264,94 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }, [activeSection, myWindowTickets?.window_id])
 
+  useEffect(() => {
+    if (!isAdminUser || activeSection !== 'reception') {
+      setReceptionRealtimeStatus('disconnected')
+      return
+    }
+
+    if (receptionSearch.trim()) {
+      setReceptionRealtimeStatus('disconnected')
+      return
+    }
+
+    if (!tokenStorage.hasTokens()) {
+      setReceptionRealtimeStatus('disconnected')
+      return
+    }
+
+    let socket: WebSocket | null = null
+    let reconnectTimer: number | undefined
+    let refreshTimer: number | undefined
+    let closed = false
+
+    async function connect(forceTokenRefresh = false) {
+      setReceptionRealtimeStatus('connecting')
+      let accessToken = tokenStorage.getAccessToken()
+
+      if (forceTokenRefresh || !accessToken) {
+        const tokens = await refreshAuthTokens().catch(() => null)
+        accessToken = tokens?.access_token ?? tokenStorage.getAccessToken()
+      }
+
+      if (!accessToken || closed) {
+        setReceptionRealtimeStatus('disconnected')
+        if (!closed && tokenStorage.hasTokens()) {
+          reconnectTimer = window.setTimeout(() => {
+            void connect()
+          }, 2500)
+        }
+        return
+      }
+
+      socket = new WebSocket(getReceptionWebSocketUrl(accessToken))
+
+      socket.onopen = () => {
+        setReceptionRealtimeStatus('connected')
+      }
+
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data) as { type?: string }
+          if (message.type !== 'reception.updated') {
+            return
+          }
+        } catch {
+          return
+        }
+
+        window.clearTimeout(refreshTimer)
+        refreshTimer = window.setTimeout(() => {
+          receptionRealtimeRefreshRef.current?.()
+        }, 140)
+      }
+
+      socket.onclose = (event) => {
+        if (closed) {
+          return
+        }
+
+        setReceptionRealtimeStatus('disconnected')
+        reconnectTimer = window.setTimeout(() => {
+          void connect(event.code === 1008)
+        }, 2500)
+      }
+
+      socket.onerror = () => {
+        socket?.close()
+      }
+    }
+
+    void connect()
+
+    return () => {
+      closed = true
+      window.clearTimeout(reconnectTimer)
+      window.clearTimeout(refreshTimer)
+      socket?.close()
+    }
+  }, [activeSection, isAdminUser, receptionPage, receptionSearch])
+
   function closeFormModal() {
     setFormModal(null)
     setEditingServiceId(null)
@@ -3165,8 +3362,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     setEditingEducationalProgramId(null)
     setEditingApplicantId(null)
     setSelectedTicketEventTicket(null)
+    setSelectedTicketEventEditableTicket(null)
     setSelectedTicketEvents([])
     setSelectedTicketEventsLoading(false)
+    setSelectedTicketEventSaving(false)
+    setTicketEventEditOpen(false)
+    setTicketAdminEditForm(emptyTicketAdminEditForm)
     setServiceForm(emptyService)
     setWindowForm(emptyWindow)
     setUserForm(emptyUser)
@@ -3302,6 +3503,93 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     }
   }
 
+  function getOptionalNumber(value: string) {
+    return value.trim() ? Number(value) : null
+  }
+
+  function getOptionalText(value: string) {
+    return value.trim() || null
+  }
+
+  async function submitTicketEventAdminEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (!selectedTicketEventEditableTicket || !selectedTicketEventTicket) {
+      return
+    }
+
+    const selectedService = services.find((service) => String(service.id) === ticketAdminEditForm.service_id)
+    const selectedProgram = educationalPrograms.find(
+      (program) => String(program.id) === ticketAdminEditForm.educational_program_id,
+    )
+    const normalizedIin = ticketAdminEditForm.iin.trim()
+
+    if (!selectedService) {
+      setError('Выберите услугу')
+      return
+    }
+
+    if (normalizedIin && !/^\d{12}$/.test(normalizedIin)) {
+      setError('ИИН должен состоять из 12 цифр')
+      return
+    }
+
+    if (selectedService.requires_educational_program && !selectedProgram) {
+      setError('Для этой услуги нужно выбрать образовательную программу')
+      return
+    }
+
+    if (selectedProgram?.requires_service_language && !ticketAdminEditForm.study_language) {
+      setError('Для выбранной ОП нужно выбрать язык обучения')
+      return
+    }
+
+    if (selectedService.requires_service_language && !ticketAdminEditForm.service_language) {
+      setError('Для этой услуги нужно выбрать язык обслуживания')
+      return
+    }
+
+    const payload: TicketAdminUpdatePayload = {
+      full_name: getOptionalText(ticketAdminEditForm.full_name),
+      iin: normalizedIin || null,
+      born_date: getOptionalText(ticketAdminEditForm.born_date),
+      phone: getOptionalText(ticketAdminEditForm.phone),
+      service_id: selectedService.id,
+      educational_program_id: selectedService.requires_educational_program ? selectedProgram?.id ?? null : null,
+      study_language: selectedProgram?.requires_service_language ? ticketAdminEditForm.study_language || null : null,
+      service_language: selectedService.requires_service_language ? ticketAdminEditForm.service_language || null : null,
+      ticket_number: ticketAdminEditForm.ticket_number.trim(),
+      queue_number: Number(ticketAdminEditForm.queue_number),
+      status: ticketAdminEditForm.status.trim(),
+      priority: Number(ticketAdminEditForm.priority),
+      estimated_wait: getOptionalNumber(ticketAdminEditForm.estimated_wait),
+      window_id: getOptionalNumber(ticketAdminEditForm.window_id),
+      operator_id: getOptionalText(ticketAdminEditForm.operator_id),
+      routing_key: getOptionalText(ticketAdminEditForm.routing_key),
+      assignment_score: getOptionalNumber(ticketAdminEditForm.assignment_score),
+      created_at: getOptionalText(ticketAdminEditForm.created_at),
+      called_at: getOptionalText(ticketAdminEditForm.called_at),
+      started_at: getOptionalText(ticketAdminEditForm.started_at),
+      completed_at: getOptionalText(ticketAdminEditForm.completed_at),
+    }
+
+    setSelectedTicketEventSaving(true)
+    setError('')
+
+    try {
+      const updatedTicket = await adminApi.tickets.updateAsAdmin(selectedTicketEventEditableTicket.id, payload)
+      const ticketEvents = await adminApi.ticketEvents.byTicket(updatedTicket.id)
+      setSelectedTicketEventEditableTicket(updatedTicket)
+      setTicketAdminEditForm(buildTicketAdminEditForm(updatedTicket))
+      setSelectedTicketEvents(ticketEvents)
+      await loadAdminTicketEventsData()
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Не удалось сохранить талон')
+    } finally {
+      setSelectedTicketEventSaving(false)
+    }
+  }
+
   async function submitUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
@@ -3412,6 +3700,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
     const payload: ApplicantPayload = {
       full_name: applicantForm.full_name || null,
       iin: applicantForm.iin || null,
+      born_date: applicantForm.born_date || null,
       phone: applicantForm.phone || null,
       telegram_chat_id: applicantForm.telegram_chat_id,
     }
@@ -3621,7 +3910,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       throw new Error('Выберите язык обучения')
     }
 
-    let acceptedTicket = await adminApi.tickets.acceptMyTicket(ticket.id, { iin: normalizedIin })
+    let acceptedTicket = await adminApi.tickets.acceptMyTicket(ticket.id, {
+      iin: normalizedIin,
+    })
     acceptedTicket = await adminApi.tickets.updateMyTicketStudyLanguage(acceptedTicket.id, {
       study_language: acceptStudyLanguage,
     })
@@ -3892,7 +4183,9 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       throw new Error('Выберите язык обучения')
     }
 
-    let acceptedTicket = await adminApi.tickets.acceptReceptionTicket(ticket.id, { iin: normalizedIin })
+    let acceptedTicket = await adminApi.tickets.acceptReceptionTicket(ticket.id, {
+      iin: normalizedIin,
+    })
     acceptedTicket = await adminApi.tickets.updateReceptionTicketStudyLanguage(acceptedTicket.id, {
       study_language: acceptStudyLanguage,
     })
@@ -4136,6 +4429,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
       new Date(firstEvent.created_at).getTime() - new Date(secondEvent.created_at).getTime(),
   )
   const selectedTicketEventChangeEvents = selectedTicketEventTimeline.filter(isTicketEventChangeLike)
+  const selectedTicketEventEditService = services.find(
+    (service) => String(service.id) === ticketAdminEditForm.service_id,
+  )
+  const selectedTicketEventEditProgram = educationalPrograms.find(
+    (program) => String(program.id) === ticketAdminEditForm.educational_program_id,
+  )
   const ticketEventOperatorOptions = operators
     .map((operator) => ({
       id: operator.id,
@@ -4460,7 +4759,6 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
   const currentUser = users.find((user) => user.id === currentUserId) ?? authUser
   const currentOperator = operators.find((operator) => operator.user_id === currentUserId)
   const activeServices = services.filter((service) => service.is_active)
-  const receptionServices = activeServices.filter((service) => service.requires_reception_desk)
   const activeEducationalPrograms = educationalPrograms.filter((program) => program.is_active)
   const selectedTicketCreateService = activeServices.find(
     (service) => String(service.id) === ticketCreateForm.service_id,
@@ -4647,7 +4945,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
           </div>
         </header>
 
-        {activeSection !== 'analytics' && activeSection !== 'ticketEvents' && (
+        {activeSection !== 'analytics' && activeSection !== 'ticketEvents' && activeSection !== 'reception' && (
           <section
             className={activeSection === 'myWindow' ? 'stats-grid compact' : 'stats-grid'}
             aria-label="Admin counters"
@@ -4855,38 +5153,24 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 <Icon name="plus" />
                 Создать талон
               </button>
-              <input
-                className="toolbar-input"
-                placeholder="Поиск по талону, ИИН, услуге или ОП"
-                value={receptionSearch}
-                onChange={(event) => {
+              <form
+                className="reception-ticket-search"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  setReceptionSearch(receptionTicketSearchInput.trim())
                   setReceptionPage(1)
-                  setReceptionSearch(event.target.value)
-                }}
-              />
-              <select
-                value={receptionServiceId}
-                onChange={(event) => {
-                  setReceptionPage(1)
-                  setReceptionServiceId(event.target.value)
                 }}
               >
-                <option value="">Все услуги регистратуры</option>
-                {receptionServices.map((service) => (
-                  <option value={service.id} key={service.id}>
-                    {service.name} ({service.code})
-                  </option>
-                ))}
-              </select>
-              <button
-                className="secondary-action compact"
-                type="button"
-                onClick={() => void loadReceptionData({ silent: Boolean(receptionTickets) })}
-              >
-                <Icon name="refresh" />
-                Обновить
-              </button>
-              {receptionRefreshing && <span className="my-window-refreshing">Обновляется...</span>}
+                <input
+                  className="toolbar-input reception-ticket-search-input"
+                  placeholder="Номер талона"
+                  value={receptionTicketSearchInput}
+                  onChange={(event) => setReceptionTicketSearchInput(event.target.value)}
+                />
+                <button className="secondary-action compact" type="submit" disabled={receptionRefreshing}>
+                  Поиск
+                </button>
+              </form>
             </div>
 
             {receptionError && <div className="admin-alert">{receptionError}</div>}
@@ -5977,6 +6261,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               setApplicantForm({
                 full_name: applicant.full_name ?? '',
                 iin: applicant.iin ?? '',
+                born_date: applicant.born_date ?? '',
                 phone: applicant.phone ?? '',
                 telegram_chat_id: applicant.telegram_chat_id,
               })
@@ -6001,7 +6286,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             operatorId={ticketEventOperatorFilter}
             operatorOptions={ticketEventOperatorOptions}
             page={ticketEventPage}
-            search={ticketEventSearch}
+            search={ticketEventSearchInput}
             status={ticketEventStatusFilter}
             ticketSummaries={ticketEventTickets}
             total={ticketEventTotal}
@@ -6019,6 +6304,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               setTicketEventPage(1)
             }}
             onFilterReset={() => {
+              setTicketEventSearchInput('')
               setTicketEventSearch('')
               setTicketEventTypeFilter('')
               setTicketEventOperatorFilter('')
@@ -6033,7 +6319,11 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             }}
             onPageChange={setTicketEventPage}
             onSearchChange={(value) => {
-              setTicketEventSearch(value)
+              setTicketEventSearchInput(value)
+            }}
+            onSearchSubmit={(value) => {
+              setTicketEventSearch(value.trim())
+              setTicketEventSearchVersion((currentVersion) => currentVersion + 1)
               setTicketEventPage(1)
             }}
             onStatusChange={(value) => {
@@ -6041,6 +6331,7 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
               setTicketEventPage(1)
             }}
             onDetails={(ticketSummary) => void openTicketEventTicketDetails(ticketSummary)}
+            onEdit={(ticketSummary) => void openTicketEventTicketDetails(ticketSummary, { edit: true })}
           />
         )}
       </main>
@@ -6530,7 +6821,12 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 minLength={12}
                 placeholder="ИИН"
                 value={applicantForm.iin ?? ''}
-                onChange={(event) => setApplicantForm({ ...applicantForm, iin: event.target.value })}
+                onChange={(event) => setApplicantForm({ ...applicantForm, iin: normalizeIinInput(event.target.value) })}
+              />
+              <input
+                placeholder="Дата рождения"
+                value={applicantForm.born_date ?? ''}
+                onChange={(event) => setApplicantForm({ ...applicantForm, born_date: event.target.value })}
               />
               <input
                 maxLength={20}
@@ -6567,6 +6863,260 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                     </div>
                   ))}
                 </div>
+              )}
+
+              {selectedTicketEventEditableTicket && (
+                <section className="ticket-admin-edit-panel">
+                  <div className="ticket-event-section-heading">
+                    <h3>Редактирование талона</h3>
+                    <button
+                      className="secondary-action compact"
+                      type="button"
+                      onClick={() => setTicketEventEditOpen((isOpen) => !isOpen)}
+                    >
+                      {ticketEventEditOpen ? 'Скрыть форму' : 'Редактировать'}
+                    </button>
+                  </div>
+
+                  {ticketEventEditOpen && (
+                    <form className="admin-form ticket-admin-edit-form" onSubmit={submitTicketEventAdminEdit}>
+                      <input
+                        placeholder="ФИО"
+                        value={ticketAdminEditForm.full_name}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, full_name: event.target.value })
+                        }
+                      />
+                      <input
+                        maxLength={12}
+                        minLength={12}
+                        placeholder="ИИН"
+                        value={ticketAdminEditForm.iin}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({
+                            ...ticketAdminEditForm,
+                            iin: normalizeIinInput(event.target.value),
+                          })
+                        }
+                      />
+                      <input
+                        placeholder="Дата рождения"
+                        value={ticketAdminEditForm.born_date}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, born_date: event.target.value })
+                        }
+                      />
+                      <input
+                        placeholder="Телефон"
+                        value={ticketAdminEditForm.phone}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, phone: event.target.value })
+                        }
+                      />
+                      <input
+                        required
+                        placeholder="Номер талона"
+                        value={ticketAdminEditForm.ticket_number}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, ticket_number: event.target.value })
+                        }
+                      />
+                      <input
+                        min={0}
+                        required
+                        type="number"
+                        placeholder="Номер очереди"
+                        value={ticketAdminEditForm.queue_number}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, queue_number: event.target.value })
+                        }
+                      />
+                      <select
+                        required
+                        value={ticketAdminEditForm.service_id}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({
+                            ...ticketAdminEditForm,
+                            service_id: event.target.value,
+                            educational_program_id: '',
+                            study_language: '',
+                            service_language: '',
+                          })
+                        }
+                      >
+                        <option value="">Выберите услугу</option>
+                        {services.map((service) => (
+                          <option value={service.id} key={service.id}>
+                            {service.name} ({service.code})
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        disabled={!selectedTicketEventEditService?.requires_educational_program}
+                        required={Boolean(selectedTicketEventEditService?.requires_educational_program)}
+                        value={ticketAdminEditForm.educational_program_id}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({
+                            ...ticketAdminEditForm,
+                            educational_program_id: event.target.value,
+                            study_language: '',
+                          })
+                        }
+                      >
+                        <option value="">Без ОП</option>
+                        {educationalPrograms.map((program) => (
+                          <option value={program.id} key={program.id}>
+                            {program.name} ({program.code})
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        disabled={!selectedTicketEventEditProgram?.requires_service_language}
+                        required={Boolean(selectedTicketEventEditProgram?.requires_service_language)}
+                        value={ticketAdminEditForm.study_language}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({
+                            ...ticketAdminEditForm,
+                            study_language: parseStudyLanguage(event.target.value) ?? '',
+                          })
+                        }
+                      >
+                        <option value="">Язык обучения</option>
+                        {serviceLanguageOptions.map((option) => (
+                          <option value={option.value} key={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        disabled={!selectedTicketEventEditService?.requires_service_language}
+                        required={Boolean(selectedTicketEventEditService?.requires_service_language)}
+                        value={ticketAdminEditForm.service_language}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({
+                            ...ticketAdminEditForm,
+                            service_language: parseStudyLanguage(event.target.value) ?? '',
+                          })
+                        }
+                      >
+                        <option value="">Язык обслуживания</option>
+                        {serviceLanguageOptions.map((option) => (
+                          <option value={option.value} key={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        required
+                        value={ticketAdminEditForm.status}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, status: event.target.value })
+                        }
+                      >
+                        {['WAITING', 'CALLED', 'COMPLETED', 'SKIPPED', 'CANCELLED'].map((status) => (
+                          <option value={status} key={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        min={0}
+                        required
+                        type="number"
+                        placeholder="Приоритет"
+                        value={ticketAdminEditForm.priority}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, priority: event.target.value })
+                        }
+                      />
+                      <input
+                        min={0}
+                        type="number"
+                        placeholder="Ожидание, мин"
+                        value={ticketAdminEditForm.estimated_wait}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, estimated_wait: event.target.value })
+                        }
+                      />
+                      <select
+                        value={ticketAdminEditForm.window_id}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, window_id: event.target.value })
+                        }
+                      >
+                        <option value="">Без окна</option>
+                        {windows.map((window) => (
+                          <option value={window.id} key={window.id}>
+                            {getWindowLabel(windows, window.id)}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={ticketAdminEditForm.operator_id}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, operator_id: event.target.value })
+                        }
+                      >
+                        <option value="">Без оператора</option>
+                        {operators.map((operator) => (
+                          <option value={operator.id} key={operator.id}>
+                            {getUserLabel(users, operator.user_id)}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        placeholder="Routing key"
+                        value={ticketAdminEditForm.routing_key}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, routing_key: event.target.value })
+                        }
+                      />
+                      <input
+                        min={0}
+                        type="number"
+                        placeholder="Assignment score"
+                        value={ticketAdminEditForm.assignment_score}
+                        onChange={(event) =>
+                          setTicketAdminEditForm({ ...ticketAdminEditForm, assignment_score: event.target.value })
+                        }
+                      />
+                      {(['created_at', 'called_at', 'started_at', 'completed_at'] as const).map((field) => (
+                        <label className="ticket-admin-date-field" key={field}>
+                          <span>
+                            {field === 'created_at'
+                              ? 'Создан'
+                              : field === 'called_at'
+                                ? 'Вызван'
+                                : field === 'started_at'
+                                  ? 'Начат'
+                                  : 'Завершен'}
+                          </span>
+                          <input
+                            type="datetime-local"
+                            value={ticketAdminEditForm[field]}
+                            onChange={(event) =>
+                              setTicketAdminEditForm({ ...ticketAdminEditForm, [field]: event.target.value })
+                            }
+                          />
+                        </label>
+                      ))}
+                      <div className="modal-actions ticket-admin-edit-actions">
+                        <button
+                          className="secondary-action"
+                          type="button"
+                          onClick={() => {
+                            setTicketAdminEditForm(buildTicketAdminEditForm(selectedTicketEventEditableTicket))
+                          }}
+                        >
+                          Сбросить
+                        </button>
+                        <button className="primary-action" type="submit" disabled={selectedTicketEventSaving}>
+                          {selectedTicketEventSaving ? 'Сохранение...' : 'Сохранить'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </section>
               )}
 
               <section className="ticket-event-change-panel ticket-event-change-overview">
@@ -6795,7 +7345,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             <div>
               <span className="profile-label">Абитуриент</span>
               <strong>{selectedMyWindowTicket.full_name ?? 'Не указано'}</strong>
-              <p>{selectedMyWindowTicket.iin ?? 'ИИН не указан'}</p>
+              <p>
+                {selectedMyWindowTicket.iin ?? 'ИИН не указан'}
+                {selectedMyWindowTicket.born_date ? `, ${selectedMyWindowTicket.born_date}` : ''}
+              </p>
             </div>
             <div>
               <span className="profile-label">Текущая услуга</span>
@@ -6915,7 +7468,17 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                   minLength={12}
                   placeholder="ИИН абитуриента"
                   value={acceptIin}
-                  onChange={(event) => setAcceptIin(event.target.value.replace(/\D/g, '').slice(0, 12))}
+                  onChange={(event) => setAcceptIin(normalizeIinInput(event.target.value))}
+                />
+                <input
+                  placeholder="ФИО"
+                  readOnly
+                  value={selectedMyWindowTicket.full_name ?? ''}
+                />
+                <input
+                  placeholder="Дата рождения"
+                  readOnly
+                  value={selectedMyWindowTicket.born_date ?? ''}
                 />
                 <select
                   required
@@ -7124,7 +7687,10 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
             <div>
               <span className="profile-label">Абитуриент</span>
               <strong>{selectedReceptionTicket.full_name ?? 'Не указано'}</strong>
-              <p>{selectedReceptionTicket.iin ?? 'ИИН не указан'}</p>
+              <p>
+                {selectedReceptionTicket.iin ?? 'ИИН не указан'}
+                {selectedReceptionTicket.born_date ? `, ${selectedReceptionTicket.born_date}` : ''}
+              </p>
             </div>
             <div>
               <span className="profile-label">Текущая услуга</span>
@@ -7163,7 +7729,17 @@ export function DashboardPage({ authUser }: { authUser: AuthUser }) {
                 minLength={12}
                 placeholder="ИИН абитуриента"
                 value={acceptIin}
-                onChange={(event) => setAcceptIin(event.target.value.replace(/\D/g, '').slice(0, 12))}
+                onChange={(event) => setAcceptIin(normalizeIinInput(event.target.value))}
+              />
+              <input
+                placeholder="ФИО"
+                readOnly
+                value={selectedReceptionTicket.full_name ?? ''}
+              />
+              <input
+                placeholder="Дата рождения"
+                readOnly
+                value={selectedReceptionTicket.born_date ?? ''}
               />
               <select
                 required
